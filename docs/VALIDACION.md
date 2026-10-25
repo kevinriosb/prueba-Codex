@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **106 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **117 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, y once pruebas de configuración del proxy y restauración ante fallos.
 
 Se comprobaron:
 
@@ -104,8 +104,11 @@ Se revisaron los archivos de publicación para detectar las credenciales configu
 
 Se añadieron `compose.hostinger.yaml`, una plantilla sin secretos y un asistente
 interactivo compatible con Python 3.9+ del VPS. El agente continúa usando Python
-3.12 dentro de Docker. No se ha establecido una conexión SSH ni se ha instalado
-nada en el VPS del usuario.
+3.12 dentro de Docker. Codex no estableció una conexión SSH al VPS. Posteriormente
+el usuario ejecutó la instalación en Termius y compartió su salida: contenedor
+`healthy`, `/health` local correcto, DNS del subdominio hacia su VPS y HTTPS de
+CyberPanel con HTTP 200. Esa respuesta todavía correspondía al sitio estático:
+faltaba aplicar la conexión al backend y probar Telegram.
 
 - `scripts/hostinger_smoke.py` pasó con la imagen actualizada: configuración de
   producción real, puerto publicado únicamente en loopback, host autorizado,
@@ -119,9 +122,23 @@ nada en el VPS del usuario.
 - No hubo llamadas a OpenAI, Gmail, Telegram o SAT. Los contenedores y volumen de
   estas pruebas se eliminaron. No se alteraron DNS, CyberPanel ni el sitio actual.
 
-La configuración exacta del virtual host, el certificado, los respaldos, la
-restauración y la prueba física en Safari continúan pendientes en el VPS. La
-guía es [HOSTINGER.md](HOSTINGER.md).
+Para el virtual host compartido por el usuario se preparó el asistente
+`configure_cyberpanel_proxy.py`. Once pruebas comprueban conservación de ACME/TLS,
+rechazo de rutas o reglas existentes, repetición sin duplicar bloques, copia
+privada, ediciones concurrentes detectadas y restauración de archivo/recarga ante
+fallos de validación o salud. Su aplicación real continúa pendiente.
+
+`scripts/cyberpanel_proxy_smoke.py` pasó con OpenLiteSpeed 1.9.3 real en Docker y
+el backend real sin clave de IA. Se verificaron TLS con una CA ficticia de prueba
+(sin desactivar verificación), conservación de Host/Origin, login y cookies
+seguras, redirección HTTP→HTTPS, challenge ACME accesible por HTTP, no-store y
+accesslog sin el código ficticio incluido en la query string. Los contenedores,
+datos y certificado de prueba se eliminaron. No se hicieron llamadas a APIs ni
+cambios en el VPS. El asistente validará además la versión/configuración real
+del servidor antes de aplicar y recargar.
+
+Los respaldos de datos, su recuperación, Gmail/Telegram y la prueba física en
+Safari continúan pendientes. La guía es [HOSTINGER.md](HOSTINGER.md).
 
 ### Configuración del entorno de desarrollo y otras opciones
 

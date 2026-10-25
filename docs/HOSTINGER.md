@@ -1,8 +1,9 @@
 # VPS Hostinger con AlmaLinux y CyberPanel
 
-Preparación para una instancia privada del agente. No instala otro servidor web,
-no cambia CyberPanel, DNS, firewall ni SELinux y no se conecta automáticamente a
-ningún VPS. Crear archivos de despliegue en GitHub no publica una aplicación.
+Preparación para una instancia privada del agente. No instala otro servidor web
+ni se conecta automáticamente a ningún VPS. Los cambios del proxy requieren
+ejecutar explícitamente el asistente con `--apply`. Crear archivos de despliegue
+en GitHub no publica una aplicación.
 
 El servidor revisado por el usuario tiene AlmaLinux 9, dos núcleos, unos 8 GB de
 RAM, Docker 29.4.0, Compose 5.1.2 y CyberPanel/LiteSpeed en los puertos 80/443.
@@ -113,18 +114,36 @@ los listeners globales ni el virtual host de `lilyapp.mx` con una plantilla.
    revisa también un posible AAAA para no dirigir clientes a otro servidor.
 2. Crea un sitio o subdominio independiente para `agente.lilyapp.mx` en
    CyberPanel, comprueba que escucha en HTTP/HTTPS y emite su certificado.
-3. En el virtual host de **ese subdominio**, configura una aplicación externa
-   de tipo proxy HTTP con destino `127.0.0.1:18000` y conecta su contexto raíz `/`
-   a ese proxy. Conserva el contexto de validación ACME de CyberPanel y las rutas
-   necesarias para renovar el certificado. No publiques el WebAdmin de LiteSpeed
-   para configurar esto: usa el acceso administrativo existente.
-4. El proxy debe conservar el encabezado `Host: agente.lilyapp.mx` y la cabecera
-   `Origin` del navegador; configura el tiempo de espera por encima de los 35
-   segundos del agente y permite la subida máxima de 8 MB. No caches respuestas
-   de esta aplicación. Los nombres de pantallas/opciones varían por versión;
-   revisa el virtual host concreto antes de aplicar una edición o recarga.
-5. Valida la configuración de LiteSpeed antes de una recarga ordenada. El
-   objetivo es añadir el subdominio manteniendo la página actual y el correo.
+3. Revisa el virtual host de **ese subdominio**. El asistente espera el archivo
+   normal `/usr/local/lsws/conf/vhosts/agente.lilyapp.mx/vhost.conf`, con los
+   bloques ACME, TLS y accesslog del sitio recién creado. Rechaza un contexto raíz
+   o proxy existente para no reemplazar otra aplicación.
+4. Desde `/opt/lilyapp-agent`, prueba primero:
+
+   ```sh
+   python3 scripts/configure_cyberpanel_proxy.py --domain agente.lilyapp.mx
+   ```
+
+   Este comando consulta el archivo, valida la configuración actual de LiteSpeed
+   y comprueba el backend local; no modifica el sitio. Cuando esté autorizado el
+   cambio, aplica con:
+
+   ```sh
+   python3 scripts/configure_cyberpanel_proxy.py --domain agente.lilyapp.mx --apply
+   ```
+
+   Hace una copia privada del archivo e instala un proxy a `127.0.0.1:18000`,
+   conservando el certificado y el contexto ACME. Redirige las demás solicitudes
+   HTTP a HTTPS, desactiva caché para la aplicación y excluye query strings y
+   cabeceras del accesslog para no registrar códigos OAuth o cookies. El tiempo
+   de conexión es de 60 segundos; conserva los límites del backend.
+5. El asistente valida la configuración propuesta antes de recargar LiteSpeed
+   y comprueba `/health` por HTTPS. Si falla, intenta restaurar el archivo y la
+   configuración activa anterior; informa si no consigue confirmar la recarga
+   de retorno. La recarga ordenada corresponde al servidor web compartido, pero
+   el único archivo editado es el de este subdominio. Conserva la copia indicada
+   incluso tras un resultado satisfactorio. No toca Docker, n8n, DNS, firewall,
+   SELinux ni las credenciales de la aplicación.
 6. Comprueba en Safari `https://agente.lilyapp.mx/health`, el certificado válido,
    login y logout. Un error de origen exige revisar `Host` y `Origin`; no lo
    resuelvas abriendo CORS, quitando CSRF ni desactivando las cookies seguras.
@@ -157,9 +176,13 @@ Antes de usar documentos privados:
   de envío a un buzón controlado. La interfaz seguirá pidiendo aprobar cada
   correo. Comprueba remitente, destino, adjuntos, respuesta y duplicados antes de
   usar comercios reales.
-- Telegram es opcional. Configura un bot, secreto y lista de usuarios; registra
+- Telegram es el canal principal elegido para el flujo fiscal. Configura un bot, secreto y lista de usuarios; registra
   su webhook con autorización. Las consultas SAT y el seguimiento periódico son
   activaciones separadas con consentimiento, descritas en [FACTURACION.md](FACTURACION.md).
+
+El canal Telegram actual guía la facturación con botones y lectura de documentos
+por IA. La conversación libre del agente general sigue en la web; WhatsApp no
+está integrado todavía.
 
 Tras cambiar `.env.hostinger`, recrea solo el servicio con el comando `up` del
 paso 3. No genera ni cambia la clave de cifrado. El historial general y el módulo
@@ -181,3 +204,16 @@ sobrescritura, caracteres especiales en la contraseña, cookies seguras,
 restricción de host, volumen persistente y el documento cifrado después de
 recrear el contenedor. No modifica CyberPanel, el VPS ni APIs externas. Elimina
 exclusivamente sus contenedores y volumen de prueba.
+
+Para probar el proxy con OpenLiteSpeed real en una máquina de desarrollo:
+
+```sh
+docker pull litespeedtech/openlitespeed:latest
+uv run --frozen python scripts/cyberpanel_proxy_smoke.py
+```
+
+Requiere la imagen local del backend y `openssl`. Crea un certificado ficticio
+que solo confía el cliente de esa prueba, sin desactivar TLS ni usar claves
+reales. Verifica Host/Origin, login, cookies, redirección HTTP, challenge ACME,
+privacidad del accesslog y no-store. No instala esa imagen de OpenLiteSpeed en el
+VPS: en producción se aprovecha el servidor ya administrado por CyberPanel.
