@@ -142,7 +142,7 @@ def test_reload_does_not_accept_nonzero_warning_status(monkeypatch):
 
 
 @pytest.mark.parametrize('code,output', [(2,WARNING),(1,WARNING+ERROR),(1,WARNING+'Segmentation fault'),
-                                       (0,ERROR),(1,''),(-11,WARNING)])
+                                       (0,ERROR),(1,''),(-11,WARNING),(0,'cp: cannot create regular file: Read-only file system')])
 def test_warning_handling_still_rejects_errors_and_unrecognized_failures(monkeypatch, code, output):
     monkeypatch.setattr(proxy.subprocess, 'run', lambda *args, **kwargs:
                         SimpleNamespace(returncode=code, stdout='', stderr=output))

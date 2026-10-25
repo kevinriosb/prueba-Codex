@@ -136,7 +136,8 @@ def checked_command(arguments, *, allow_warnings=False):
     # ese caso reconocido para validación; una recarga no acepta códigos no cero.
     warning_exit = (allow_warnings and result.returncode == 1 and warnings > 0
                     and all(records) and not errors)
-    if errors or (result.returncode and not warning_exit):
+    unknown_diagnostics = allow_warnings and any(not record for record in records)
+    if errors or unknown_diagnostics or (result.returncode and not warning_exit):
         phase = 'validación' if allow_warnings else 'recarga'
         raise ConfigurationError('LiteSpeed no confirmó la ' + phase + ' (código ' + str(result.returncode)
                                  + '; errores detectados: ' + str(errors) + '). Revisa lshttpd -t antes de continuar.')

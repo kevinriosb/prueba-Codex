@@ -162,6 +162,47 @@ proxy procedentes de cualquier dirección: si hace falta reconocer la IP del
 cliente, configura únicamente el proxy concreto en `FORWARDED_ALLOW_IPS`, tras
 verificar cómo cruza la red de Docker. No utilices `*`.
 
+### Retirar referencias de un dominio que ya no se utiliza
+
+Un dominio expirado puede seguir registrado en el archivo de LiteSpeed y provocar
+errores al validar o recargar. Si su propietario confirmó que ya no lo utiliza,
+revisa antes sus bloques completos y los listeners compartidos. El asistente de
+retirada conserva todos los archivos, certificados, bases de datos y contenedores;
+desactiva únicamente definiciones y mappings del dominio indicado.
+
+Desde la carpeta del proyecto, sustituye `DOMINIO_ANTIGUO` por el dominio revisado:
+
+```sh
+python3 scripts/retire_cyberpanel_domain.py --retire-domain DOMINIO_ANTIGUO --keep-hosts lilyapp.mx,inicio.lilyapp.mx,agente.lilyapp.mx
+```
+
+Por defecto solo muestra el plan. Rechaza mappings mezclados con sitios activos,
+estructuras no reconocidas o cambios en las rutas protegidas. Si un listener
+compartido usa como respaldo un certificado del dominio retirado, exige un único
+par de archivos ya usado por otro listener que atienda los sitios protegidos y
+reutiliza esas rutas. No solicita certificados nuevos ni elimina los anteriores.
+
+Cuando se haya revisado y autorizado el plan:
+
+```sh
+python3 scripts/retire_cyberpanel_domain.py --retire-domain DOMINIO_ANTIGUO --keep-hosts lilyapp.mx,inicio.lilyapp.mx,agente.lilyapp.mx --apply
+python3 scripts/configure_cyberpanel_proxy.py --domain agente.lilyapp.mx --apply
+```
+
+El primer comando crea una copia privada del archivo global y valida la propuesta
+después de prepararla. Si falla, restaura el archivo sin recargar el servidor:
+no intenta recargar la configuración antigua, que puede contener errores. Si pasa,
+la configuración queda preparada en disco. El segundo comando instala por primera
+vez el proxy y hace la recarga ordenada, validando antes y comprobando salud HTTPS
+después. Si el proxy ya estaba instalado, su operación idempotente no fuerza una
+recarga: en mantenimiento hay que coordinar esa recarga pendiente por separado.
+
+El acceso mediante los dominios retirados se desactiva tras la recarga; los
+contenedores como n8n continúan y sus datos se conservan. Los registros históricos
+del panel permanecen: una reconstrucción desde CyberPanel puede volver a generar
+referencias. Revisa la configuración después de cambios del panel. No utilices
+**Delete Website** como sustituto de este procedimiento, porque puede borrar datos.
+
 ## 5. Prueba piloto y activación gradual
 
 Antes de usar documentos privados:
@@ -225,3 +266,10 @@ que solo confía el cliente de esa prueba, sin desactivar TLS ni usar claves
 reales. Verifica Host/Origin, login, cookies, redirección HTTP, challenge ACME,
 privacidad del accesslog y no-store. No instala esa imagen de OpenLiteSpeed en el
 VPS: en producción se aprovecha el servidor ya administrado por CyberPanel.
+
+La misma prueba genera definiciones antiguas ficticias, incluidas duplicadas y
+un archivo con sintaxis inválida. Prepara la propuesta de retirada, conserva ese
+archivo, reutiliza el certificado de respaldo y verifica el servidor con esa
+propuesta, incluidos ambos listeners HTTPS. Las pruebas de Python comprueban
+además la copia privada y la restauración del archivo global cuando falla su
+validación. No usan datos ni dominios antiguos reales del usuario.

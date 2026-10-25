@@ -14,6 +14,7 @@ import time
 import uuid
 
 from configure_cyberpanel_proxy import checked_command, render
+from retire_cyberpanel_domain import render as retire_domain
 
 
 IMAGE = 'litespeedtech/openlitespeed:latest'
@@ -47,7 +48,22 @@ listener AgentTestTLS {
   map Example agente.example.test
 }
 '''
-        (root / 'server.conf').write_text(global_config)
+        old_domain = 'old.example.test'
+        for name in [old_domain, 'mail.' + old_domain, 'n8n.' + old_domain, 'n8n.' + old_domain, 'strapi.' + old_domain]:
+            global_config += ('\nvirtualHost ' + name + ' {\n  vhRoot Example/\n'
+                              '  configFile /tmp/agent-test/retired.conf\n}\n')
+        global_config += '''
+listener OldFallbackTLS {
+  address *:9443
+  secure 1
+  keyFile /etc/letsencrypt/live/old.example.test/privkey.pem
+  certFile /etc/letsencrypt/live/old.example.test/fullchain.pem
+  map Example agente.example.test
+  map old.example.test old.example.test
+}
+'''
+        retired_conf = 'docRoot $VH_ROOT/html\nvssl {\n  incorrecto 1\n}\n'
+        (root / 'retired.conf').write_text(retired_conf)
         original = '''docRoot $VH_ROOT/html
 vhDomain $VH_NAME
 accesslog $VH_ROOT/logs/agent-test.log {
@@ -79,11 +95,20 @@ vhssl {
         (root / 'acme' / 'challenge-test').write_text('acme-conservado')
         (root / 'acme' / 'challenge-test').chmod(0o644)
         try:
+            (root / 'server.conf').write_text(global_config)
+            mounts = ['-v', str(root) + ':/tmp/agent-test:ro',
+                      '-v', str(root / 'server.conf') + ':/usr/local/lsws/conf/httpd_config.conf:ro',
+                      '-v', str(root / 'vhost.conf') + ':/usr/local/lsws/conf/vhosts/Example/vhconf.conf:ro',
+                      '-v', str(root / 'acme') + ':/usr/local/lsws/Example/html/.well-known/acme-challenge:ro',
+                      '-v', str(root / 'server.key') + ':/etc/letsencrypt/live/old.example.test/privkey.pem:ro',
+                      '-v', str(root / 'server.crt') + ':/etc/letsencrypt/live/old.example.test/fullchain.pem:ro']
+            cleaned, retirement = retire_domain(global_config, old_domain, [DOMAIN])
+            assert len(retirement['virtual_hosts']) == 5 and len(retirement['certificates']) == 1
+            assert 'old.example.test' not in cleaned
+            (root / 'server.conf').write_text(cleaned)
+            assert (root / 'retired.conf').read_text() == retired_conf
             server = docker('run', '--rm', '-d', '-p', '127.0.0.1::8088', '-p', '127.0.0.1::8443',
-                            '-v', str(root) + ':/tmp/agent-test:ro',
-                            '-v', str(root / 'server.conf') + ':/usr/local/lsws/conf/httpd_config.conf:ro',
-                            '-v', str(root / 'vhost.conf') + ':/usr/local/lsws/conf/vhosts/Example/vhconf.conf:ro',
-                            '-v', str(root / 'acme') + ':/usr/local/lsws/Example/html/.well-known/acme-challenge:ro',
+                            '-p', '127.0.0.1::9443', *mounts,
                             '--entrypoint', '/usr/local/lsws/bin/lshttpd', IMAGE, '-n')
             containers.append(server)
             # Conservar el docroot root de la imagen para probar avisos reales
@@ -96,8 +121,8 @@ vhssl {
             containers.append(backend)
             ports = json.loads(docker('inspect', '--format', '{{json .NetworkSettings.Ports}}', server))
 
-            def request(path, *, secure=True, method='GET', data=None, cookie=None, csrf=None, origin=None):
-                port = int(ports['8443/tcp' if secure else '8088/tcp'][0]['HostPort'])
+            def request(path, *, secure=True, tls_port='8443', method='GET', data=None, cookie=None, csrf=None, origin=None):
+                port = int(ports[tls_port + '/tcp' if secure else '8088/tcp'][0]['HostPort'])
                 connection = http.client.HTTPSConnection('127.0.0.1', port, context=certificate, timeout=5) if secure else http.client.HTTPConnection('127.0.0.1', port, timeout=5)
                 headers = {'Host': DOMAIN, 'Origin': origin or 'https://' + DOMAIN}
                 if cookie:
@@ -129,6 +154,7 @@ vhssl {
             assert '[WARN]' in validation.stdout + validation.stderr
             assert '[ERROR]' not in validation.stdout + validation.stderr
             checked_command(['docker', 'exec', server, '/usr/local/lsws/bin/lshttpd', '-t'], allow_warnings=True)
+            assert json.loads(request('/health', tls_port='9443')[2])['status'] == 'ok'
             assert headers.get('cache-control', headers.get('Cache-Control')) == 'no-store'
             status, headers, _ = request('/health', secure=False)
             assert status in {301, 302} and headers.get('location', headers.get('Location')) == 'https://' + DOMAIN + '/health'
@@ -152,7 +178,8 @@ vhssl {
                     break
                 time.sleep(.2)
             assert marker in log and 'secreto-ficticio-no-registrar' not in log
-            print('PASS: OpenLiteSpeed real, TLS verificado con CA ficticia, Host/Origin, login y cookies seguras, '
+            print('PASS: OpenLiteSpeed real, referencias antiguas desactivadas sin borrar sus archivos, '
+                  'propuesta validada y respaldo TLS reutilizado; TLS verificado con CA ficticia, Host/Origin, login y cookies seguras, '
                   'HTTP redirigido a HTTPS, ACME preservado, no-store y query strings privadas ausentes del accesslog. '
                   'Sin llamadas de IA, correo o cambios en el VPS.')
         except BaseException:

@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **125 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, y diecinueve pruebas de configuración del proxy, validación y restauración ante fallos.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **137 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy y once pruebas de retirada reversible de referencias obsoletas.
 
 Se comprobaron:
 
@@ -123,7 +123,7 @@ faltaba aplicar la conexión al backend y probar Telegram.
   estas pruebas se eliminaron. No se alteraron DNS, CyberPanel ni el sitio actual.
 
 Para el virtual host compartido por el usuario se preparó el asistente
-`configure_cyberpanel_proxy.py`. Diecinueve pruebas comprueban conservación de ACME/TLS,
+`configure_cyberpanel_proxy.py`. Veinte pruebas comprueban conservación de ACME/TLS,
 rechazo de rutas o reglas existentes, repetición sin duplicar bloques, copia
 privada, ediciones concurrentes detectadas y restauración de archivo/recarga ante
 fallos de validación o salud. Su aplicación real continúa pendiente.
@@ -149,6 +149,22 @@ Ese caso se acepta solo si todos los registros tienen un formato reconocido.
 Errores incluso con código 0, código 2, salidas desconocidas, señales de fallo y
 recargas con código no cero se rechazan. El diagnóstico muestra código y
 contadores, sin copiar datos privados de la salida a los logs del asistente.
+
+Tras revisar los bloques completos compartidos por el usuario se añadió
+`retire_cyberpanel_domain.py`: solo prepara el archivo global, con copia privada,
+y valida la propuesta sin recargar. Las once pruebas verifican cinco definiciones
+antiguas, incluidas duplicadas, once mappings, conservación exacta de las rutas
+protegidas, sustitución del respaldo TLS por un par ya utilizado, rechazo de
+aliases mezclados o certificados ambiguos, funcionamiento idempotente y
+restauración ante fallo. Archivos y datos ficticios de otra aplicación conservan
+sus bytes. No hay operaciones sobre Docker ni borrado de directorios o certificados.
+
+La prueba real de OpenLiteSpeed también pasó con esa propuesta de retirada y
+ambos listeners HTTPS: el archivo antiguo con sintaxis inválida permanece en
+disco, pero deja de referenciarse; se conserva el acceso al backend con el
+certificado de respaldo reutilizado. Este ensayo usa dominios, archivos y
+certificados ficticios. Ninguna referencia de producción se ha desactivado aún
+desde Codex; la aplicación de los comandos queda en la terminal del usuario.
 
 Los respaldos de datos, su recuperación, Gmail/Telegram y la prueba física en
 Safari continúan pendientes. La guía es [HOSTINGER.md](HOSTINGER.md).
