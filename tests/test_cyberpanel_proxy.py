@@ -1,5 +1,6 @@
 import re
 import stat
+from types import SimpleNamespace
 
 import pytest
 
@@ -119,3 +120,31 @@ def test_concurrent_edits_are_not_overwritten(tmp_path):
         proxy.apply(path, CONFIG, proxy.render(CONFIG, DOMAIN), DOMAIN, lambda: None,
                     lambda: None, lambda *args: None)
     assert path.read_text() == changed and list(tmp_path.glob('*.bak')) == []
+
+
+WARNING = '2026-10-25 21:04:27.048393 [WARN] [123] [module] Un aviso ficticio con dato-privado-de-prueba\n'
+ERROR = '2026-10-25 21:04:27.048394 [ERROR] [123] No se puede cargar la configuración\n'
+
+
+def test_validation_accepts_native_warning_status_without_echoing_diagnostics(monkeypatch, capsys):
+    monkeypatch.setattr(proxy.subprocess, 'run', lambda *args, **kwargs:
+                        SimpleNamespace(returncode=1, stdout=WARNING, stderr=''))
+    proxy.checked_command(['lshttpd', '-t'], allow_warnings=True)
+    output = capsys.readouterr().out
+    assert 'avisos: 1' in output and 'dato-privado-de-prueba' not in output
+
+
+def test_reload_does_not_accept_nonzero_warning_status(monkeypatch):
+    monkeypatch.setattr(proxy.subprocess, 'run', lambda *args, **kwargs:
+                        SimpleNamespace(returncode=1, stdout=WARNING, stderr=''))
+    with pytest.raises(proxy.ConfigurationError, match='recarga'):
+        proxy.checked_command(['lswsctrl', 'reload'])
+
+
+@pytest.mark.parametrize('code,output', [(2,WARNING),(1,WARNING+ERROR),(1,WARNING+'Segmentation fault'),
+                                       (0,ERROR),(1,''),(-11,WARNING)])
+def test_warning_handling_still_rejects_errors_and_unrecognized_failures(monkeypatch, code, output):
+    monkeypatch.setattr(proxy.subprocess, 'run', lambda *args, **kwargs:
+                        SimpleNamespace(returncode=code, stdout='', stderr=output))
+    with pytest.raises(proxy.ConfigurationError, match='validación'):
+        proxy.checked_command(['lshttpd', '-t'], allow_warnings=True)

@@ -13,7 +13,7 @@ import tempfile
 import time
 import uuid
 
-from configure_cyberpanel_proxy import render
+from configure_cyberpanel_proxy import checked_command, render
 
 
 IMAGE = 'litespeedtech/openlitespeed:latest'
@@ -86,8 +86,8 @@ vhssl {
                             '-v', str(root / 'acme') + ':/usr/local/lsws/Example/html/.well-known/acme-challenge:ro',
                             '--entrypoint', '/usr/local/lsws/bin/lshttpd', IMAGE, '-n')
             containers.append(server)
-            # CyberPanel crea el docroot con un usuario del sitio, no con root.
-            docker('exec', server, 'chown', '1000:1000', '/usr/local/lsws/Example/html')
+            # Conservar el docroot root de la imagen para probar avisos reales
+            # de UID/GID y el código 1 de `lshttpd -t`, además del proxy.
             backend = docker('run', '--rm', '-d', '--network', 'container:' + server,
                              '-e', 'HOST=127.0.0.1', '-e', 'PORT=18000',
                              '-e', 'APP_LOGIN_PASSWORD=solo-prueba-proxy-123456',
@@ -125,8 +125,10 @@ vhssl {
                     raise RuntimeError('El proxy no respondió a /health.')
                 time.sleep(.25)
             validation = subprocess.run(['docker', 'exec', server, '/usr/local/lsws/bin/lshttpd', '-t'], capture_output=True, text=True)
-            assert validation.returncode == 0, validation.stdout + validation.stderr
+            assert validation.returncode == 1, validation.stdout + validation.stderr
+            assert '[WARN]' in validation.stdout + validation.stderr
             assert '[ERROR]' not in validation.stdout + validation.stderr
+            checked_command(['docker', 'exec', server, '/usr/local/lsws/bin/lshttpd', '-t'], allow_warnings=True)
             assert headers.get('cache-control', headers.get('Cache-Control')) == 'no-store'
             status, headers, _ = request('/health', secure=False)
             assert status in {301, 302} and headers.get('location', headers.get('Location')) == 'https://' + DOMAIN + '/health'

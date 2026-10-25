@@ -132,6 +132,14 @@ los listeners globales ni el virtual host de `lilyapp.mx` con una plantilla.
    python3 scripts/configure_cyberpanel_proxy.py --domain agente.lilyapp.mx --apply
    ```
 
+   OpenLiteSpeed puede devolver código 1 cuando solo emite avisos. El asistente
+   reconoce ese resultado únicamente si todas sus líneas son registros válidos
+   sin errores. Un código 2, mensajes ERROR/FATAL, fallos no reconocidos o una
+   recarga con código no cero siguen bloqueando el cambio. No uses una opción de
+   forzado ni borres sitios para eludir la validación. Si un dominio antiguo ya
+   no se utiliza, revisa sus bloques y mappings completos antes de desactivar sus
+   referencias, con copia de seguridad; los archivos y contenedores se conservan.
+
    Hace una copia privada del archivo e instala un proxy a `127.0.0.1:18000`,
    conservando el certificado y el contexto ACME. Redirige las demás solicitudes
    HTTP a HTTPS, desactiva caché para la aplicación y excluye query strings y

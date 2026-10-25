@@ -121,13 +121,27 @@ def health(url, domain):
             raise ConfigurationError('El chequeo de salud no respondió correctamente.')
 
 
-def checked_command(arguments):
+def checked_command(arguments, *, allow_warnings=False):
     try:
         result = subprocess.run(arguments, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
         raise ConfigurationError('No se pudo ejecutar la validación o recarga de LiteSpeed.') from None
-    if result.returncode or '[ERROR]' in result.stdout + result.stderr:
-        raise ConfigurationError('LiteSpeed no confirmó la validación o recarga. Revisa lshttpd -t antes de continuar.')
+    output = result.stdout + '\n' + result.stderr
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    records = [re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)? \[(DEBUG|INFO|NOTICE|WARN)\]', line)
+               for line in lines]
+    warnings = sum(bool(record and record.group(1) == 'WARN') for record in records)
+    errors = len(re.findall(r'\[(?:ERROR|FATAL|ALERT|CRIT|EMERG)\]', output, re.I))
+    # OpenLiteSpeed -t devuelve 1 también con avisos, sin errores. Aceptar solo
+    # ese caso reconocido para validación; una recarga no acepta códigos no cero.
+    warning_exit = (allow_warnings and result.returncode == 1 and warnings > 0
+                    and all(records) and not errors)
+    if errors or (result.returncode and not warning_exit):
+        phase = 'validación' if allow_warnings else 'recarga'
+        raise ConfigurationError('LiteSpeed no confirmó la ' + phase + ' (código ' + str(result.returncode)
+                                 + '; errores detectados: ' + str(errors) + '). Revisa lshttpd -t antes de continuar.')
+    if allow_warnings and warnings:
+        print('Validación de LiteSpeed completada; avisos: ' + str(warnings) + '.', flush=True)
 
 
 def atomic_write(path, content):
@@ -198,7 +212,7 @@ def main():
         raise ConfigurationError('No se encontró un archivo normal de configuración para este dominio.')
     original = path.read_text(encoding='utf-8')
     updated = render(original, domain)
-    validator = lambda: checked_command(['/usr/local/lsws/bin/lshttpd', '-t'])
+    validator = lambda: checked_command(['/usr/local/lsws/bin/lshttpd', '-t'], allow_warnings=True)
     reload_server = lambda: checked_command(['/usr/local/lsws/bin/lswsctrl', 'reload'])
     validator()
     try:

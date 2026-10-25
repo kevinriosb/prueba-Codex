@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **117 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, y once pruebas de configuración del proxy y restauración ante fallos.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **125 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, y diecinueve pruebas de configuración del proxy, validación y restauración ante fallos.
 
 Se comprobaron:
 
@@ -123,7 +123,7 @@ faltaba aplicar la conexión al backend y probar Telegram.
   estas pruebas se eliminaron. No se alteraron DNS, CyberPanel ni el sitio actual.
 
 Para el virtual host compartido por el usuario se preparó el asistente
-`configure_cyberpanel_proxy.py`. Once pruebas comprueban conservación de ACME/TLS,
+`configure_cyberpanel_proxy.py`. Diecinueve pruebas comprueban conservación de ACME/TLS,
 rechazo de rutas o reglas existentes, repetición sin duplicar bloques, copia
 privada, ediciones concurrentes detectadas y restauración de archivo/recarga ante
 fallos de validación o salud. Su aplicación real continúa pendiente.
@@ -136,6 +136,19 @@ accesslog sin el código ficticio incluido en la query string. Los contenedores,
 datos y certificado de prueba se eliminaron. No se hicieron llamadas a APIs ni
 cambios en el VPS. El asistente validará además la versión/configuración real
 del servidor antes de aplicar y recargar.
+
+El intento compartido desde el VPS se detuvo antes de crear una copia o modificar
+el sitio: la validación global devolvió código 2 con errores de configuraciones
+antiguas. El usuario confirmó que esos dominios ya no se utilizan; se necesita
+revisar sus bloques y mappings completos antes de desactivar referencias. No se
+han eliminado archivos, certificados ni contenedores.
+
+El asistente distingue ahora los avisos de validación: se comprobó con el binario
+real de OpenLiteSpeed que `-t` puede devolver 1 con registros WARN y sin errores.
+Ese caso se acepta solo si todos los registros tienen un formato reconocido.
+Errores incluso con código 0, código 2, salidas desconocidas, señales de fallo y
+recargas con código no cero se rechazan. El diagnóstico muestra código y
+contadores, sin copiar datos privados de la salida a los logs del asistente.
 
 Los respaldos de datos, su recuperación, Gmail/Telegram y la prueba física en
 Safari continúan pendientes. La guía es [HOSTINGER.md](HOSTINGER.md).
