@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado final de `.venv/bin/python -m pytest -q --tb=short`: **58 pruebas pasadas**, sin fallos ni pruebas omitidas.
+Resultado tras la ampliación fiscal de `.venv/bin/python -m pytest -q --tb=short`: **103 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan.
 
 Se comprobaron:
 
@@ -43,12 +43,14 @@ No se comprobó un iPad físico ni Safari real. Las capturas en [screenshots/](s
 
 - `uv sync --frozen` completado. La exportación de producción conserva versiones y hashes de los paquetes.
 - `docker build` completado con `pip --require-hashes`, manteniendo TLS. La red de este entorno requirió montar su CA de confianza solo durante el build mediante `build_ca`; no se desactivó la verificación.
-- `scripts/container_smoke.py` pasó: imagen arrancada localmente, `/health`, login, usuario de proceso UID 10001 y recuperación de una conversación al **eliminar y recrear** el contenedor usando el mismo volumen temporal.
+- `scripts/container_smoke.py` pasó: imagen arrancada localmente, `/health`, login, usuario de proceso UID 10001 y recuperación de una conversación y un documento fiscal cifrado al **eliminar y recrear** el contenedor usando el mismo volumen temporal. La clave de cifrado y el documento de esa prueba son ficticios; no hay IA ni correo real.
 - El contenedor no incluye `.env` ni pruebas.
 - Los contenedores y el volumen usados para estas pruebas se eliminaron al terminar.
 - Sintaxis JavaScript y compilación de módulos Python comprobadas. `git diff --check` sin errores.
 
 ## Prueba real autorizada de OpenAI
+
+Las llamadas reales descritas en esta sección pertenecen a la validación previa del agente general. La actualización fiscal **no realizó llamadas reales nuevas a OpenAI, Gmail, Telegram o SAT**, no compartió documentos fiscales ni emitió solicitudes de factura reales. Los adaptadores nuevos se comprobaron con transportes/proveedores simulados.
 
 El usuario autorizó hasta dos llamadas a `gpt-4.1-mini`, con un máximo de 100 tokens de salida por llamada. Se hicieron **dos intentos**, con reintentos desactivados; el segundo después de que el usuario comunicó haber actualizado la clave. Ambos recibieron **HTTP 401, `invalid_api_key`**, antes de generar una respuesta. No se ejecutó la herramienta de cálculo en esas solicitudes y no se recibió un reporte de uso de tokens del proveedor.
 
@@ -85,6 +87,14 @@ La clave de la variable directa funciona. Sigue sin determinarse por qué el val
 ## Comprobaciones para publicar el código
 
 Antes de publicar se repitió la suite: **58 pruebas pasadas**, sin llamadas de IA ni cargos. La sintaxis de `frontend/app.js` pasó la comprobación de Node.js.
+
+En la actualización de facturación la suite pasó a **103 pruebas**. Se verificaron primera interacción sin perfil, consentimiento de análisis, CSF ilegible/incompleta, confirmación, varios perfiles, actualización y borrado, AES-GCM con propietario autenticado, formatos y vencimiento de archivos, contacto oficial y verificación manual del ticket, prioridad de portal compatible, aprobaciones, duplicados y diferencias de formato del importe. Se comprobaron envíos desactivados, cambios de perfil tras revisar el borrador, dos confirmaciones concurrentes con un único efecto, envío de resultado incierto y conservación de su bloqueo, CSF con autorización específica, XML/PDF, respuestas sin XML, destinatario/hilo incorrectos y XML con entidades o datos incompatibles.
+
+También se verificaron OAuth de Gmail con PKCE/estado de un solo uso, renovación y tokens cifrados, envío MIME y lectura de adjuntos mediante transporte HTTP simulado; webhook de Telegram con secreto/usuarios autorizados, flujo CSF con botones, aislamiento entre canales y rechazo de rutas de descarga indebidas; consulta SAT simulada y su desactivación por configuración; seguimiento autorizado, límite de consultas, parada tras tres errores y ausencia de avisos repetidos. Un cambio posterior de perfil no altera los datos autorizados que se cotejan con la respuesta del envío anterior.
+
+`scripts/billing_browser_smoke.py` pasó con Chromium y emulación táctil de iPad: CSF ficticia, selección explícita del uso de CFDI, correo, perfil, ticket, revisión del destinatario, borrador, rechazo/envío simulado, lectura de una respuesta con HTML mostrado como texto inerte, historial y limpieza de datos fiscales al cerrar sesión. No hubo desbordamiento lateral a 1024×768, 768×1024, 375×812 y 320×640. La prueba de navegador del chat original también pasó. No se comprobó un iPad físico ni Safari real.
+
+La guía de configuración y los límites de estas integraciones están en [FACTURACION.md](FACTURACION.md). WhatsApp, los adaptadores de portales comerciales, la validación XSD completa y la verificación criptográfica de sellos no se presentan como implementados.
 
 Se revisaron los archivos de publicación para detectar las credenciales configuradas, formatos conocidos de claves y artefactos privados. No se encontraron credenciales. `.env`, `.local/`, `.venv/` y `data/agent.sqlite3` están excluidos de Git. El archivo `.env.example` contiene nombres y valores de ejemplo, sin secretos. La publicación en GitHub no autoriza ni ejecuta el despliegue en Railway.
 

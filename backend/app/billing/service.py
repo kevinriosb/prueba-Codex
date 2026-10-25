@@ -1,0 +1,602 @@
+import asyncio
+import base64
+import hashlib
+import re
+import sqlite3
+import time
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
+from email.message import EmailMessage
+
+from ..errors import AppError
+from .cfdi import SatVerifier, validate_cfdi
+from .channels import official_contacts
+from .documents import inspect_document
+from .extraction import DocumentExtractor
+from .models import CFDI_USES, REGIMES, FiscalExtraction, Status, TicketExtraction, validate_fiscal
+from .providers import GmailProvider, normalized_email
+from .store import BillingStore
+
+
+def public(record):
+    return {key:value for key,value in record.items() if not key.startswith('_')}
+
+
+class BillingService:
+    def __init__(self,settings,database,agent_service,*,extractor=None,mail=None,portals=(),sat=None):
+        self.settings,self.database=settings,database
+        self.enabled=bool(settings.billing_encryption_key.get_secret_value())
+        self.store=None
+        self.analysis_lock=asyncio.Lock()
+        self.poll_lock=asyncio.Lock()
+        self.notifier=None
+        if self.enabled:
+            self.store=BillingStore(database,settings.billing_encryption_key.get_secret_value())
+            self.extractor=extractor or DocumentExtractor(agent_service,settings)
+            self.mail=mail or GmailProvider(settings,self.store)
+            self.sat=sat or SatVerifier(settings.billing_sat_enabled)
+            self.portals=tuple(portals)
+            self.contacts=official_contacts(settings.billing_verified_contacts_json)
+            self.store.purge()
+
+    async def close(self):
+        if self.enabled:
+            for component in (self.mail,self.sat):
+                close=getattr(component,'close',None)
+                if close:
+                    await close()
+
+    def require_enabled(self):
+        if not self.enabled:
+            raise AppError(503,'billing_not_configured','Configura BILLING_ENCRYPTION_KEY para activar el almacenamiento fiscal cifrado.')
+        self.store.purge()
+
+    def overview(self,owner):
+        with self.database.connection() as conn:
+            exists=conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='billing_records'").fetchone()
+            encrypted=bool(exists and conn.execute('SELECT 1 FROM billing_records LIMIT 1').fetchone())
+        result={'enabled':self.enabled,'cfdi_uses':CFDI_USES,'fiscal_regimes':REGIMES,
+            'has_encrypted_records':encrypted,
+            'background_tracking_enabled':self.settings.billing_background_tracking_enabled,
+            'tracking_interval_seconds':self.settings.billing_tracking_interval_seconds,
+            'tracking_max_checks':self.settings.billing_tracking_max_checks,
+            'max_upload_bytes':self.settings.billing_max_upload_bytes,'email_send_enabled':self.settings.billing_live_email_enabled,
+            'sat_enabled':self.settings.billing_sat_enabled,'reminders_enabled':False,
+            'gmail_configured':False,'gmail_connected':False,'gmail_email':None,'profiles':[],'tickets':[],'documents':[]}
+        if self.enabled:
+            self.require_enabled()
+            account=self.mail.account(owner)
+            result.update(gmail_configured=self.mail.configured,gmail_connected=self.mail.ready(owner),
+                gmail_email=account.get('email') if account else None,
+                profiles=[public(value) for value in self.store.list('profile',owner)],
+                tickets=[public(value) for value in self.store.list('ticket',owner)],
+                documents=[{'id':value['id'],'purpose':value['purpose'],'expires':value['_expires']} for value in self.store.list('document',owner)])
+        return result
+
+    def document(self,owner,identifier):
+        self.require_enabled()
+        return self.store.get('document',owner,identifier)
+
+    def receive_document(self,owner,purpose,data,*,profile_id=None):
+        self.require_enabled()
+        if purpose not in {'csf','ticket'}:
+            raise AppError(422,'document_purpose','Indica si el archivo es una constancia o un ticket.')
+        if profile_id:
+            self.store.get('profile',owner,profile_id)
+        if purpose=='ticket':
+            if not profile_id:
+                raise AppError(409,'fiscal_profile_required','Primero envía tu Constancia de Situación Fiscal y confirma un perfil.')
+            self.store.get('profile',owner,profile_id)
+        if self.store.count('document',owner)>=self.settings.billing_max_documents:
+            raise AppError(429,'document_limit','Elimina documentos anteriores antes de subir más archivos.')
+        mime,content=inspect_document(data,self.settings.billing_max_upload_bytes)
+        lookup=self.store.digest(f'{purpose}:{profile_id or ""}:'+hashlib.sha256(content).hexdigest())
+        existing=self.store.find('document',owner,lookup)
+        if existing:
+            return {'id':existing['id'],'purpose':purpose,'duplicate':True,'expires':existing['_expires']}
+        record=self.store.add('document',owner,{'purpose':purpose,'mime':mime,
+            'data':base64.b64encode(content).decode(),'profile_id':profile_id,
+            'sha256':hashlib.sha256(content).hexdigest(),'analysis_consent':False,'extracted':None},
+            lookup=lookup,expires=time.time()+self.settings.billing_document_retention_hours*3600)
+        if purpose=='ticket':
+            pending={key:None for key in TicketExtraction.model_fields}
+            pending.update(profile_id=profile_id,document_id=record['id'],verified_email=None,status=Status.TICKET_RECIBIDO,
+                status_history=[{'status':Status.TICKET_RECIBIDO,'at':time.time()}],delivery=None,
+                certificate_requested=False,csf_supplement_sent=False,invoice_documents=[],validation=None,note='Pendiente de análisis autorizado.')
+            pending=self.store.add('ticket',owner,pending,lookup=self.store.digest('document:'+record['id']))
+            record['ticket_id']=pending['id']
+            record=self.store.update('document',owner,record['id'],record)
+        self.store.audit(owner,record['id'],'document_received')
+        return {'id':record['id'],'purpose':purpose,'duplicate':False,'expires':record['_expires']}
+
+    async def _extract(self,owner,identifier,purpose,consent):
+        self.require_enabled()
+        document=self.document(owner,identifier)
+        if document['purpose']!=purpose:
+            raise AppError(422,'document_purpose','El archivo no corresponde a este paso.')
+        if document.get('extracted') is not None:
+            return document,document['extracted']
+        if consent is not True:
+            raise AppError(409,'analysis_consent','Autoriza expresamente el análisis del documento con OpenAI antes de continuar.')
+        if self.analysis_lock.locked():
+            raise AppError(429,'billing_busy','Hay otro documento en análisis. Espera unos segundos.')
+        async with self.analysis_lock:
+            day=datetime.now(timezone.utc).date().isoformat()
+            with self.database.connection(True) as conn:
+                used=conn.execute('SELECT COUNT(*) FROM billing_extractions WHERE owner=? AND day=?',(owner,day)).fetchone()[0]
+                if used>=self.settings.billing_max_daily_extractions:
+                    raise AppError(429,'billing_daily_limit','Alcanzaste el límite diario de análisis de documentos.')
+                try:
+                    conn.execute('INSERT INTO billing_extractions VALUES(?,?,?,?)',(owner,day,identifier,'started'))
+                except sqlite3.IntegrityError:
+                    raise AppError(409,'extraction_attempted','Este documento ya se intentó analizar. No se repetirá automáticamente; envía una copia nueva si es necesario.') from None
+            document['analysis_consent']=True
+            document=self.store.update('document',owner,identifier,document)
+            try:
+                result=await self.extractor.extract(purpose,document['mime'],base64.b64decode(document['data']))
+                schema=FiscalExtraction if purpose=='csf' else TicketExtraction
+                extracted=schema.model_validate(result).model_dump()
+                document['extracted']=extracted
+                document=self.store.update('document',owner,identifier,document)
+                with self.database.connection(True) as conn:
+                    conn.execute("UPDATE billing_extractions SET status='complete' WHERE owner=? AND document_id=?",(owner,identifier))
+                return document,extracted
+            except Exception:
+                with self.database.connection(True) as conn:
+                    conn.execute("UPDATE billing_extractions SET status='failed' WHERE owner=? AND document_id=?",(owner,identifier))
+                raise AppError(422,'document_extraction','No se pudo extraer información fiable. Revisa la copia o la configuración antes de repetir.') from None
+
+    async def process_fiscal_certificate(self,owner,document_id,*,consent=False,replace_profile_id=None):
+        document,data=await self._extract(owner,document_id,'csf',consent)
+        if not data['is_fiscal_certificate']:
+            raise AppError(422,'not_fiscal_certificate','El documento no se identificó como Constancia de Situación Fiscal.')
+        if not data['readable']:
+            raise AppError(422,'unreadable_certificate','La constancia no es legible. Envía una fotografía o PDF más claro.')
+        if replace_profile_id:
+            existing=self.store.get('profile',owner,replace_profile_id)
+        else:
+            existing=None
+        fields={key:data[key] for key in ('rfc','name','postal_code','fiscal_regime')}
+        if fields['rfc']:
+            fields['rfc']=fields['rfc'].upper().strip()
+        draft=self.store.add('profile_draft',owner,fields|{'document_id':document['id'],
+            'replace_profile_id':replace_profile_id,'replace_version':existing['_version'] if existing else None,
+            'cfdi_use':None,'email':None},expires=time.time()+3600)
+        return public(draft)|{'complete':validate_fiscal(fields)}
+
+    def extract_fiscal_profile(self,owner,draft_id):
+        self.require_enabled()
+        return public(self.store.get('profile_draft',owner,draft_id))
+
+    def profile_options(self,owner,draft_id,cfdi_use,email):
+        draft=self.store.get('profile_draft',owner,draft_id)
+        if cfdi_use not in CFDI_USES:
+            raise AppError(422,'cfdi_use','Selecciona expresamente un uso de CFDI del catálogo.')
+        draft.update(cfdi_use=cfdi_use,email=normalized_email(email))
+        return self.store.update('profile_draft',owner,draft_id,draft)
+
+    def confirm_fiscal_profile(self,owner,draft_id,*,cfdi_use=None,email=None,confirmed=False):
+        self.require_enabled()
+        if confirmed is not True:
+            raise AppError(409,'profile_confirmation','Revisa y confirma el perfil fiscal antes de guardarlo.')
+        draft=self.store.get('profile_draft',owner,draft_id)
+        if cfdi_use is not None or email is not None:
+            draft=self.profile_options(owner,draft_id,cfdi_use,email)
+        if not validate_fiscal(draft) or draft.get('cfdi_use') not in CFDI_USES or not draft.get('email'):
+            raise AppError(422,'incomplete_fiscal_profile','Faltan datos fiscales legibles, el uso de CFDI o el correo autorizado.')
+        fields={key:draft[key] for key in ('rfc','name','postal_code','fiscal_regime','cfdi_use','email','document_id')}
+        if draft['replace_profile_id']:
+            profile=self.store.update('profile',owner,draft['replace_profile_id'],fields,version=draft['replace_version'])
+        else:
+            if len(self.store.list('profile',owner))>=self.settings.billing_max_profiles:
+                raise AppError(429,'profile_limit','Alcanzaste el límite de perfiles fiscales.')
+            profile=self.store.add('profile',owner,fields)
+        self.store.delete('profile_draft',owner,draft_id)
+        self.store.audit(owner,profile['id'],'profile_confirmed')
+        return public(profile)
+
+    async def analyze_ticket(self,owner,document_id,*,consent=False):
+        document=self.document(owner,document_id)
+        if document['purpose']!='ticket' or not document['profile_id']:
+            raise AppError(409,'fiscal_profile_required','Selecciona primero un perfil fiscal confirmado.')
+        self.store.get('profile',owner,document['profile_id'])
+        pending=self.store.get('ticket',owner,document['ticket_id'])
+        if pending['status'] not in {Status.TICKET_RECIBIDO,Status.ERROR}:
+            raise AppError(409,'duplicate_ticket','Este ticket ya se analizó. Revisa su solicitud antes de repetirlo.')
+        try:
+            document,data=await self._extract(owner,document_id,'ticket',consent)
+        except AppError:
+            self._status(owner,pending,Status.ERROR,'No se pudo completar el análisis. No se repetirá automáticamente.')
+            raise
+        if not data['is_ticket'] or not data['readable']:
+            self._status(owner,pending,Status.REQUIERE_INTERVENCION,'El ticket no es legible.')
+            raise AppError(422,'unreadable_ticket','No se identificó un ticket legible. Envía una copia más clara.')
+        complete=all(data.get(key) for key in ('merchant','purchase_date','folio','total'))
+        merchant=(data.get('issuer_rfc') or data.get('merchant') or '').strip().upper()
+        amount=format(Decimal(data['total']).normalize(),'f') if data.get('total') else ''
+        identity='|'.join([merchant,data.get('purchase_date') or '',(data.get('folio') or '').strip().upper(),amount])
+        lookup=self.store.digest(identity if complete else document['sha256'])
+        duplicate=self.store.find('ticket',owner,lookup)
+        if duplicate and duplicate['id']!=pending['id']:
+            self.store.delete('ticket',owner,pending['id'])
+            self.store.delete('document',owner,document_id)
+            raise AppError(409,'duplicate_ticket','Este ticket ya tiene una solicitud. Revisa su estado antes de repetirlo.')
+        self.store.change_lookup('ticket',owner,pending['id'],lookup)
+        contact=self.contacts.get(data.get('issuer_rfc'))
+        if contact:
+            data.update(billing_email=contact['email'],email_explicitly_for_billing=True,
+                billing_email_evidence='Fuente oficial registrada: '+contact['official_url'])
+        ticket=data|{'profile_id':document['profile_id'],'document_id':document_id,'verified_email':None,
+            'status':Status.DATOS_EXTRAIDOS if complete else Status.REQUIERE_INTERVENCION,
+            'status_history':pending['status_history'],
+            'delivery':None,'certificate_requested':False,'csf_supplement_sent':False,'invoice_documents':[],
+            'validation':None,'note':'' if complete else 'Faltan datos legibles de la compra.'}
+        ticket=self.store.update('ticket',owner,pending['id'],ticket)
+        ticket=self._status(owner,ticket,ticket['status'])
+        return public(ticket)|{'channels':self.detect_billing_channels(owner,ticket['id'])}
+
+    def _status(self,owner,ticket,status,note=''):
+        ticket['status']=status
+        ticket['note']=note
+        ticket.setdefault('status_history',[]).append({'status':status,'at':time.time()})
+        ticket=self.store.update('ticket',owner,ticket['id'],ticket)
+        self.store.audit(owner,ticket['id'],str(status))
+        return ticket
+
+    def detect_billing_channels(self,owner,ticket_id):
+        self.require_enabled()
+        ticket=self.store.get('ticket',owner,ticket_id)
+        # Los adaptadores proceden exclusivamente de configuración del servidor.
+        for adapter in self.portals:
+            if adapter.authorized and adapter.supports(ticket):
+                return {'method':'portal','adapter':adapter.name,'authorized':True,
+                    'reason':'Hay un portal o API compatible, verificado y autorizado.'}
+        if ticket.get('billing_email') and ticket.get('email_explicitly_for_billing'):
+            return {'method':'email','verified':bool(ticket.get('verified_email')),
+                'official_source':(self.contacts.get(ticket.get('issuer_rfc')) or {}).get('official_url'),
+                'reason':'Correo señalado para facturación; requiere verificación y confirmación antes de enviar.'}
+        return {'method':'manual','reason':'No hay un portal compatible autorizado ni un correo identificado expresamente para facturación.'}
+
+    def verify_billing_email(self,owner,ticket_id,*,confirmed=False):
+        ticket=self.store.get('ticket',owner,ticket_id)
+        evidence=ticket.get('billing_email_evidence') or ''
+        email=normalized_email(ticket.get('billing_email') or '')
+        label=re.sub(re.escape(email),'',evidence,flags=re.I)
+        official=self.contacts.get(ticket.get('issuer_rfc'))
+        official_match=bool(official and official['email']==email)
+        ticket_match=bool(ticket.get('email_explicitly_for_billing') and email in evidence.lower() and re.search(r'\bfactur(?:as?|aci[oó]n|ar)\b|\bcfdi\b',label,re.I))
+        if confirmed is not True or not (official_match or ticket_match):
+            raise AppError(409,'unverified_billing_email','Revisa el ticket original: debe señalar expresamente este correo para facturación. Un correo genérico no está autorizado.')
+        ticket['verified_email']={'email':email,'source':'official_source_reviewed_by_user' if official_match else 'ticket_reviewed_by_user','verified_at':time.time(),
+            'document_id':ticket['document_id']}
+        self.store.audit(owner,ticket_id,'billing_email_verified_by_user')
+        return public(self.store.update('ticket',owner,ticket_id,ticket))
+
+    def prepare_invoice_request_email(self,owner,ticket_id,*,include_csf=False,authorize_csf=False):
+        self.require_enabled()
+        ticket=self.store.get('ticket',owner,ticket_id)
+        profile=self.store.get('profile',owner,ticket['profile_id'])
+        if self.detect_billing_channels(owner,ticket_id)['method']=='portal':
+            raise AppError(409,'portal_has_priority','Existe un portal compatible autorizado; utiliza primero ese canal.')
+        verified=ticket.get('verified_email')
+        if not verified:
+            raise AppError(409,'unverified_billing_email','Verifica expresamente el correo de facturación antes de preparar el envío.')
+        if not all(ticket.get(key) for key in ('merchant','purchase_date','folio','total')):
+            raise AppError(422,'incomplete_ticket','Faltan datos legibles de la compra.')
+        supplement=bool(ticket.get('delivery'))
+        if supplement and (not include_csf or not ticket.get('certificate_requested') or ticket.get('csf_supplement_sent')):
+            raise AppError(409,'already_requested','La solicitud ya fue enviada; no se enviará otra automáticamente.')
+        attachments=[self.document(owner,ticket['document_id'])]
+        if include_csf:
+            if authorize_csf is not True or not ticket.get('certificate_requested'):
+                raise AppError(409,'csf_authorization','La constancia completa necesita una petición expresa del comercio y una autorización específica del usuario.')
+            attachments.append(self.document(owner,profile['document_id']))
+        if sum(len(base64.b64decode(item['data'])) for item in attachments)>6_000_000:
+            raise AppError(413,'email_attachment_size','Los adjuntos de un correo deben sumar como máximo 6 MB. Reduce el tamaño de los archivos antes de preparar el envío.')
+        subject='Solicitud de factura CFDI 4.0 — Ticket '+re.sub(r'[\r\n\x00-\x1f]',' ',ticket['folio'])
+        body=f'''Buen día,
+
+Solicito su apoyo con la emisión de la factura correspondiente al ticket adjunto.
+
+Datos de la compra:
+Establecimiento: {ticket['merchant']}
+Fecha: {ticket['purchase_date']}
+Folio: {ticket['folio']}
+Importe: {ticket['total']} {ticket.get('currency') or ''}
+
+Datos fiscales:
+RFC: {profile['rfc']}
+Nombre o razón social: {profile['name']}
+Código postal fiscal: {profile['postal_code']}
+Régimen fiscal: {profile['fiscal_regime']}
+Uso de CFDI: {profile['cfdi_use']}
+
+Agradeceré que los archivos XML y PDF sean enviados a {profile['email']}.
+
+Quedo atento a su confirmación.
+Saludos.'''
+        payload={'ticket_id':ticket_id,'profile_id':profile['id'],'profile_version':profile['_version'],
+            'to':verified['email'],'subject':subject,'body':body,'fiscal_data':{key:profile[key] for key in ('rfc','name','postal_code','fiscal_regime','cfdi_use','email')},
+            'attachments':[{'id':item['id'],'sha256':item['sha256'],'mime':item['mime'],
+                'label':'Constancia de Situación Fiscal' if item['purpose']=='csf' else 'Ticket de compra'} for item in attachments],
+            'include_csf':include_csf,'supplement':supplement,'rfc_message_id':'<'+uuid.uuid4().hex+'@agente.invalid>'}
+        account=self.mail.account(owner)
+        if account:
+            payload['rfc_message_id']='<'+uuid.uuid4().hex+'@'+normalized_email(account['email']).split('@',1)[1]+'>'
+        self._status(owner,ticket,Status.CORREO_PREPARADO)
+        return payload
+
+    def request_email_send_approval(self,owner,ticket_id,*,include_csf=False,authorize_csf=False):
+        for existing in self.store.list('email_approval',owner):
+            if existing['ticket_id']==ticket_id and existing['_state'] in {'claimed','unknown'}:
+                raise AppError(409,'mail_delivery_unknown','Hay un envío con resultado incierto. Revísalo manualmente antes de repetir cualquier acción.')
+            if existing['ticket_id']==ticket_id and existing['_state']=='pending':
+                if bool(existing['include_csf'])!=bool(include_csf):
+                    raise AppError(409,'pending_email_approval','Rechaza primero el borrador anterior antes de cambiar sus adjuntos.')
+                return public(existing)|{'expires':existing['_expires']}
+        payload=self.prepare_invoice_request_email(owner,ticket_id,include_csf=include_csf,authorize_csf=authorize_csf)
+        approval=self.store.add('email_approval',owner,payload,expires=time.time()+self.settings.approval_ttl_seconds,state='pending')
+        ticket=self.store.get('ticket',owner,ticket_id)
+        ticket['approval_id']=approval['id']
+        self._status(owner,ticket,Status.PENDIENTE_CONFIRMACION)
+        return public(approval)|{'expires':approval['_expires']}
+
+    async def send_invoice_request_email(self,owner,approval_id,*,confirmed=False):
+        self.require_enabled()
+        if confirmed is not True:
+            raise AppError(409,'email_confirmation','Confirma expresamente el destinatario, los datos, el mensaje y los adjuntos.')
+        approval=self.store.get('email_approval',owner,approval_id)
+        ticket=self.store.get('ticket',owner,approval['ticket_id'])
+        profile=self.store.get('profile',owner,approval['profile_id'])
+        if profile['_version']!=approval['profile_version'] or (ticket.get('verified_email') or {}).get('email')!=approval['to']:
+            raise AppError(409,'approval_changed','Los datos cambiaron. Prepara y revisa una solicitud nueva.')
+        documents=[self.document(owner,item['id']) for item in approval['attachments']]
+        if any(document['sha256']!=preview['sha256'] for document,preview in zip(documents,approval['attachments'])):
+            raise AppError(409,'attachment_changed','Los adjuntos cambiaron. Revisa una solicitud nueva.')
+        if not self.settings.billing_live_email_enabled or not self.mail.ready(owner):
+            raise AppError(503,'email_disabled','El envío real está desactivado o falta conectar Gmail. No se envió ningún correo.')
+        if ticket.get('delivery') and (not approval['supplement'] or ticket.get('csf_supplement_sent')):
+            raise AppError(409,'already_requested','La solicitud ya fue enviada.')
+        self.store.claim('email_approval',owner,approval_id)
+        message=EmailMessage()
+        message['From']=normalized_email(self.mail.account(owner)['email'])
+        message['To']=approval['to']
+        message['Subject']=approval['subject']
+        message['Message-ID']=approval['rfc_message_id']
+        message['Reply-To']=normalized_email(self.mail.account(owner)['email'])
+        if approval['supplement']:
+            message['In-Reply-To']=ticket['delivery']['rfc_message_id']
+            message['References']=ticket['delivery']['rfc_message_id']
+        message.set_content(approval['body'])
+        for document in documents:
+            extension='pdf' if document['mime']=='application/pdf' else 'jpg'
+            main,sub=document['mime'].split('/',1)
+            message.add_attachment(base64.b64decode(document['data']),maintype=main,subtype=sub,
+                filename=('constancia' if document['purpose']=='csf' else 'ticket')+'.'+extension)
+        try:
+            async with asyncio.timeout(25):
+                delivery=await self.mail.send(owner,message,thread_id=ticket['delivery']['thread_id'] if approval['supplement'] else None)
+            previous=(ticket.get('delivery') or {}).get('request_message_ids',[])
+            ticket['delivery']={'message_id':delivery.message_id,'thread_id':delivery.thread_id,
+                'request_message_ids':[*previous,approval['rfc_message_id']],
+                'fiscal_data':approval['fiscal_data'],
+                'rfc_message_id':approval['rfc_message_id'],'recipient':approval['to'],'sent_at':time.time()}
+            ticket['csf_supplement_sent']=bool(approval['include_csf']) or ticket.get('csf_supplement_sent',False)
+            self.store.update('email_approval',owner,approval_id,approval,state='used')
+            ticket=self._status(owner,ticket,Status.CORREO_ENVIADO)
+            ticket=self._status(owner,ticket,Status.ESPERANDO_RESPUESTA,'Solicitud enviada; todavía no es una factura emitida.')
+            return public(ticket)
+        except (Exception,asyncio.CancelledError):
+            self.store.update('email_approval',owner,approval_id,approval,state='unknown')
+            self._status(owner,ticket,Status.REQUIERE_INTERVENCION,'No se pudo confirmar el envío. Revisa Gmail antes de repetir: el correo podría haberse enviado.')
+            raise AppError(502,'mail_delivery_unknown','El resultado del envío es incierto. No se reintentará automáticamente.') from None
+
+    def reject_email(self,owner,approval_id):
+        approval=self.store.get('email_approval',owner,approval_id)
+        if approval['_state']!='pending':
+            raise AppError(409,'billing_approval','La autorización ya fue utilizada.')
+        self.store.update('email_approval',owner,approval_id,approval,state='rejected')
+        ticket=self.store.get('ticket',owner,approval['ticket_id'])
+        return public(self._status(owner,ticket,Status.CORREO_PREPARADO,'Envío rechazado; no se ejecutó.'))
+
+    def mark_certificate_required(self,owner,ticket_id,*,confirmed=False,evidence=''):
+        if confirmed is not True or not 10<=len(evidence.strip())<=1000:
+            raise AppError(409,'merchant_csf_request','Confirma y describe la petición expresa de constancia completa del comercio.')
+        ticket=self.store.get('ticket',owner,ticket_id)
+        ticket.update(certificate_requested=True,certificate_request_evidence=evidence)
+        return public(self.store.update('ticket',owner,ticket_id,ticket))
+
+    async def track_invoice_email(self,owner,ticket_id,*,authorize_sat=False):
+        ticket=self.store.get('ticket',owner,ticket_id)
+        if not ticket.get('delivery'):
+            raise AppError(409,'email_not_sent','Este ticket todavía no tiene un envío confirmado.')
+        if not self.mail.ready(owner):
+            raise AppError(503,'gmail_not_connected','Conecta tu buzón autorizado de Gmail.')
+        try:
+            async with asyncio.timeout(self.settings.run_timeout_seconds):
+                replies=await self.mail.fetch(owner,ticket)
+        except TimeoutError:
+            raise AppError(504,'mailbox_timeout','La consulta del buzón tardó demasiado. No se repetirá automáticamente.') from None
+        for reply in replies:
+            try:
+                await self.process_invoice_response(owner,ticket_id,reply,authorize_sat=False)
+            except AppError:
+                latest=self.store.get('ticket',owner,ticket_id)
+                self._status(owner,latest,Status.REQUIERE_INTERVENCION,'La respuesta requiere revisión: su remitente, archivos o XML no pudieron validarse.')
+                raise
+        current=self.store.get('ticket',owner,ticket_id)
+        if authorize_sat and current.get('validation') and not current['validation'].get('sat_verified'):
+            return await self.validate_cfdi(owner,ticket_id,authorize_sat=True)
+        return public(self.store.get('ticket',owner,ticket_id))
+
+    def configure_tracking(self,owner,ticket_id,*,enabled,confirmed=False):
+        if confirmed is not True:
+            raise AppError(409,'tracking_confirmation','Confirma la política de consultas del buzón antes de activarla.')
+        ticket=self.store.get('ticket',owner,ticket_id)
+        if enabled:
+            if not self.settings.billing_background_tracking_enabled or not self.mail.ready(owner) or not ticket.get('delivery'):
+                raise AppError(503,'tracking_disabled','Falta habilitar el seguimiento en el servidor, conectar Gmail o confirmar el envío.')
+            if ticket['status']==Status.FACTURACION_COMPLETADA:
+                raise AppError(409,'tracking_complete','La solicitud ya está completada.')
+            previous=ticket.get('tracking') or {}
+            checks=previous.get('checks',0)
+            if checks>=self.settings.billing_tracking_max_checks:
+                raise AppError(429,'tracking_limit','Esta solicitud alcanzó su máximo de consultas automáticas. Continúa mediante revisión manual.')
+            ticket['tracking']={'enabled':True,'checks':checks,'errors':0,
+                'next_check':time.time()+self.settings.billing_tracking_interval_seconds,'authorized_at':time.time(),
+                'notification_signature':self.store.digest(str((ticket['status'],len(ticket['invoice_documents']),ticket.get('merchant_csf_request_detected'),ticket.get('note'))))}
+        else:
+            ticket.setdefault('tracking',{})['enabled']=False
+        return public(self.store.update('ticket',owner,ticket_id,ticket,state='tracking' if enabled else 'active'))
+
+    async def poll_due(self):
+        if not self.enabled or not self.settings.billing_background_tracking_enabled or self.poll_lock.locked():
+            return 0
+        count=0
+        async with self.poll_lock:
+            for owner,ticket in self.store.tracking_tickets():
+                policy=ticket.get('tracking') or {}
+                if not policy.get('enabled') or policy.get('next_check',0)>time.time():
+                    continue
+                if policy.get('checks',0)>=self.settings.billing_tracking_max_checks:
+                    policy['enabled']=False
+                    ticket['tracking']=policy
+                    ticket=self._status(owner,ticket,Status.REQUIERE_INTERVENCION,'Se alcanzó el límite de consultas automáticas. Revisa la solicitud manualmente.')
+                    self.store.update('ticket',owner,ticket['id'],ticket,state='active')
+                    continue
+                policy['checks']=policy.get('checks',0)+1
+                policy['next_check']=time.time()+self.settings.billing_tracking_interval_seconds
+                ticket['tracking']=policy
+                self.store.update('ticket',owner,ticket['id'],ticket)
+                count+=1
+                try:
+                    await self.track_invoice_email(owner,ticket['id'],authorize_sat=False)
+                    current=self.store.get('ticket',owner,ticket['id'])
+                    current['tracking']['errors']=0
+                except AppError:
+                    current=self.store.get('ticket',owner,ticket['id'])
+                    current['tracking']['errors']=current['tracking'].get('errors',0)+1
+                    if current['tracking']['errors']>=3:
+                        current['tracking']['enabled']=False
+                        current=self._status(owner,current,Status.REQUIERE_INTERVENCION,'El seguimiento se detuvo tras tres errores. Revisa la conexión del buzón.')
+                if current['status']==Status.FACTURACION_COMPLETADA:
+                    current['tracking']['enabled']=False
+                signature=self.store.digest(str((current['status'],len(current['invoice_documents']),current.get('merchant_csf_request_detected'),current.get('note'))))
+                changed=signature!=current['tracking'].get('notification_signature')
+                current['tracking']['notification_signature']=signature
+                self.store.update('ticket',owner,current['id'],current,state='tracking' if current['tracking']['enabled'] else 'active')
+                if changed and self.notifier:
+                    await self.notifier(owner,current)
+        return count
+
+    async def process_invoice_response(self,owner,ticket_id,reply,*,authorize_sat=False):
+        ticket=self.store.get('ticket',owner,ticket_id)
+        references=(ticket.get('delivery') or {}).get('request_message_ids',[(ticket.get('delivery') or {}).get('rfc_message_id')])
+        if not ticket.get('delivery') or reply.in_reply_to not in references or normalized_email(reply.sender)!=ticket['delivery']['recipient']:
+            raise AppError(409,'unrelated_reply','La respuesta no coincide con el destinatario y el hilo de esta solicitud.')
+        lookup=self.store.digest(reply.identifier)
+        if self.store.find('mail_reply',owner,lookup):
+            return public(ticket)
+        if len(reply.attachments)>6 or sum(len(item.data) for item in reply.attachments)>self.settings.billing_max_upload_bytes:
+            raise AppError(413,'reply_size','Los adjuntos de la respuesta superan el límite.')
+        if self.store.count('document',owner)+len(reply.attachments)>self.settings.billing_max_documents:
+            raise AppError(429,'document_limit','Elimina archivos anteriores antes de guardar más adjuntos de factura.')
+        profile=ticket['delivery'].get('fiscal_data') or self.store.get('profile',owner,ticket['profile_id'])
+        record=self.store.add('mail_reply',owner,{'ticket_id':ticket_id,'text':reply.text[:8000],'message_id':reply.identifier},lookup=lookup)
+        if re.search(r'constancia|situaci[oó]n fiscal',reply.text,re.I):
+            ticket['merchant_csf_request_detected']=True
+        validation=None
+        total=0
+        for attachment in reply.attachments[:6]:
+            total+=len(attachment.data)
+            if total>self.settings.billing_max_upload_bytes:
+                raise AppError(413,'reply_size','Los adjuntos de la respuesta superan el límite.')
+            mime,data=inspect_document(attachment.data,self.settings.billing_max_upload_bytes,allow_xml=True)
+            if mime=='application/xml':
+                validation=validate_cfdi(data,profile,ticket)
+                if ticket.get('validation') and ticket['validation']['uuid']!=validation['uuid']:
+                    raise AppError(409,'conflicting_invoice','Hay más de un UUID para esta compra. Revisa los documentos antes de continuar.')
+                invoice_lookup=self.store.digest(validation['uuid'])
+                duplicate=self.store.find('invoice_uuid',owner,invoice_lookup)
+                if duplicate and duplicate['ticket_id']!=ticket_id:
+                    raise AppError(409,'duplicate_invoice','El mismo UUID ya está asociado a otro ticket.')
+                if not duplicate:
+                    self.store.add('invoice_uuid',owner,{'ticket_id':ticket_id},lookup=invoice_lookup)
+            elif mime!='application/pdf':
+                continue
+            document=self.store.add('document',owner,{'purpose':'invoice_xml' if mime=='application/xml' else 'invoice_pdf',
+                'mime':mime,'data':base64.b64encode(data).decode(),'sha256':hashlib.sha256(data).hexdigest(),
+                'ticket_id':ticket_id,'profile_id':ticket['profile_id']},
+                expires=time.time()+self.settings.billing_invoice_retention_days*86400)
+            ticket['invoice_documents'].append(document['id'])
+        if validation:
+            ticket['validation']=validation
+            ticket=self._status(owner,ticket,Status.FACTURA_RECIBIDA,'XML y datos del receptor cotejados; falta comprobar vigencia ante el SAT.')
+        elif not ticket.get('validation'):
+            return public(self._status(owner,ticket,Status.REQUIERE_INTERVENCION,
+                'La respuesta no contiene un XML CFDI válido. Un PDF por sí solo no lo acredita.'))
+        else:
+            ticket=self.store.update('ticket',owner,ticket_id,ticket)
+        if authorize_sat:
+            return await self.validate_cfdi(owner,ticket_id,authorize_sat=True)
+        if ticket.get('validation') and ticket['validation'].get('sat_verified'):
+            return self._finish_verified_invoice(owner,ticket)
+        return public(self._status(owner,ticket,Status.REQUIERE_INTERVENCION,'Revisa los archivos y autoriza la consulta de vigencia ante el SAT.'))
+
+    def _finish_verified_invoice(self,owner,ticket):
+        types={self.document(owner,identifier)['mime'] for identifier in ticket['invoice_documents']}
+        if {'application/xml','application/pdf'}.issubset(types):
+            ticket=self._status(owner,ticket,Status.FACTURACION_COMPLETADA,'PDF y XML disponibles; datos cotejados y vigencia SAT confirmada.')
+        return public(ticket)
+
+    async def validate_cfdi(self,owner,ticket_id,*,authorize_sat=False):
+        ticket=self.store.get('ticket',owner,ticket_id)
+        if not ticket.get('validation'):
+            raise AppError(409,'xml_required','Primero se necesita un XML compatible con el ticket y el perfil.')
+        if authorize_sat is not True:
+            raise AppError(409,'sat_consent','Autoriza compartir RFC, UUID e importe con el SAT para consultar la vigencia.')
+        if not self.settings.billing_sat_enabled:
+            raise AppError(503,'sat_disabled','La consulta de vigencia al SAT está desactivada en este servidor.')
+        verdict=await self.sat.verify(ticket['validation'])
+        if not verdict.get('query_success') or not verdict.get('vigente'):
+            return public(self._status(owner,ticket,Status.REQUIERE_INTERVENCION,'El SAT no confirmó que el CFDI esté vigente.'))
+        ticket['validation']['sat_verified']=True
+        ticket['validation']['sat_checked_at']=time.time()
+        ticket=self._status(owner,ticket,Status.FACTURA_VALIDADA,'XML cotejado y vigencia consultada al SAT; no es una verificación criptográfica de sellos.')
+        return self._finish_verified_invoice(owner,ticket)
+
+    def delete_profile(self,owner,profile_id):
+        profile=self.store.get('profile',owner,profile_id)
+        related={ticket['id'] for ticket in self.store.list('ticket',owner) if ticket['profile_id']==profile_id}
+        if any(record['ticket_id'] in related and record['_state']=='claimed' for record in self.store.list('email_approval',owner)):
+            raise AppError(409,'send_in_progress','Espera a que termine el envío antes de eliminar el perfil.')
+        for ticket in self.store.list('ticket',owner):
+            if ticket['profile_id']==profile_id:
+                self.delete_ticket(owner,ticket['id'])
+        for draft in self.store.list('profile_draft',owner):
+            if draft.get('replace_profile_id')==profile_id:
+                self.store.delete('profile_draft',owner,draft['id'])
+        try:
+            self.store.delete('document',owner,profile['document_id'])
+        except AppError as error:
+            if error.status!=404:
+                raise
+        self.store.delete('profile',owner,profile_id)
+        self.store.audit(owner,profile_id,'profile_deleted')
+
+    def delete_ticket(self,owner,ticket_id):
+        ticket=self.store.get('ticket',owner,ticket_id)
+        for kind in ('email_approval','mail_reply','invoice_uuid'):
+            for record in self.store.list(kind,owner):
+                if record['ticket_id']==ticket_id:
+                    if kind=='email_approval' and record['_state']=='claimed':
+                        raise AppError(409,'send_in_progress','Espera a que termine el envío antes de eliminar el ticket.')
+                    self.store.delete(kind,owner,record['id'])
+        for identifier in [ticket['document_id'],*ticket['invoice_documents']]:
+            try:
+                self.store.delete('document',owner,identifier)
+            except AppError as error:
+                if error.status!=404:
+                    raise
+        self.store.delete('ticket',owner,ticket_id)

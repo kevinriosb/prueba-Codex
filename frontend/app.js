@@ -26,8 +26,9 @@
       throw error;
     } finally { clearTimeout(timer); }
   }
+  window.agentPrivateApi = api;
   function showError(id, message) { $(id).textContent = message; $(id).hidden = !message; }
-  function showLogin() { csrf = ''; current = null; $('workspace').hidden = true; $('login-view').hidden = false; $('messages').replaceChildren(); }
+  function showLogin() { csrf = ''; current = null; $('workspace').hidden = true; $('login-view').hidden = false; $('messages').replaceChildren(); document.dispatchEvent(new Event('agent:signedout')); }
   function setBusy(value) {
     busy = value;
     for (const id of ['send-button', 'new-chat', 'delete-chat', 'logout', 'approve-action', 'reject-action']) $(id).disabled = value;

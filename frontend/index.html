@@ -8,7 +8,9 @@
   <title>Mi agente · Asistente personal</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%236454d8'/%3E%3Ctext x='32' y='45' text-anchor='middle' fill='white' font-size='44'%3E✦%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/billing.css">
   <script src="/assets/app.js" defer></script>
+  <script src="/assets/billing.js" defer></script>
 </head>
 <body>
   <div id="login-view" class="login-view">
@@ -48,6 +50,7 @@
         <div class="header-actions"><span class="private-badge"><span aria-hidden="true">◉</span> Privado</span><button id="delete-chat" class="icon-button" type="button" aria-label="Eliminar conversación" title="Eliminar conversación"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/></svg></button></div>
       </header>
       <p id="configuration-warning" class="configuration-warning" role="status" hidden>Falta configurar la clave de IA en el servidor. Consulta el README para activar las respuestas.</p>
+      <div class="billing-shortcut"><button id="open-billing" class="secondary" type="button">Facturación · Perfiles y tickets</button></div>
       <div id="chat-scroll" class="chat-scroll">
         <section id="welcome" class="welcome" aria-labelledby="welcome-title">
           <span class="welcome-icon" aria-hidden="true">✦</span>
@@ -81,6 +84,37 @@
       </div>
     </main>
   </div>
+  <dialog id="billing-dialog" aria-labelledby="billing-title">
+    <header class="billing-header"><div><p class="eyebrow">TU INFORMACIÓN FISCAL PRIVADA</p><h1 id="billing-title">Perfiles y facturación</h1></div><button id="close-billing" class="secondary" type="button">Volver al chat</button></header>
+    <p id="billing-message" role="status"></p>
+    <p id="billing-error" class="error-message" role="alert" hidden></p>
+    <p id="billing-disabled" hidden>El administrador debe activar el almacenamiento cifrado antes de recibir documentos fiscales. Consulta la guía de facturación del proyecto.</p>
+    <section id="billing-key-setup" class="billing-card" hidden><h2>Activar el cifrado</h2><p>Genera una clave nueva en este navegador y cópiala a la variable privada <strong>BILLING_ENCRYPTION_KEY</strong> del servidor. Es distinta de la clave de OpenAI. Conserva una copia segura: perderla impide recuperar los datos fiscales.</p><button id="generate-billing-key" class="secondary" type="button">Generar clave nueva de cifrado</button><label for="generated-billing-key">Clave nueva, generada únicamente en este navegador</label><input id="generated-billing-key" readonly autocomplete="off"><button id="copy-billing-key" class="secondary" type="button">Copiar clave nueva</button></section>
+    <div id="billing-content" hidden>
+      <section class="billing-card"><h2>1. Confirma tu perfil fiscal</h2><p>Primero necesitamos tu Constancia de Situación Fiscal. Los archivos originales se conservan temporalmente y no se adjuntan a correos automáticamente.</p>
+        <div id="fiscal-profiles"></div>
+        <form id="csf-form" class="billing-form">
+          <label for="csf-replace">Perfil que deseas agregar o actualizar</label><select id="csf-replace"><option value="">Agregar otro perfil</option></select>
+          <label for="csf-file">Constancia en PDF o fotografía (hasta 8 MB, PDF de hasta 5 páginas)</label><input id="csf-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required>
+          <label class="billing-check"><input id="csf-consent" type="checkbox" required> Autorizo enviar este documento a OpenAI para extraer sus datos. No se enviará al comercio.</label>
+          <button class="primary" type="submit">Extraer datos de la constancia</button>
+        </form>
+        <div id="fiscal-draft" hidden></div>
+      </section>
+      <section class="billing-card"><h2>2. Recibe y revisa tu ticket</h2>
+        <form id="ticket-form" class="billing-form">
+          <label for="ticket-profile">Perfil fiscal confirmado</label><select id="ticket-profile" required><option value="">Selecciona un perfil</option></select>
+          <label for="ticket-file">Ticket en PDF o fotografía</label><input id="ticket-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required>
+          <label class="billing-check"><input id="ticket-consent" type="checkbox" required> Autorizo el análisis de este ticket con OpenAI.</label>
+          <button id="analyze-ticket" class="primary" type="submit">Analizar ticket</button>
+        </form>
+      </section>
+      <section class="billing-card"><h2>3. Conecta tu Gmail</h2><p id="gmail-status"></p><p>Google solicitará permiso para enviar y leer correo. Conectar el buzón no envía solicitudes. Puedes desconectarlo cuando quieras.</p><button id="connect-gmail" class="secondary" type="button">Conectar Gmail</button><button id="disconnect-gmail" class="secondary" type="button" hidden>Desconectar Gmail</button></section>
+      <section class="billing-card"><h2>Archivos temporales</h2><p>Puedes eliminar los originales antes de su vencimiento. Si eliminas un adjunto pendiente, el envío quedará bloqueado.</p><div id="billing-documents"></div></section>
+      <section class="billing-card"><h2>Tus solicitudes</h2><button id="refresh-billing" class="secondary" type="button">Actualizar estado</button><div id="billing-tickets"></div><div id="billing-ticket-detail" hidden></div><div id="billing-email-preview" hidden></div></section>
+      <p class="billing-note">Un correo enviado todavía no es una factura. Un PDF solo no acredita un CFDI válido. Las consultas al SAT requieren autorización y no verifican criptográficamente los sellos. No hay recordatorios automáticos.</p>
+    </div>
+  </dialog>
   <noscript>Activa JavaScript para usar el chat. Tus claves de IA se configuran únicamente en el servidor.</noscript>
 </body>
 </html>

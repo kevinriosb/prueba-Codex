@@ -1,7 +1,7 @@
 import asyncio
 import secrets
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -19,6 +19,10 @@ from .config import Settings
 from .database import Database
 from .errors import AppError
 from .security import BodyLimitMiddleware
+from .billing.api import create_billing_router
+from .billing.service import BillingService
+from .billing.tools import build_billing_tools
+from .billing.telegram import TelegramBridge, telegram_router
 
 FRONTEND = Path(__file__).resolve().parents[2] / 'frontend'
 
@@ -44,7 +48,8 @@ class DeleteConfirmation(Payload):
     confirmed: Literal[True]
 
 
-def create_app(settings=None, *, model=None, extra_tools=()):
+def create_app(settings=None, *, model=None, extra_tools=(), billing_extractor=None,
+               mail_provider=None, portal_adapters=(), sat_verifier=None, telegram_client=None):
     settings = settings or Settings()
 
     @asynccontextmanager
@@ -53,9 +58,41 @@ def create_app(settings=None, *, model=None, extra_tools=()):
         auth = await asyncio.to_thread(Auth, database, settings)
         service = AgentService(settings, database, model=model, extra_tools=extra_tools)
         app.state.database, app.state.auth, app.state.service = database, auth, service
+        billing=BillingService(settings,database,service,extractor=billing_extractor,mail=mail_provider,
+            portals=portal_adapters,sat=sat_verifier)
+        app.state.billing=billing
+        app.state.telegram=TelegramBridge(settings,billing,client=telegram_client)
+        billing.notifier=app.state.telegram.notify
+        if billing.enabled:
+            service.tools.extend(build_billing_tools(billing))
+            service.agent=service.agent.clone(tools=service.tools)
+
+        async def purge_documents():
+            while True:
+                await asyncio.sleep(300)
+                if billing.enabled:
+                    await asyncio.to_thread(billing.store.purge)
+
+        cleanup=asyncio.create_task(purge_documents())
+        async def track_mailboxes():
+            while True:
+                await asyncio.sleep(60)
+                try:
+                    await billing.poll_due()
+                except Exception:
+                    audit('billing_background_failed',code='tracking_error')
+        tracking_task=asyncio.create_task(track_mailboxes())
         try:
             yield
         finally:
+            cleanup.cancel()
+            tracking_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleanup
+            with suppress(asyncio.CancelledError):
+                await tracking_task
+            await billing.close()
+            await app.state.telegram.client.close()
             await service.close()
 
     app = FastAPI(title='Agente personal', version='0.1.0', lifespan=lifespan,
@@ -63,13 +100,13 @@ def create_app(settings=None, *, model=None, extra_tools=()):
         docs_url='/docs' if settings.app_env == 'development' else None,
         redoc_url=None, openapi_url='/openapi.json' if settings.app_env == 'development' else None)
     app.state.settings = settings
-    app.add_middleware(BodyLimitMiddleware)
+    app.add_middleware(BodyLimitMiddleware,upload_maximum=settings.billing_max_upload_bytes)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.hosts)
 
     @app.middleware('http')
     async def security(request, call_next):
         request.state.request_id = str(uuid.uuid4())
-        if request.method in {'POST', 'PUT', 'PATCH', 'DELETE'}:
+        if request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and request.url.path!='/integrations/telegram/webhook':
             origin = request.headers.get('origin', '')
             try:
                 parsed = urlsplit(origin)
@@ -122,7 +159,7 @@ def create_app(settings=None, *, model=None, extra_tools=()):
 
     @app.get('/assets/{filename}')
     async def asset(filename: str):
-        if filename not in {'app.js', 'styles.css'}:
+        if filename not in {'app.js', 'styles.css','billing.js','billing.css'}:
             raise AppError(404, 'not_found', 'Archivo no encontrado.')
         return FileResponse(FRONTEND / filename)
 
@@ -180,4 +217,6 @@ def create_app(settings=None, *, model=None, extra_tools=()):
     async def approval(identifier: uuid.UUID, approval_id: uuid.UUID, payload: Decision, request: Request, user=Depends(authenticated)):
         return await request.app.state.service.execute(str(identifier), user['id'], approval_id=str(approval_id), approve=payload.approved)
 
+    app.include_router(create_billing_router(Payload))
+    app.include_router(telegram_router())
     return app

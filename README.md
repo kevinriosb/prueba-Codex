@@ -1,6 +1,8 @@
 # Mi agente · Asistente web privado
 
-Un agente de IA con interfaz web en español para iPad y computadora. Usa **Python 3.12+, FastAPI y el OpenAI Agents SDK**, con una sola instancia de agente y dos herramientas autorizadas: cálculo y fecha/hora del servidor.
+Un agente de IA con interfaz web en español para iPad y computadora. Usa **Python 3.12+, FastAPI y el OpenAI Agents SDK**, con una sola instancia de agente y dos herramientas básicas autorizadas: cálculo y fecha/hora del servidor.
+
+También incluye un módulo de **perfil fiscal y solicitudes de factura por Gmail**, con CSF cifrada, tickets PDF/foto, aprobación de correos, seguimiento y recepción por Telegram. Está desactivado hasta configurar su clave de cifrado; Gmail, Telegram y SAT necesitan configuración y autorización. Consulta la [guía de facturación desde el iPad](docs/FACTURACION.md) para conocer qué está implementado, qué se probó con simulaciones y cómo conectarlo.
 
 Repositorio del proyecto: [kevinriosb/prueba-Codex](https://github.com/kevinriosb/prueba-Codex).
 
@@ -17,7 +19,7 @@ Repositorio del proyecto: [kevinriosb/prueba-Codex](https://github.com/kevinrios
 
 La versión inicial tiene **un usuario propietario**, configurado por variables de entorno. No incluye registro público de usuarios. El backend vincula cada conversación y aprobación a su propietario; las pruebas comprueban que un usuario no puede leer ni modificar conversaciones ajenas.
 
-No hay acceso a shell, ejecución de código generado, archivos privados, navegación web, correo ni análisis de imágenes en esta versión.
+No hay acceso a shell, ejecución de código generado ni navegación arbitraria. El módulo fiscal admite análisis autorizado de PDF/foto y correo mediante Gmail; sus datos se revisan en Facturación y no se incorporan al historial normal del chat mediante herramientas.
 
 ## Desde tu iPad: qué necesitas para probarla
 

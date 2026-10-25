@@ -35,6 +35,27 @@ class Settings(BaseSettings):
     max_conversation_turns: int = Field(default=20, ge=1, le=50)
     max_conversations: int = Field(default=30, ge=1, le=100)
     approval_ttl_seconds: int = Field(default=900, ge=60, le=3600)
+    billing_encryption_key: SecretStr = SecretStr('')
+    billing_max_upload_bytes: int = Field(default=8_388_608, ge=1024, le=12_582_912)
+    billing_document_retention_hours: int = Field(default=24, ge=1, le=168)
+    billing_invoice_retention_days: int = Field(default=30, ge=1, le=90)
+    billing_max_documents: int = Field(default=40, ge=1, le=100)
+    billing_max_profiles: int = Field(default=10, ge=1, le=20)
+    billing_max_daily_extractions: int = Field(default=10, ge=1, le=30)
+    billing_max_daily_telegram_updates: int = Field(default=100, ge=10, le=500)
+    billing_extraction_max_tokens: int = Field(default=1400, ge=600, le=2000)
+    billing_live_email_enabled: bool = False
+    billing_sat_enabled: bool = False
+    billing_verified_contacts_json: str = Field(default='[]',max_length=20_000)
+    billing_background_tracking_enabled: bool = False
+    billing_tracking_interval_seconds: int = Field(default=3600,ge=300,le=86400)
+    billing_tracking_max_checks: int = Field(default=72,ge=1,le=100)
+    gmail_client_id: str = ''
+    gmail_client_secret: SecretStr = SecretStr('')
+    gmail_redirect_uri: str = ''
+    telegram_bot_token: SecretStr = SecretStr('')
+    telegram_webhook_secret: SecretStr = SecretStr('')
+    telegram_allowed_user_ids: str = ''
 
     @field_validator("app_login_password")
     @classmethod
