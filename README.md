@@ -131,7 +131,7 @@ La reserva es un control local de admisión, **no una garantía de un importe m�
 
 ## Confirmaciones para herramientas futuras
 
-Las herramientas iniciales son de lectura y cálculo: no modifican sistemas externos. No hay un botón que publique, pague o envíe mensajes.
+Las herramientas iniciales del chat general son de lectura y cálculo. El módulo fiscal añade envío de correo mediante Gmail cuando se configura y habilita expresamente; cada envío requiere su propia revisión y aprobación. La guía [FACTURACION.md](docs/FACTURACION.md) describe ese circuito y sus límites.
 
 Para añadir una API, crea su módulo en `backend/app/tools/` y registra una `ToolSpec`. Si tiene efectos de escritura, usa `effect='write'`: el registro fuerza `needs_approval=True` en el SDK. Añade los permisos, validaciones, límites y pruebas necesarios antes de habilitarla. Nunca dejes que el modelo o el navegador elijan una URL, un comando o una herramienta arbitraria.
 
@@ -169,6 +169,13 @@ uv run --frozen python scripts/container_smoke.py
 La segunda orden crea y elimina únicamente sus contenedores y volumen locales de prueba. Comprueba salud, autenticación, permisos y persistencia al recrear el contenedor. No conecta OpenAI ni despliega en Railway.
 
 Si tu red utiliza una autoridad de certificación privada, el Dockerfile permite proporcionar **su certificado de confianza** mediante el secreto de BuildKit `build_ca`. No desactives TLS ni alteres los hashes. En este entorno se utilizó `docker build --secret id=build_ca,src=/etc/ssl/certs/ca-certificates.crt -t prueba-codex-agent:local .`. El certificado se monta solo durante la instalación y no se copia a la imagen final.
+
+## VPS Hostinger con CyberPanel
+
+Si ya tienes un VPS con Docker, puedes usarlo como alojamiento. La guía
+[docs/HOSTINGER.md](docs/HOSTINGER.md) incluye la preparación para AlmaLinux y
+CyberPanel, el Compose con puerto local, almacenamiento persistente y configuración
+privada interactiva. No reemplaza tu servidor web ni ejecuta un despliegue remoto.
 
 ## Railway: preparación para un despliegue posterior
 

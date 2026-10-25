@@ -95,6 +95,17 @@ def test_first_interaction_requires_fiscal_profile_and_consent(billing_client):
     assert client.get('/api/billing/config').json()['profiles']==[]
 
 
+def test_corrupted_png_is_rejected_without_saving_or_calling_ai(billing_client):
+    client,app,extractor,*_=billing_client()
+    corrupted=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC')
+    response=client.post('/api/billing/documents?purpose=csf',content=corrupted,
+        headers={'Content-Type':'application/octet-stream'})
+    assert response.status_code==422
+    assert response.json()['error']['code']=='invalid_document'
+    assert app.state.billing.store.list('document','owner')==[]
+    assert extractor.calls==[]
+
+
 def test_received_ticket_has_persisted_state_before_ai(billing_client):
     client,app,extractor,*_=billing_client()
     selected=profile(client)['id']

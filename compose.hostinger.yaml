@@ -1,0 +1,53 @@
+name: lilyapp-agent
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lilyapp-agent:local
+    init: true
+    restart: unless-stopped
+    env_file:
+      - path: .env.hostinger
+        required: true
+        format: raw
+    environment:
+      APP_ENV: production
+      APP_SECURE_COOKIES: "true"
+      APP_DATABASE_PATH: /data/agent.sqlite3
+      HOST: 0.0.0.0
+      PORT: "8000"
+    ports:
+      - "127.0.0.1:18000:8000"
+    volumes:
+      - agent_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=1770
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: "1.0"
+    mem_limit: 1g
+    pids_limit: 128
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json,urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3))['status']=='ok'"
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+volumes:
+  agent_data:

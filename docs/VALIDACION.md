@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado tras la ampliación fiscal de `.venv/bin/python -m pytest -q --tb=short`: **105 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **106 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA.
 
 Se comprobaron:
 
@@ -99,6 +99,31 @@ La guía de configuración y los límites de estas integraciones están en [FACT
 Se revisaron los archivos de publicación para detectar las credenciales configuradas, formatos conocidos de claves y artefactos privados. No se encontraron credenciales. `.env`, `.local/`, `.venv/` y `data/agent.sqlite3` están excluidos de Git. El archivo `.env.example` contiene nombres y valores de ejemplo, sin secretos. La publicación en GitHub no autoriza ni ejecuta el despliegue en Railway.
 
 ## Pendiente para una prueba real desde el iPad
+
+### Preparación local para Hostinger
+
+Se añadieron `compose.hostinger.yaml`, una plantilla sin secretos y un asistente
+interactivo compatible con Python 3.9+ del VPS. El agente continúa usando Python
+3.12 dentro de Docker. No se ha establecido una conexión SSH ni se ha instalado
+nada en el VPS del usuario.
+
+- `scripts/hostinger_smoke.py` pasó con la imagen actualizada: configuración de
+  producción real, puerto publicado únicamente en loopback, host autorizado,
+  cookies seguras, contraseña ficticia con caracteres especiales, rechazo de
+  sobrescritura de configuración, usuario sin privilegios y raíz de solo lectura.
+- Se recuperaron historial y un documento fiscal cifrado después de eliminar y
+  recrear el contenedor con el mismo volumen y clave. Un PNG corrupto recibió 422.
+- El asistente se ejecutó en una pseudoterminal real con contraseña ficticia:
+  entradas privadas ocultas, archivo con permisos 600 y configuración previa
+  conservada. Se comprobó la sintaxis de ambos scripts para Python 3.9.
+- No hubo llamadas a OpenAI, Gmail, Telegram o SAT. Los contenedores y volumen de
+  estas pruebas se eliminaron. No se alteraron DNS, CyberPanel ni el sitio actual.
+
+La configuración exacta del virtual host, el certificado, los respaldos, la
+restauración y la prueba física en Safari continúan pendientes en el VPS. La
+guía es [HOSTINGER.md](HOSTINGER.md).
+
+### Configuración del entorno de desarrollo y otras opciones
 
 1. Revisar y publicar el nuevo borrador que guarda las instrucciones de inicio con la variable directa validada. Esto publica la configuración de Codex, no una aplicación web accesible desde el iPad.
 2. Una conversación normal con respuesta del modelo después de la herramienta requiere llamadas adicionales y nueva autorización; la prueba real de llamada a herramienta y persistencia ya pasó.

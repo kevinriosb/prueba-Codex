@@ -38,5 +38,5 @@ def inspect_document(data, maximum, *, allow_xml=False):
                 output=io.BytesIO()
                 image.save(output,format='JPEG',quality=90)
         return 'image/jpeg',output.getvalue()
-    except (UnidentifiedImageError,OSError,ValueError,Image.DecompressionBombWarning,Image.DecompressionBombError):
+    except (UnidentifiedImageError,OSError,ValueError,SyntaxError,Image.DecompressionBombWarning,Image.DecompressionBombError):
         raise AppError(422,'invalid_document','Usa una fotografía JPEG/PNG/WebP o un PDF válido.') from None
