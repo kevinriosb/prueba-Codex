@@ -1,7 +1,7 @@
 import io
 import warnings
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pypdf import PdfReader
 
 from ..errors import AppError
@@ -33,7 +33,7 @@ def inspect_document(data, maximum, *, allow_xml=False):
                     raise ValueError()
                 image.verify()
             with Image.open(io.BytesIO(data)) as image:
-                image = image.convert('RGB')
+                image = ImageOps.exif_transpose(image).convert('RGB')
                 image.thumbnail((1600,1600))
                 output=io.BytesIO()
                 image.save(output,format='JPEG',quality=90)

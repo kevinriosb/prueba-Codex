@@ -77,7 +77,7 @@ class AgentService:
         set_tracing_disabled(True)
         self.run_config = RunConfig(tracing_disabled=True, trace_include_sensitive_data=False)
         # Solo la auditoría propia emite acciones; no se exportan diagnósticos del proveedor.
-        for name in ('openai.agents', 'openai', 'httpx', 'httpx2'):
+        for name in ('openai.agents', 'openai', 'httpx', 'httpx2','pypdf','PIL'):
             logging.getLogger(name).setLevel(logging.CRITICAL + 1)
 
     async def close(self):

@@ -1,16 +1,19 @@
 import asyncio
 import base64
 import json
+import io
 import time
 from email.message import EmailMessage
 from urllib.parse import parse_qs, urlsplit
 
 import httpx2
 import pytest
+from PIL import Image
 from fastapi.testclient import TestClient
 
 from backend.app.billing.cfdi import SatVerifier
 from backend.app.billing.extraction import DocumentExtractor
+from backend.app.billing.documents import inspect_document
 from backend.app.billing.providers import GmailProvider, SCOPES
 from backend.app.billing.store import BillingStore
 from backend.app.billing.telegram import TelegramClient
@@ -120,6 +123,25 @@ async def test_sat_adapter_has_fixed_destination_and_disabled_default():
         await verifier.close()
 
 
+async def test_gmail_fetch_accepts_long_attachment_ids_and_quotes_path_segments(tmp_path):
+    long_identifier='A'*600+'+/=='
+    def handler(request):
+        if '/attachments/' in request.url.path:
+            assert b'%2B%2F%3D%3D' in request.url.raw_path
+            return httpx2.Response(200,json={'data':base64.urlsafe_b64encode(xml()).decode()})
+        return httpx2.Response(200,json={'messages':[{'id':'reply_demo','payload':{
+            'headers':[{'name':'From','value':'facturacion@example.com'},{'name':'In-Reply-To','value':'<request@agente.invalid>'}],
+            'parts':[{'mimeType':'application/xml','filename':'factura.xml','body':{'size':len(xml()),'attachmentId':long_identifier}}]}}]})
+    provider,store=gmail_setup(tmp_path,handler)
+    store.add('gmail','owner',{'email':'agente@example.com','refresh_token':'refresh-demo',
+        'access_token':'access-demo','expires':time.time()+3600},lookup='account')
+    try:
+        replies=await provider.fetch('owner',{'delivery':{'message_id':'sent_demo','thread_id':'thread_demo','rfc_message_id':'<request@agente.invalid>'}})
+        assert len(replies)==1 and replies[0].attachments[0].data==xml()
+    finally:
+        await provider.close()
+
+
 @pytest.mark.parametrize('mime,content,expected',[('image/jpeg',image(),'input_image'),('application/pdf',pdf(),'input_file')])
 def test_actual_sdk_extracts_structured_document_without_network(billing_client,mime,content,expected):
     model=ScriptedModel([[answer(json.dumps(FISCAL))]])
@@ -157,6 +179,20 @@ def test_cannot_swap_encrypted_profile_between_owners(billing_client):
     with pytest.raises(AppError) as failure:
         app.state.billing.store.get('profile','other-user',selected['id'])
     assert failure.value.code=='billing_decryption'
+
+
+def test_photo_orientation_is_preserved_when_metadata_is_removed():
+    source=io.BytesIO()
+    picture=Image.new('RGB',(32,16),'white')
+    metadata=Image.Exif()
+    metadata[274]=6
+    metadata[315]='Metadato personal ficticio'
+    picture.save(source,format='JPEG',exif=metadata)
+    mime,data=inspect_document(source.getvalue(),8_388_608)
+    assert mime=='image/jpeg'
+    with Image.open(io.BytesIO(data)) as result:
+        assert result.size==(16,32) and len(result.getexif())==0
+    assert b'Metadato personal' not in data
 
 
 def test_telegram_onboarding_consent_callbacks_and_owner_isolation(billing_client):

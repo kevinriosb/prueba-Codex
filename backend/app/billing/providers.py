@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from email.utils import parseaddr
 from email.policy import SMTP
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx2
 from email_validator import EmailNotValidError, validate_email
@@ -151,9 +151,15 @@ class GmailProvider:
 
     @staticmethod
     def _identifier(value):
-        if not re.fullmatch(r'[A-Za-z0-9_-]{1,200}',value):
+        if not isinstance(value,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,200}',value):
             raise AppError(422,'mail_identifier','Identificador de correo no válido.')
         return value
+
+    @staticmethod
+    def _attachment_identifier(value):
+        if not isinstance(value,str) or not re.fullmatch(r'[A-Za-z0-9_+=/-]{1,4096}',value):
+            raise AppError(422,'mail_attachment_identifier','Identificador de adjunto no válido.')
+        return quote(value,safe='')
 
     async def fetch(self,owner,ticket):
         headers=await self._authorization(owner)
@@ -181,7 +187,7 @@ class GmailProvider:
                     continue
                 encoded=body.get('data','')
                 if body.get('attachmentId'):
-                    attachment_id=self._identifier(body['attachmentId'])
+                    attachment_id=self._attachment_identifier(body['attachmentId'])
                     message_id=self._identifier(item['id'])
                     loaded=await self._json('GET',f'https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}/attachments/{attachment_id}',headers=headers)
                     encoded=loaded.get('data','')

@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado tras la ampliación fiscal de `.venv/bin/python -m pytest -q --tb=short`: **103 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan.
+Resultado tras la ampliación fiscal de `.venv/bin/python -m pytest -q --tb=short`: **105 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan.
 
 Se comprobaron:
 
@@ -88,9 +88,9 @@ La clave de la variable directa funciona. Sigue sin determinarse por qué el val
 
 Antes de publicar se repitió la suite: **58 pruebas pasadas**, sin llamadas de IA ni cargos. La sintaxis de `frontend/app.js` pasó la comprobación de Node.js.
 
-En la actualización de facturación la suite pasó a **103 pruebas**. Se verificaron primera interacción sin perfil, consentimiento de análisis, CSF ilegible/incompleta, confirmación, varios perfiles, actualización y borrado, AES-GCM con propietario autenticado, formatos y vencimiento de archivos, contacto oficial y verificación manual del ticket, prioridad de portal compatible, aprobaciones, duplicados y diferencias de formato del importe. Se comprobaron envíos desactivados, cambios de perfil tras revisar el borrador, dos confirmaciones concurrentes con un único efecto, envío de resultado incierto y conservación de su bloqueo, CSF con autorización específica, XML/PDF, respuestas sin XML, destinatario/hilo incorrectos y XML con entidades o datos incompatibles.
+En la actualización de facturación la suite pasó a **105 pruebas**. Se verificaron primera interacción sin perfil, consentimiento de análisis, CSF ilegible/incompleta, confirmación, varios perfiles, actualización y borrado, AES-GCM con propietario autenticado, formatos y vencimiento de archivos, contacto oficial y verificación manual del ticket, prioridad de portal compatible, aprobaciones, duplicados y diferencias de formato del importe. Se comprobaron envíos desactivados, cambios de perfil tras revisar el borrador, dos confirmaciones concurrentes con un único efecto, envío de resultado incierto y conservación de su bloqueo, CSF con autorización específica, XML/PDF, respuestas sin XML, destinatario/hilo incorrectos y XML con entidades o datos incompatibles.
 
-También se verificaron OAuth de Gmail con PKCE/estado de un solo uso, renovación y tokens cifrados, envío MIME y lectura de adjuntos mediante transporte HTTP simulado; webhook de Telegram con secreto/usuarios autorizados, flujo CSF con botones, aislamiento entre canales y rechazo de rutas de descarga indebidas; consulta SAT simulada y su desactivación por configuración; seguimiento autorizado, límite de consultas, parada tras tres errores y ausencia de avisos repetidos. Un cambio posterior de perfil no altera los datos autorizados que se cotejan con la respuesta del envío anterior.
+También se verificaron identificadores largos de adjuntos de Gmail, su codificación segura en la ruta, orientación de fotografías al retirar metadatos personales, OAuth de Gmail con PKCE/estado de un solo uso, renovación y tokens cifrados, envío MIME y lectura de adjuntos mediante transporte HTTP simulado; webhook de Telegram con secreto/usuarios autorizados, flujo CSF con botones, aislamiento entre canales y rechazo de rutas de descarga indebidas; consulta SAT simulada y su desactivación por configuración; seguimiento autorizado, límite de consultas, parada tras tres errores y ausencia de avisos repetidos. Un cambio posterior de perfil no altera los datos autorizados que se cotejan con la respuesta del envío anterior.
 
 `scripts/billing_browser_smoke.py` pasó con Chromium y emulación táctil de iPad: CSF ficticia, selección explícita del uso de CFDI, correo, perfil, ticket, revisión del destinatario, borrador, rechazo/envío simulado, lectura de una respuesta con HTML mostrado como texto inerte, historial y limpieza de datos fiscales al cerrar sesión. No hubo desbordamiento lateral a 1024×768, 768×1024, 375×812 y 320×640. La prueba de navegador del chat original también pasó. No se comprobó un iPad físico ni Safari real.
 
