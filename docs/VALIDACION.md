@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **137 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy y once pruebas de retirada reversible de referencias obsoletas.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **167 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas y treinta del diagnóstico de OpenAI sin generación.
 
 Se comprobaron:
 
@@ -108,7 +108,22 @@ interactivo compatible con Python 3.9+ del VPS. El agente continúa usando Pytho
 el usuario ejecutó la instalación en Termius y compartió su salida: contenedor
 `healthy`, `/health` local correcto, DNS del subdominio hacia su VPS y HTTPS de
 CyberPanel con HTTP 200. Esa respuesta todavía correspondía al sitio estático:
-faltaba aplicar la conexión al backend y probar Telegram.
+faltaba aplicar la conexión al backend y probar Telegram. Después compartió la
+salida de la retirada de referencias y del proxy: ambas validaciones pasaron,
+se guardaron copias privadas y `/health` respondió por HTTPS con
+`{"status":"ok","version":"0.1.0"}`. También compartió una captura del chat
+autenticado en el iPad con un error genérico del proveedor de IA. Esa captura
+confirma que la interfaz abre, pero no permite determinar la causa del fallo de
+OpenAI. Telegram y Gmail siguen pendientes de conexión.
+
+Se añadió `scripts/check_openai.py` para ejecutarlo por stdin dentro del
+contenedor y comprobar su entorno efectivo. Sus treinta pruebas simulan los
+transportes: control sin credencial, rechazo de claves, permisos, cuota,
+metadatos del modelo, respuestas inesperadas y voluminosas, DNS, timeout, TLS y
+redirecciones. Se comprueba que solo se envían cuerpos vacíos o consultas de
+metadatos, sin prompts, y que no se imprimen secretos o mensajes del proveedor.
+La comprobación no demuestra que exista saldo ni que generar una respuesta
+funcione. No se ha ejecutado con credenciales reales en esta actualización.
 
 - `scripts/hostinger_smoke.py` pasó con la imagen actualizada: configuración de
   producción real, puerto publicado únicamente en loopback, host autorizado,

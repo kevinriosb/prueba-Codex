@@ -203,6 +203,44 @@ del panel permanecen: una reconstrucción desde CyberPanel puede volver a genera
 referencias. Revisa la configuración después de cambios del panel. No utilices
 **Delete Website** como sustituto de este procedimiento, porque puede borrar datos.
 
+### Si la página abre pero la IA devuelve un error
+
+`/health` comprueba que el proceso está disponible; no hace una llamada a OpenAI
+ni valida la clave, los permisos, el modelo o el saldo. Desde la carpeta del
+proyecto puedes comprobar la conexión usando las variables efectivas del
+contenedor, sin mostrar sus valores:
+
+```sh
+git pull --ff-only
+docker compose -f compose.hostinger.yaml exec -T agent python - < scripts/check_openai.py
+```
+
+El archivo se ejecuta por la entrada estándar: no hay que copiar scripts a la
+imagen ni reconstruir o reiniciar la aplicación. No lee ni modifica SQLite,
+documentos, `.env.hostinger` o certificados. No solicita generación de IA:
+
+- Primero envía `{}` a Responses **sin credencial** y exige HTTP 401. Si recibe
+  otro resultado, se detiene sin enviar la clave. Un listado público de modelos
+  no demuestra que una credencial sea válida.
+- Repite el cuerpo vacío con la clave del contenedor. HTTP 400 con
+  `missing_required_parameter` para `model`, después del control anterior,
+  permite comprobar la autenticación de esa solicitud sin modelo ni entrada.
+- Solo después consulta los metadatos del modelo configurado. Una clave con
+  permisos restringidos puede permitir Responses sin permitir esta consulta;
+  HTTP 403 al consultar metadatos no prueba que generar esté bloqueado.
+
+El diagnóstico usa exclusivamente `https://api.openai.com/v1`, verifica TLS y
+rechaza redirecciones. Muestra categorías conocidas y códigos HTTP; no muestra
+cabeceras, cuerpos de error, mensajes internos ni valores de variables. No
+reintenta solicitudes. El código de salida es 0 si pasan las comprobaciones y 1
+si no se pueden completar. Puedes compartir únicamente esa salida.
+
+Un resultado favorable **no comprueba el saldo, los permisos de generación ni
+una respuesta real**. Si la prueba pasa y el chat sigue fallando, hace falta
+diagnosticar esa ejecución con metadatos seguros antes de seguir probando.
+No repitas peticiones de pago automáticamente. Una nueva prueba con generación
+requiere el cupo autorizado para esa prueba.
+
 ## 5. Prueba piloto y activación gradual
 
 Antes de usar documentos privados:
