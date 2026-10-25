@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#20283f">
+  <meta name="description" content="Tu espacio privado para conversar con un asistente y usar herramientas autorizadas.">
+  <title>Mi agente · Asistente personal</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%236454d8'/%3E%3Ctext x='32' y='45' text-anchor='middle' fill='white' font-size='44'%3E✦%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <div id="login-view" class="login-view">
+    <div class="login-card">
+      <span class="brand-icon large" aria-hidden="true">✦</span>
+      <p class="eyebrow">TU ESPACIO PERSONAL</p>
+      <h1>Una idea. Un buen comienzo.</h1>
+      <p class="login-description">Pregunta, haz cálculos y consulta la hora con tu asistente privado.</p>
+      <form id="login-form">
+        <label for="username">Usuario</label>
+        <input id="username" name="username" autocomplete="username" required maxlength="64">
+        <label for="password">Contraseña</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256">
+        <p id="login-error" class="error-message" role="alert" hidden></p>
+        <button class="primary" id="login-button" type="submit">Entrar a mi espacio <span aria-hidden="true">→</span></button>
+      </form>
+      <p class="privacy-note">Acceso protegido. Tus conversaciones se guardan en este servidor.</p>
+    </div>
+  </div>
+
+  <div id="workspace" class="workspace" hidden>
+    <button id="sidebar-shade" class="sidebar-shade" aria-label="Cerrar menú" hidden></button>
+    <aside id="sidebar" class="sidebar" aria-label="Conversaciones">
+      <a class="brand" href="/" aria-label="Mi agente, inicio"><span class="brand-icon" aria-hidden="true">✦</span> Mi agente<span class="brand-tag">PERSONAL</span></a>
+      <button id="new-chat" class="new-chat" type="button"><span aria-hidden="true">＋</span> Nueva conversación</button>
+      <p class="sidebar-label">TUS CONVERSACIONES</p>
+      <nav id="conversation-list" class="conversation-list" aria-label="Historial"></nav>
+      <div class="sidebar-bottom">
+        <div class="tool-list"><span class="status-dot" aria-hidden="true"></span> Herramientas disponibles<p>Cálculo seguro · Fecha y hora</p></div>
+        <div class="profile"><span class="avatar" aria-hidden="true">TÚ</span><div><strong id="profile-name">Mi espacio</strong><span>Sesión privada</span></div><button id="logout" type="button" aria-label="Cerrar sesión" title="Cerrar sesión"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 4H4v16h5M14 8l4 4-4 4M8 12h10"/></svg></button></div>
+      </div>
+    </aside>
+
+    <main class="main-panel">
+      <header class="chat-header">
+        <div class="header-title"><button id="menu-button" class="icon-button menu-button" type="button" aria-label="Abrir conversaciones" aria-expanded="false" aria-controls="sidebar">☰</button><div><h1>Asistente personal</h1><p id="model-label">Tu espacio de trabajo</p></div></div>
+        <div class="header-actions"><span class="private-badge"><span aria-hidden="true">◉</span> Privado</span><button id="delete-chat" class="icon-button" type="button" aria-label="Eliminar conversación" title="Eliminar conversación"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/></svg></button></div>
+      </header>
+      <p id="configuration-warning" class="configuration-warning" role="status" hidden>Falta configurar la clave de IA en el servidor. Consulta el README para activar las respuestas.</p>
+      <div id="chat-scroll" class="chat-scroll">
+        <section id="welcome" class="welcome" aria-labelledby="welcome-title">
+          <span class="welcome-icon" aria-hidden="true">✦</span>
+          <p class="eyebrow">DE LA PREGUNTA AL RESULTADO</p>
+          <h2 id="welcome-title">¿Qué resolvemos hoy?</h2>
+          <p>Cuéntame lo que necesitas. Usaré las herramientas<br class="desktop-break"> disponibles y te mostraré los resultados.</p>
+          <div class="suggestions">
+            <button type="button" data-prompt="Una cuenta de 500 pesos con 15 % de propina, dividida entre 2 personas. ¿Cuánto paga cada una?"><span class="suggestion-icon" aria-hidden="true">÷</span><strong>Hacer un cálculo</strong><span>Divide una cuenta con propina</span><span class="suggestion-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 18 18 6M6 6h12v12"/></svg></span></button>
+            <button type="button" data-prompt="¿Qué fecha y hora tiene el servidor? Indica la zona horaria."><span class="suggestion-icon clock-icon" aria-hidden="true">◷</span><strong>Consultar la hora</strong><span>Fecha, hora y zona horaria</span><span class="suggestion-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 18 18 6M6 6h12v12"/></svg></span></button>
+          </div>
+          <p class="welcome-note">Tú decides. Cualquier futura acción externa necesitará tu confirmación.</p>
+        </section>
+        <div id="messages" class="messages" role="log" aria-label="Mensajes de la conversación" aria-live="polite" aria-relevant="additions"></div>
+        <div id="thinking" class="thinking" role="status" hidden><span aria-hidden="true">✦</span> Preparando tu respuesta…</div>
+        <section id="approval-panel" class="approval-panel" aria-labelledby="approval-title" hidden>
+          <span class="approval-label">REQUIERE TU CONFIRMACIÓN</span>
+          <h2 id="approval-title">Revisa la acción antes de continuar</h2>
+          <div id="approval-details"></div>
+          <p id="approval-expiry"></p>
+          <div class="approval-buttons"><button id="reject-action" class="secondary" type="button">Rechazar</button><button id="approve-action" class="primary" type="button">Confirmar esta acción</button></div>
+        </section>
+      </div>
+      <div class="composer-area">
+        <p id="chat-error" class="error-message" role="alert" hidden></p>
+        <form id="message-form" class="composer">
+          <label class="sr-only" for="message-input">Tu mensaje al agente</label>
+          <textarea id="message-input" rows="2" maxlength="4000" placeholder="Escribe tu instrucción aquí…"></textarea>
+          <div class="composer-bottom"><span><span class="small-spark" aria-hidden="true">✧</span> Herramientas bajo tu control</span><div><span id="character-count">0 / 4000</span><button id="send-button" class="send-button" type="submit" aria-label="Enviar mensaje">↑</button></div></div>
+        </form>
+        <p class="composer-note">La IA puede equivocarse. Revisa los resultados importantes. <span id="usage-label"></span></p>
+      </div>
+    </main>
+  </div>
+  <noscript>Activa JavaScript para usar el chat. Tus claves de IA se configuran únicamente en el servidor.</noscript>
+</body>
+</html>

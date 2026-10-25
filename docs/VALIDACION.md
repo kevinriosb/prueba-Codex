@@ -1,0 +1,99 @@
+# Comprobaciones realizadas
+
+La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamadas de IA de pago. Después se realizaron pruebas reales con autorización del usuario; sus resultados se detallan abajo. **La aplicación no está desplegada en Railway.** El código se versiona en [kevinriosb/prueba-Codex](https://github.com/kevinriosb/prueba-Codex); publicar el repositorio no inicia un servicio web.
+
+## Backend, seguridad y agente
+
+Resultado final de `.venv/bin/python -m pytest -q --tb=short`: **58 pruebas pasadas**, sin fallos ni pruebas omitidas.
+
+Se comprobaron:
+
+- `/health`, recursos estáticos y autenticación de rutas privadas.
+- Cookies, CSRF, origen y host; límite de intentos de login; expiración de sesión y revocación al cambiar contraseña.
+- Herramientas reales de cálculo y fecha/hora, ejecutadas por el Runner del OpenAI Agents SDK.
+- Adaptador real `OpenAIResponsesModel` y cliente `AsyncOpenAI` con transporte HTTP simulado: llamadas a Responses, parámetros de seguridad, llamada a herramienta y devolución del resultado al modelo.
+- Historial recuperable tras reiniciar y aislamiento de conversaciones entre propietarios.
+- Rechazo de código arbitrario, expresiones caras, divisiones inválidas y números fuera de límites.
+- Límites de tamaño, incluyendo solicitudes fragmentadas, contexto, concurrencia, herramientas, pasos y presupuesto diario.
+- Timeout real de una ejecución simulada y contabilización conservadora del consumo desconocido.
+- Pausa nativa del SDK antes de una escritura ficticia, aprobación, rechazo, caducidad, recuperación tras reiniciar y protección frente a modificaciones/repetición de la decisión.
+- Bloqueo tras un fallo posterior a una acción aprobada: el efecto ficticio no se repite.
+- Credenciales ausentes del estado persistido de aprobación, respuestas HTTP y logs de auditoría.
+- Lectura de `HOST`, `PORT` y modelo desde `.env`, además del entorno del proceso. Las pruebas aíslan las credenciales reales de la máquina para no reutilizarlas.
+
+Las respuestas de los modelos en estas pruebas están programadas. **Eso comprueba la integración y las políticas de la aplicación, no la calidad de las respuestas de un modelo real ni la disponibilidad de un modelo en una cuenta de OpenAI.**
+
+## Interfaz
+
+`scripts/browser_smoke.py` pasó con Chromium y el modelo simulado del servidor de pruebas:
+
+- Login, sugerencia de cálculo, envío, resultado de herramienta e historial después de recargar.
+- Confirmar y rechazar desde el chat.
+- Un resultado con una etiqueta HTML se mostró como texto, sin ejecutar su código.
+- Error del proveedor mostrado sin filtrar su mensaje interno.
+- Logout y ocultación de conversaciones.
+- Tamaños 1024 × 768, 768 × 1024, 375 × 812 y 320 × 640 sin desbordamiento lateral.
+- Interacción táctil y apertura/cierre del menú de conversaciones con emulación de iPad.
+
+No se comprobó un iPad físico ni Safari real. Las capturas en [screenshots/](screenshots/) muestran la aplicación de pruebas y llevan el rótulo «Modelo simulado · prueba local».
+
+![Chat en iPad, prueba local con modelo simulado](screenshots/ipad-landscape.png)
+
+## Instalación y contenedor
+
+- `uv sync --frozen` completado. La exportación de producción conserva versiones y hashes de los paquetes.
+- `docker build` completado con `pip --require-hashes`, manteniendo TLS. La red de este entorno requirió montar su CA de confianza solo durante el build mediante `build_ca`; no se desactivó la verificación.
+- `scripts/container_smoke.py` pasó: imagen arrancada localmente, `/health`, login, usuario de proceso UID 10001 y recuperación de una conversación al **eliminar y recrear** el contenedor usando el mismo volumen temporal.
+- El contenedor no incluye `.env` ni pruebas.
+- Los contenedores y el volumen usados para estas pruebas se eliminaron al terminar.
+- Sintaxis JavaScript y compilación de módulos Python comprobadas. `git diff --check` sin errores.
+
+## Prueba real autorizada de OpenAI
+
+El usuario autorizó hasta dos llamadas a `gpt-4.1-mini`, con un máximo de 100 tokens de salida por llamada. Se hicieron **dos intentos**, con reintentos desactivados; el segundo después de que el usuario comunicó haber actualizado la clave. Ambos recibieron **HTTP 401, `invalid_api_key`**, antes de generar una respuesta. No se ejecutó la herramienta de cálculo en esas solicitudes y no se recibió un reporte de uso de tokens del proveedor.
+
+Se comprobó que el secreto está vinculado y disponible, que no hay espacios exteriores, saltos de línea, comillas envolventes, una asignación de variable ni un prefijo `Bearer` añadido. La aplicación utiliza el valor actual del entorno; no existe un archivo `.env` local que lo sustituya. El destino y la cabecera de autenticación del cliente son los esperados. No se mostraron ni guardaron valores de credenciales.
+
+Después del segundo rechazo, se consultó **GET `/v1/models`**, primero mediante la biblioteca estándar y después mediante el cliente oficial `AsyncOpenAI`: ambas consultas recibieron HTTP 200. Sin embargo, un control posterior de **GET `/v1/models/gpt-4.1-mini` sin cabecera Authorization también recibió HTTP 200** en este entorno. Por tanto, estos resultados **no validan la credencial**. La afirmación anterior de que la clave había sido aceptada fue una conclusión incorrecta a partir de ese listado. Estas consultas no solicitaron generación ni consumieron tokens de inferencia.
+
+La configuración de la aplicación, `/health`, el login, el acceso autenticado al historial y el logout se verificaron con las credenciales configuradas. Antes del segundo intento se comprobó localmente, con un modelo simulado, que el SDK puede devolver directamente el resultado real `287.5` de `calculator` y recuperar el historial utilizando una sola llamada al modelo. Este modo se aplicó únicamente a esa comprobación, sin cambiar el comportamiento de la aplicación.
+
+El usuario autorizó después **hasta dos llamadas adicionales**, con el mismo modelo y límite de 100 tokens de salida por llamada. Se utilizó primero **una**: volvió a recibir HTTP 401, `invalid_api_key`, sin reporte de uso ni ejecución de herramientas. Se detuvo la prueba, sin reintentar la misma solicitud. En ese momento quedaba una llamada dentro de esta segunda autorización; se usó después en la prueba con variable directa descrita abajo.
+
+Para aislar el problema sin generar texto se envió, mediante la biblioteca estándar y la ruta HTTPS habitual, un POST a `/v1/responses` con cuerpo `{}`, sin modelo ni entrada: también devolvió HTTP 401, `invalid_api_key`. Una captura local con transporte simulado verificó que el adaptador del SDK prepara el destino correcto, una única cabecera Authorization que coincide con la credencial configurada, el modelo autorizado, el límite de 100 tokens y `store=false`. Después de que el usuario publicó de nuevo el entorno, la misma comprobación sin generación siguió recibiendo HTTP 401 usando el secreto de red.
+
+## Prueba real con variable directa
+
+Se añadió la variable de diagnóstico `AI_API_KEY_CHECK` y el usuario suministró su valor mediante Variables de entorno y publicó la configuración. La comprobación POST sin modelo ni entrada usando esa variable devolvió **HTTP 400, `missing_required_parameter`, parámetro `model`**, en lugar del rechazo de autenticación. Esto permitió probar la llamada restante autorizada sin seguir consumiendo intentos con el secreto de red.
+
+La prueba real pasó con **HTTP 200**:
+
+- Modelo: `gpt-4.1-mini`, una sola llamada, máximo 100 tokens de salida y sin reintentos.
+- El modelo llamó a la herramienta real `calculator` para calcular `(1250 + 350) / 4`; la herramienta devolvió **400**.
+- El SDK reportó **268 tokens de entrada y 24 de salida**.
+- Se recuperaron los mensajes y el evento de herramienta por la API privada, tanto en la misma aplicación como después de cerrarla y crear otra instancia sobre la misma base de datos.
+- Login y logout correctos, sin guardar ni mostrar credenciales en el informe.
+
+Para respetar la única llamada restante se aplicó `stop_on_first_tool` exclusivamente en la prueba: el resultado de la herramienta se devolvió directamente. **No se generó una segunda respuesta del modelo después de la herramienta ni se cambió el comportamiento normal de la aplicación.** Las conversaciones normales de varias llamadas siguen verificadas con modelos simulados en las pruebas automatizadas.
+
+También se inició el servidor real mediante `.venv/bin/python -m backend.app`, pasando la variable directa como `AI_API_KEY` solo en el entorno de ese proceso. Se verificaron `/health`, login, configuración privada, recuperación de la conversación real y logout por HTTP local. Se detuvo únicamente el servidor iniciado para esa comprobación; no se hicieron llamadas adicionales al modelo.
+
+La clave de la variable directa funciona. Sigue sin determinarse por qué el valor o la aplicación del vínculo de Secretos de red produce un rechazo; ese vínculo se conserva. Las instrucciones de inicio guardadas ahora dan prioridad a `AI_API_KEY_CHECK` al establecer `AI_API_KEY` para el proceso local, sin imprimir valores ni escribirlos en archivos. En Railway se debe configurar `AI_API_KEY` directamente como variable privada, siguiendo el README; la variable de diagnóstico no es necesaria allí.
+
+**Los dos cupos de dos llamadas autorizados están agotados**: tres intentos recibieron 401 y el último pasó. Cualquier nueva generación de IA requiere nueva autorización. Las comprobaciones HTTP sin modelo no solicitaron generación ni consumieron tokens de inferencia.
+
+## Comprobaciones para publicar el código
+
+Antes de publicar se repitió la suite: **58 pruebas pasadas**, sin llamadas de IA ni cargos. La sintaxis de `frontend/app.js` pasó la comprobación de Node.js.
+
+Se revisaron los archivos de publicación para detectar las credenciales configuradas, formatos conocidos de claves y artefactos privados. No se encontraron credenciales. `.env`, `.local/`, `.venv/` y `data/agent.sqlite3` están excluidos de Git. El archivo `.env.example` contiene nombres y valores de ejemplo, sin secretos. La publicación en GitHub no autoriza ni ejecuta el despliegue en Railway.
+
+## Pendiente para una prueba real desde el iPad
+
+1. Revisar y publicar el nuevo borrador que guarda las instrucciones de inicio con la variable directa validada. Esto publica la configuración de Codex, no una aplicación web accesible desde el iPad.
+2. Una conversación normal con respuesta del modelo después de la herramienta requiere llamadas adicionales y nueva autorización; la prueba real de llamada a herramienta y persistencia ya pasó.
+3. Disponer de una URL accesible: computadora local en red de confianza o un despliegue HTTPS posterior y autorizado.
+4. Para Railway, crear/configurar el servicio y su volumen, revisar permisos del volumen y verificar salud e historial en esa plataforma. Esta parte **no se ejecutó**.
+5. Completar la prueba en Safari del iPad real.
+
+El usuario publicó la configuración con las credenciales y la variable directa antes de la prueba real. Después se guardó un nuevo borrador con las instrucciones de inicio verificadas. Guardar ese último borrador no lo publica ni suministra credenciales: el usuario debe revisar y publicar el entorno para conservar ese cambio en su configuración activa.
