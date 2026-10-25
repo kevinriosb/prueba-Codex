@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **167 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas y treinta del diagnóstico de OpenAI sin generación.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **194 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial.
 
 Se comprobaron:
 
@@ -123,7 +123,21 @@ metadatos del modelo, respuestas inesperadas y voluminosas, DNS, timeout, TLS y
 redirecciones. Se comprueba que solo se envían cuerpos vacíos o consultas de
 metadatos, sin prompts, y que no se imprimen secretos o mensajes del proveedor.
 La comprobación no demuestra que exista saldo ni que generar una respuesta
-funcione. No se ha ejecutado con credenciales reales en esta actualización.
+funcione. El usuario la ejecutó después dentro de su contenedor en el VPS y
+compartió el resultado: **HTTP 401, credencial rechazada**. Esto identifica el
+rechazo de la credencial que usa ese proceso. Codex no accedió por SSH al VPS ni
+recibió el valor de la clave.
+
+Se añadió `scripts/update_openai_key.py`, compatible con Python 3.9 y sin
+dependencias, para cambiar únicamente `AI_API_KEY` desde Termius. Sus pruebas
+verifican copia privada, permisos y propietario, preservación exacta de las
+otras variables y finales de línea, rechazo de formatos ambiguos y enlaces,
+conservación de ediciones concurrentes y fallo de escritura sin sustituir el
+original. Una prueba ejecuta el script en una pseudoterminal real: la entrada
+oculta está activada al pegar la clave ficticia y el valor no aparece en la
+salida. No se ha modificado la configuración real del usuario ni efectuado
+generación de IA durante esta actualización. La sustitución de la clave y su
+nueva comprobación en el VPS quedan a cargo del usuario.
 
 - `scripts/hostinger_smoke.py` pasó con la imagen actualizada: configuración de
   producción real, puerto publicado únicamente en loopback, host autorizado,

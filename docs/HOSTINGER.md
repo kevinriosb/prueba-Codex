@@ -241,6 +241,43 @@ diagnosticar esa ejecución con metadatos seguros antes de seguir probando.
 No repitas peticiones de pago automáticamente. Una nueva prueba con generación
 requiere el cupo autorizado para esa prueba.
 
+Si el resultado es **HTTP 401, credencial rechazada**, sustituye la clave que usa
+el contenedor. Necesitas la clave completa de OpenAI que empieza por `sk-`, no la
+contraseña del VPS ni la del agente. Si ya no tienes el valor completo, crea otra
+en [API Keys de OpenAI](https://platform.openai.com/api-keys), dentro del proyecto
+que quieras usar. No compartas la clave por el chat, capturas o comandos.
+
+Ejecuta directamente en la terminal interactiva del VPS:
+
+```sh
+python3 scripts/update_openai_key.py
+```
+
+El asistente pide pegar la clave con entrada oculta. Enter sin texto cancela con
+código 1. Rechaza comillas, espacios, prefijos y configuraciones ambiguas; el
+formato correcto por sí solo no demuestra que OpenAI la acepte. Se niega a
+actualizar enlaces o un archivo con permisos de grupo u otros usuarios.
+
+Crea una copia privada de la configuración anterior y sustituye únicamente la
+línea `AI_API_KEY=` de `.env.hostinger`, conservando exactamente todas las otras
+líneas, contraseña y clave de cifrado. La escritura es atómica, el archivo nuevo
+tiene permisos `600` y se comprueba que nadie haya editado el archivo mientras
+se introducía el valor. Las copias contienen secretos: consérvalas privadas y
+fuera de Git. No vuelve a ejecutar el asistente de instalación inicial, no
+genera una clave de cifrado nueva, no modifica la base de datos ni llama a APIs.
+
+Cuando termine correctamente, aplica la variable al servicio y comprueba sin
+generar texto:
+
+```sh
+docker compose -f compose.hostinger.yaml up -d --no-deps --no-build --force-recreate --wait --wait-timeout 120 agent
+docker compose -f compose.hostinger.yaml exec -T agent python - < scripts/check_openai.py
+```
+
+Recrear solo `agent` interrumpe brevemente esa aplicación y mantiene el volumen
+existente. No detiene n8n ni otros proyectos. Un simple `restart` no carga cambios
+del archivo de variables. Comparte únicamente la salida del diagnóstico.
+
 ## 5. Prueba piloto y activación gradual
 
 Antes de usar documentos privados:
