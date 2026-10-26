@@ -106,7 +106,7 @@ nuevo; no se autoriza a la primera persona que escriba. Las invitaciones siguien
 son cambios manuales por ID realizados desde el servidor, nunca por el modelo.
 
 Los adjuntos de Telegram se almacenan inicialmente como `unclassified`, cifrados
-y sin enviar al modelo. Los botones o la descripción del usuario determinan su
+y sin enviar al modelo. El perfil, los botones o la descripción del usuario determinan su
 tipo. Un ticket anterior al perfil permanece pendiente y se recupera cuando el
 usuario confirma su perfil. `classify_document` reutiliza los bytes ya validados:
 no vuelve a descargar, recomprimir o ampliar el TTL. Si se corrige un documento
@@ -119,6 +119,20 @@ y los metadatos del archivo activo. No se incluyen sus bytes, RFC, razón social
 datos de perfil en estas instrucciones. `review_received_document` permite pedir
 la revisión de un archivo guardado, sin fingir que no se recibió ni extraerlo por
 su cuenta. Mencionar régimen o correo en el chat no confirma un perfil fiscal.
+
+El perfil fiscal confirmado es persistente e independiente del historial y del
+TTL del original. Telegram lo reutiliza y clasifica las subidas posteriores como
+tickets, salvo una indicación explícita de CSF. Si el alta quedó pendiente, conserva
+la constancia y pide solo uso, correo, análisis o confirmación que falte. Una única
+elección de perfil disponible puede recuperarse sin otra pregunta; varias sin
+perfil activo exigen elegir. No se comparten perfiles entre usuarios.
+
+Las instrucciones del agente se compactaron y fijan respuestas de 1–2 frases,
+con máximo orientativo de 35 palabras. El límite predeterminado de salida de chat
+se redujo de 600 a 150 tokens y se envía en la solicitud del proveedor. El historial,
+herramientas e instrucciones siguen teniendo costo de entrada; `/nuevo` conserva
+datos fiscales y abre contexto vacío. La extracción de documentos mantiene un
+presupuesto aparte para completar su salida estructurada sin truncarla.
 
 El seguimiento periódico requiere habilitación del servidor y consentimiento por ticket para una política acotada. Solo lee Gmail: no envía recordatorios ni consulta al SAT. Conserva sus contadores, se detiene tras tres errores consecutivos o el máximo de consultas y deduplica los avisos de estado. La consulta de vigencia al SAT exige una autorización específica del usuario para RFC/UUID/importe; nunca adjunta la CSF. Coincidencias del XML y vigencia no equivalen a una validación criptográfica de sellos o al esquema XSD completo.
 

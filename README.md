@@ -97,7 +97,7 @@ HTTP no cifra el tráfico. Usa esta modalidad únicamente en una red de confianz
 | `SERVER_TIMEZONE` | Zona de la herramienta de hora | `America/Mexico_City` |
 | `MAX_INPUT_CHARS` | Longitud del mensaje | `4000` |
 | `MAX_CONTEXT_BYTES` | Tamaño del historial enviado al modelo | `16000` |
-| `MAX_OUTPUT_TOKENS` | Máximo de salida por llamada al modelo | `600` |
+| `MAX_OUTPUT_TOKENS` | Máximo de salida del chat por llamada al modelo | `150` |
 | `MAX_AGENT_TURNS` | Máximo de llamadas al modelo por ejecución del SDK | `3` |
 | `MAX_TOOL_CALLS` | Máximo de herramientas ejecutadas por solicitud | `5` |
 | `RUN_TIMEOUT_SECONDS` | Tiempo máximo de una ejecución | `35` segundos |

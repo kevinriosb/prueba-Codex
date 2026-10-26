@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     server_timezone: str = "America/Mexico_City"
     max_input_chars: int = Field(default=4000, ge=100, le=8000)
     max_context_bytes: int = Field(default=16000, ge=4000, le=48000)
-    max_output_tokens: int = Field(default=600, ge=100, le=2000)
+    max_output_tokens: int = Field(default=150, ge=100, le=2000)
     max_agent_turns: int = Field(default=3, ge=1, le=6)
     max_tool_calls: int = Field(default=5, ge=1, le=10)
     run_timeout_seconds: int = Field(default=35, ge=5, le=90)

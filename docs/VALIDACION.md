@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **251 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **256 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco.
 
 Se comprobaron:
 
@@ -198,6 +198,27 @@ idempotente sin ampliar el vencimiento. El estado interno sin clasificar no se
 expone como opción de subida en la API web. No se realizaron nuevas extracciones
 de pago ni se utilizó el ticket real del usuario en las pruebas. La corrección
 requiere actualizar y recrear el contenedor en el VPS; no se aplicó por SSH.
+
+### Respuestas breves y CSF reutilizable
+
+Las instrucciones se compactaron y piden 1–2 frases, con máximo orientativo de
+35 palabras. El valor predeterminado de `MAX_OUTPUT_TOKENS` cambió de 600 a 150.
+La prueba del adaptador HTTP real del SDK comprueba que OpenAI recibiría
+`max_output_tokens=150`; no se trata de recortar una respuesta ya generada.
+Las lecturas estructuradas conservan su límite independiente. No se hicieron
+generaciones reales para evaluar la calidad o longitud del texto nuevo.
+
+Con un perfil confirmado, una subida sin descripción se procesa como ticket.
+La descripción `/csf` conserva la opción de agregar o actualizar una constancia.
+Si ya llegó la CSF pero falta terminar el alta, solo se pide el paso pendiente.
+Cinco regresiones adicionales comprueban la excepción explícita de CSF, el perfil
+conservado tras `/nuevo` y vencimiento del original, alta pendiente de uso/correo,
+CSF recibida sin analizar y aislamiento del perfil de otro usuario. Las pruebas
+anteriores también comprueban el nuevo valor por defecto de ticket.
+
+El historial anterior permanece guardado: `/nuevo` abre contexto vacío sin borrar
+perfiles ni tickets. Entradas, herramientas e imágenes siguen consumiendo tokens;
+estas modificaciones no garantizan un porcentaje fijo de ahorro monetario.
 
 - `scripts/hostinger_smoke.py` pasó con la imagen actualizada: configuración de
   producción real, puerto publicado únicamente en loopback, host autorizado,

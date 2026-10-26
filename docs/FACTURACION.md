@@ -100,7 +100,7 @@ Reemplaza `ORIGEN_HTTPS_REAL` por la dirección real, sin rutas. Desde el iPad p
 
 ### Recorrido en Telegram
 
-- El bot pregunta si el archivo es CSF o ticket, salvo que lo indiques con la descripción `/csf` o `/ticket`. Elegir el tipo no autoriza el análisis.
+- Antes del primer perfil, el bot pregunta si un archivo desconocido es CSF o ticket. Con una CSF recibida o perfil confirmado, los nuevos archivos se tratan como tickets. Para otra constancia indica `/csf` en la descripción. Elegir el tipo no autoriza el análisis.
 - Sin perfil: puedes guardar primero el ticket. Quedará pendiente mientras envías la CSF, autorizas su análisis y confirmas el perfil. Después retomas el ticket guardado, sin otra subida.
 - `/documentos` permite recuperar un archivo vigente y corregir su tipo. «Es un ticket» corrige el último recibido; no autoriza automáticamente una nueva extracción.
 - Tras la extracción: elige expresamente un uso de CFDI. **`/usos`** muestra el catálogo. Después introduce el correo de recepción y confirma el resumen con el botón de guardar.

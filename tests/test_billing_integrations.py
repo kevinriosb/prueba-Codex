@@ -213,7 +213,7 @@ def test_telegram_onboarding_consent_callbacks_and_owner_isolation(billing_clien
         assert response.status_code==200,response.text
         return body
     update({'text':'/start'})
-    assert 'Constancia' in telegram.messages[-1][1]
+    assert 'CSF' in telegram.messages[-1][1]
     update({'document':{'file_id':'csf-demo'}})
     assert extractor.calls==[]
     choose_csf=telegram.messages[-1][2][0][1]

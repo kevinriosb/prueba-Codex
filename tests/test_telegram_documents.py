@@ -39,7 +39,7 @@ def test_ticket_before_profile_is_kept_and_resumed_without_resubmission(billing_
     assert 'No necesitas volver a subirlo' in telegram.messages[-1][1]
     assert extractor.calls==[]
     confirm_profile(telegram,chat)
-    assert 'ya están guardados' in telegram.messages[-1][1]
+    assert 'Tickets guardados' in telegram.messages[-1][1]
     chat(data=button(telegram,'dt'))
     assert button(telegram,'an').endswith(source_id)
     chat(data=button(telegram,'an'))
@@ -52,14 +52,22 @@ def test_ticket_before_profile_is_kept_and_resumed_without_resubmission(billing_
     assert mail.sent==[]
 
 
-def test_csf_is_not_assumed_to_be_ticket_when_profile_already_exists(billing_client):
+def test_upload_defaults_to_ticket_after_profile_is_confirmed(billing_client):
+    client,app,extractor,mail,sat,telegram,chat=create(billing_client)
+    confirm_profile(telegram,chat)
+    telegram.files['receipt']=image('green')
+    chat(document='receipt')
+    identifier=button(telegram,'an').split(':')[1]
+    assert app.state.billing.document(owner(app),identifier)['purpose']=='ticket'
+    assert all(not data.startswith(('dc:','dt:')) for _,data in telegram.messages[-1][2])
+    assert len(extractor.calls)==1
+
+
+def test_explicit_csf_caption_still_adds_another_certificate(billing_client):
     client,app,extractor,mail,sat,telegram,chat=create(billing_client)
     confirm_profile(telegram,chat)
     telegram.files['another-csf']=image('green')
-    chat(document='another-csf')
-    assert button(telegram,'dc') and button(telegram,'dt')
-    assert len(extractor.calls)==1
-    chat(data=button(telegram,'dc'))
+    chat(document='another-csf',caption='/csf')
     identifier=button(telegram,'an').split(':')[1]
     assert app.state.billing.document(owner(app),identifier)['purpose']=='csf'
     assert len(extractor.calls)==1
@@ -179,3 +187,58 @@ def test_unclassified_purpose_is_not_exposed_as_a_web_upload_option(billing_clie
     response=client.post('/api/billing/documents?purpose=unclassified',content=image())
     assert response.status_code==422
     assert app.state.billing.store.count('document','owner')==0
+
+
+def test_registered_profile_survives_new_chat_and_expiry_of_original_csf(billing_client):
+    client,app,extractor,mail,sat,telegram,chat=create(billing_client)
+    confirm_profile(telegram,chat)
+    profile=app.state.billing.store.list('profile',owner(app))[0]
+    with app.state.database.connection() as connection:
+        connection.execute('UPDATE billing_records SET expires=0 WHERE id=?',(profile['document_id'],))
+    app.state.billing.store.purge()
+    chat('/nuevo')
+    state=app.state.telegram._state(owner(app))
+    state['active_profile']=None  # Se recupera la única elección posible sin volver a pedir CSF.
+    app.state.telegram._save_state(owner(app),state)
+    telegram.files['receipt']=image('red')
+    chat(document='receipt')
+    identifier=button(telegram,'an').split(':')[1]
+    assert app.state.billing.document(owner(app),identifier)['profile_id']==profile['id']
+    assert app.state.telegram._state(owner(app))['active_profile']==profile['id']
+    assert app.state.telegram.agent_context(owner(app))['csf_received'] is True
+    assert len(extractor.calls)==1
+
+
+def test_ticket_after_csf_analysis_asks_only_for_missing_profile_step(billing_client):
+    client,app,extractor,mail,sat,telegram,chat=create(billing_client)
+    telegram.files.update(csf=image('blue'),receipt=image('yellow'))
+    chat(document='csf',caption='/csf')
+    chat(data=button(telegram,'an'))
+    chat(document='receipt')
+    assert 'Tu CSF ya está recibida' in telegram.messages[-1][1]
+    assert '/usos' in telegram.messages[-1][1]
+    assert 'Envía tu CSF' not in telegram.messages[-1][1]
+    assert len(extractor.calls)==1
+    state=app.state.telegram._state(owner(app))
+    assert app.state.billing.document(owner(app),state['last_document_id'])['intended_purpose']=='ticket'
+
+
+def test_csf_received_without_analysis_is_not_requested_again(billing_client):
+    client,app,extractor,mail,sat,telegram,chat=create(billing_client)
+    telegram.files.update(csf=image('blue'),receipt=image('yellow'))
+    chat(document='csf',caption='/csf')
+    csf_id=button(telegram,'an').split(':')[1]
+    chat(document='receipt')
+    assert button(telegram,'an').endswith(csf_id)
+    assert 'comparte con OpenAI' in telegram.messages[-1][1]
+    assert extractor.calls==[]
+    assert app.state.telegram.agent_context(owner(app))['csf_received'] is True
+
+
+def test_automatic_ticket_default_never_reuses_another_users_profile(billing_client):
+    client,app,extractor,mail,sat,telegram,chat=create(billing_client)
+    confirm_profile(telegram,chat)
+    telegram.files['receipt']=image('yellow')
+    chat(document='receipt',user=456)
+    assert button(telegram,'dc') and button(telegram,'dt')
+    assert app.state.billing.store.list('profile',owner(app,456))==[]

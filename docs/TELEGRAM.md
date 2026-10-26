@@ -69,9 +69,10 @@ contenedor: no necesitas instalar el SDK en el Python 3.9 del sistema.
 - `/nuevo` inicia otra conversación; conserva las anteriores y los perfiles.
 - `/conversaciones` permite volver a una anterior. `/eliminar_conversacion ID`
   solicita un botón de confirmación para borrar solo esa conversación propia.
-- Al enviar un archivo sin descripción, el bot pregunta **CSF o Ticket** antes
-  de analizarlo. También puedes usar `/csf` o `/ticket` como descripción del
-  archivo. Elegir su tipo no solicita IA; el análisis necesita un botón aparte.
+- Antes del primer perfil, un archivo desconocido pide elegir **CSF o Ticket**.
+  Una vez recibida la CSF o confirmado el perfil, los archivos nuevos se tratan
+  como tickets. No se pide elegir el tipo en cada subida. Para otra constancia,
+  usa `/csf` como descripción; `/ticket` también está disponible.
 - Si envías primero el ticket, se guarda cifrado y queda pendiente hasta confirmar
   el perfil fiscal. Después de guardar el perfil aparece **Continuar con ticket**:
   utiliza el mismo archivo, sin volver a subirlo, y solicita autorizar su análisis.
@@ -80,6 +81,10 @@ contenedor: no necesitas instalar el SDK en el Python 3.9 del sistema.
   Los archivos conservan su vencimiento original; clasificarlos no amplía el TTL.
 - La CSF se analiza con autorización; el perfil se confirma después de elegir uso
   de CFDI y correo. Mencionar esos datos en el chat no crea un perfil confirmado.
+  Si la CSF ya llegó, el bot pide solo el paso pendiente, sin solicitarla otra vez.
+  El perfil confirmado se conserva al usar `/nuevo`, reiniciar o vencer el archivo
+  temporal de la CSF. Actualizar datos o adjuntar una CSF original vencida puede
+  requerir una nueva copia, según el caso.
 - «Prepara el correo de este ticket» solicita el borrador revisable. El botón
   muestra destinatario, contenido y adjuntos; solo su confirmación puede enviarlo.
   Gmail debe estar conectado y el envío habilitado por el operador.
@@ -125,6 +130,15 @@ no es una garantía de capacidad para atenderlas simultáneamente.
 
 ## Límites y privacidad
 
+- El chat responde por defecto en 1–2 frases y hasta 35 palabras. El máximo de
+  salida por llamada es `MAX_OUTPUT_TOKENS=150` (antes 600). Se conserva la variable
+  para cambiarlo; si ya la configuraste explícitamente en el servidor prevalece
+  ese valor. No se recorta el texto después de generarlo: el límite se envía a OpenAI.
+- Instrucciones, herramientas e historial también consumen tokens de entrada.
+  `/nuevo` reduce el contexto de futuras peticiones y conserva perfiles y tickets.
+  La extracción estructurada de documentos mantiene su presupuesto independiente,
+  para no truncar los campos fiscales. Las revisiones de confirmación muestran
+  todos los datos necesarios y no solicitan generación de texto por sí solas.
 - Una instancia de agente; una ejecución general a la vez y una operación de
   Telegram a la vez por persona. Si está ocupado, avisa sin reenviar al modelo.
 - Se reutilizan límites de pasos, tiempo, tamaño y consumo diario por persona.

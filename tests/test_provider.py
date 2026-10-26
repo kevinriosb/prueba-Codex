@@ -18,7 +18,7 @@ async def test_real_responses_adapter_without_network_or_charges(make_client):
         assert request.method == 'POST'
         body = json.loads(request.content)
         assert body['store'] is False
-        assert body['max_output_tokens'] == 600
+        assert body['max_output_tokens'] == 150
         assert body['parallel_tool_calls'] is False
         requests.append(body)
         return httpx2.Response(200, json={
