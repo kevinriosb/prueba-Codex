@@ -61,7 +61,7 @@ def create_app(settings=None, *, model=None, extra_tools=(), billing_extractor=N
         billing=BillingService(settings,database,service,extractor=billing_extractor,mail=mail_provider,
             portals=portal_adapters,sat=sat_verifier)
         app.state.billing=billing
-        app.state.telegram=TelegramBridge(settings,billing,client=telegram_client)
+        app.state.telegram=TelegramBridge(settings,billing,agent_service=service,client=telegram_client)
         billing.notifier=app.state.telegram.notify
         if billing.enabled:
             service.tools.extend(build_billing_tools(billing))

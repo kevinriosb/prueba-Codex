@@ -45,13 +45,19 @@ def replace_value(original, token):
 
 
 def update_key(path, token, expected):
+    return write_updated(path, replace_value(expected, token), expected, label='openai')
+
+
+def write_updated(path, updated, expected, *, label):
+    """Escritura privada común a los asistentes, con control de cambios y copia."""
+    if not re.fullmatch(r'[a-z][a-z0-9-]{0,20}', label):
+        raise ValueError('Etiqueta de configuración no válida.')
     original, metadata = read_private(path)
     if original != expected:
         raise ValueError('El archivo cambió mientras introducías la clave. Se ha conservado; repite el asistente.')
-    updated = replace_value(original, token)
     if updated == original:
         return None
-    backup = path.with_name(path.name + '.openai-' + time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8] + '.bak')
+    backup = path.with_name(path.name + '.' + label + '-' + time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8] + '.bak')
     descriptor = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, 'wb') as stream:
         stream.write(original)

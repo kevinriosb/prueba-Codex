@@ -304,9 +304,11 @@ Antes de usar documentos privados:
   su webhook con autorización. Las consultas SAT y el seguimiento periódico son
   activaciones separadas con consentimiento, descritas en [FACTURACION.md](FACTURACION.md).
 
-El canal Telegram actual guía la facturación con botones y lectura de documentos
-por IA. La conversación libre del agente general sigue en la web; WhatsApp no
-está integrado todavía.
+Telegram ahora puede conversar con el mismo agente de IA y conserva el flujo
+fiscal con botones. Consulta [TELEGRAM.md](TELEGRAM.md) para la conexión inicial,
+la verificación de la primera cuenta y la administración manual de invitados.
+La actualización requiere reconstruir la imagen del backend y recrear solo
+`agent`; no basta con `git pull`. WhatsApp no está integrado todavía.
 
 Tras cambiar `.env.hostinger`, recrea solo el servicio con el comando `up` del
 paso 3. No genera ni cambia la clave de cifrado. El historial general y el módulo

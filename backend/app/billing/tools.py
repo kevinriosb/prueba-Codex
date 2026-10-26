@@ -19,41 +19,76 @@ OPERATIONS={
 
 
 def build_billing_tools(billing):
+    def review(ctx, kind, identifier):
+        if ctx.context.get('channel') == 'telegram':
+            ctx.context['events'].append({'tool':'human_review','result':'Revisión humana requerida.',
+                'review':{'kind':kind,'id':identifier}})
+
+    @function_tool
+    async def billing_workspace(ctx:RunContextWrapper[dict])->dict:
+        """Consulta los identificadores y estados fiscales propios, sin revelar RFC ni documentos."""
+        owner=ctx.context['user_id']
+        billing.require_enabled()
+        state=billing.store.find('channel_state',owner,'telegram') if ctx.context.get('channel')=='telegram' else None
+        return {'profiles':[{'id':item['id']} for item in billing.store.list('profile',owner)[:10]],
+            'tickets':[{'id':item['id'],'status':item['status']} for item in billing.store.list('ticket',owner)[:10]],
+            'documents':[{'id':item['id'],'purpose':item['purpose']} for item in billing.store.list('document',owner)[:10]],
+            'active_profile_id':(state or {}).get('active_profile'),
+            'last_document_id':(state or {}).get('last_document_id'),
+            'last_ticket_id':(state or {}).get('last_ticket_id')}
+
     def build(name,description):
         async def action(ctx:RunContextWrapper[dict],identifier:str)->dict:
             owner=ctx.context['user_id']
             billing.require_enabled()
+            location='Telegram' if ctx.context.get('channel')=='telegram' else 'Facturación'
             if name=='process_fiscal_certificate':
+                document=billing.document(owner,identifier)
+                if ctx.context.get('channel')=='telegram' and document.get('extracted') is None:
+                    review(ctx,'document',identifier)
+                    return {'document_id':identifier,'analysis_consent_required':True,'review_in':'Telegram'}
                 draft=await billing.process_fiscal_certificate(owner,identifier,consent=False)
-                return {'draft_id':draft['id'],'confirmation_required':True,'review_in':'Facturación'}
+                review(ctx,'profile',draft['id'])
+                return {'draft_id':draft['id'],'confirmation_required':True,'review_in':location}
             if name=='extract_fiscal_profile':
                 draft=billing.store.get('profile_draft',owner,identifier)
-                return {'draft_id':identifier,'complete':validate_fiscal(draft),'review_in':'Facturación'}
+                return {'draft_id':identifier,'complete':validate_fiscal(draft),'review_in':location}
             if name=='confirm_fiscal_profile':
                 billing.store.get('profile_draft',owner,identifier)
-                return {'confirmation_required':True,'review_in':'Facturación','draft_id':identifier}
+                review(ctx,'profile',identifier)
+                return {'confirmation_required':True,'review_in':location,'draft_id':identifier}
             if name=='analyze_ticket':
+                document=billing.document(owner,identifier)
+                if ctx.context.get('channel')=='telegram' and document.get('extracted') is None:
+                    review(ctx,'document',identifier)
+                    return {'document_id':identifier,'analysis_consent_required':True,'review_in':'Telegram'}
                 ticket=await billing.analyze_ticket(owner,identifier,consent=False)
+                review(ctx,'ticket',ticket['id'])
                 return {'ticket_id':ticket['id'],'status':ticket['status']}
             if name=='detect_billing_channels':
                 return billing.detect_billing_channels(owner,identifier)
             if name=='verify_billing_email':
                 billing.store.get('ticket',owner,identifier)
-                return {'human_verification_required':True,'review_in':'Facturación','ticket_id':identifier}
+                review(ctx,'ticket',identifier)
+                return {'human_verification_required':True,'review_in':location,'ticket_id':identifier}
             if name in {'prepare_invoice_request_email','request_email_send_approval'}:
                 approval=billing.request_email_send_approval(owner,identifier)
-                return {'approval_id':approval['id'],'confirmation_required':True,'review_in':'Facturación'}
+                review(ctx,'email',approval['id'])
+                return {'approval_id':approval['id'],'confirmation_required':True,'review_in':location}
             if name=='send_invoice_request_email':
                 billing.store.get('email_approval',owner,identifier)
-                return {'confirmation_required':True,'review_in':'Facturación','approval_id':identifier,'sent':False}
+                review(ctx,'email',identifier)
+                return {'confirmation_required':True,'review_in':location,'approval_id':identifier,'sent':False}
             if name in {'track_invoice_email','process_invoice_response'}:
                 ticket=await billing.track_invoice_email(owner,identifier,authorize_sat=False)
-                return {'ticket_id':identifier,'status':ticket['status'],'review_in':'Facturación'}
+                review(ctx,'ticket',identifier)
+                return {'ticket_id':identifier,'status':ticket['status'],'review_in':location}
             ticket=billing.store.get('ticket',owner,identifier)
+            review(ctx,'ticket',identifier)
             return {'ticket_id':identifier,'status':ticket['status'],
                 'sat_verified':bool((ticket.get('validation') or {}).get('sat_verified')),
-                'sat_authorization_required':not bool((ticket.get('validation') or {}).get('sat_verified')),'review_in':'Facturación'}
+                'sat_authorization_required':not bool((ticket.get('validation') or {}).get('sat_verified')),'review_in':location}
         return function_tool(action,name_override=name,description_override=description,
             timeout=billing.settings.run_timeout_seconds,
             failure_error_function=lambda _ctx,_error:'No se completó la operación fiscal. Revisa el estado y las autorizaciones en Facturación; no repitas envíos automáticamente.')
-    return [build(name,description) for name,description in OPERATIONS.items()]
+    return [billing_workspace]+[build(name,description) for name,description in OPERATIONS.items()]

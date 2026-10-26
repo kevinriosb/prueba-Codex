@@ -16,7 +16,7 @@ La actualización amplía el agente existente. Conserva el chat, autenticación,
 | CFDI 4.0 | Parser XML sin DTD/entidades, versión, timbre/UUID y coincidencia de receptor, régimen, uso, CP, nombre, importe y emisor cuando existe en el ticket | No incluye validación XSD completa ni verificación criptográfica de sellos. La presencia de un PDF no valida un CFDI |
 | Vigencia SAT | Adaptador SOAP con destino HTTPS fijo, desactivado por defecto; autorización expresa para compartir RFC, UUID e importe | Transporte simulado. No se hizo una consulta fiscal real. Consulta de vigencia y verificación criptográfica son comprobaciones distintas |
 | Seguimiento | Consulta manual y seguimiento periódico opcional por ticket, con política revisada y autorizada, límite total y parada tras tres errores consecutivos | Sin recordatorios automáticos ni nuevos correos de seguimiento. Avisos en Telegram para su propio usuario y estados disponibles en la web |
-| Telegram | Webhook con secreto, lista de usuarios permitidos, chats privados, deduplicación de eventos, PDF/foto y flujo con botones de consentimiento y aprobación | Cliente HTTP y recorrido probados con servicios simulados. No se reutiliza ni registra automáticamente un bot anterior |
+| Telegram | Conversación libre con el mismo agente, historial por persona, webhook con secreto, lista de invitados, PDF/foto y botones de consentimiento y aprobación | Runner real, servicios simulados y aislamiento probados. La conexión real de un bot nuevo sigue requiriendo configuración |
 | Portales de comercios | Registro de adaptadores del servidor y prioridad sobre correo cuando hay un adaptador compatible autorizado | No hay adaptadores de portales comerciales instalados. No se automatiza un portal arbitrario encontrado en un ticket |
 | WhatsApp | La lógica fiscal está separada del canal y puede reutilizarse | Adaptador de WhatsApp pendiente; no hay un número o integración de WhatsApp activados |
 
@@ -74,6 +74,11 @@ El correo indicado en el perfil es el destino solicitado para PDF/XML. El buzón
 
 ## 4. Configura Telegram
 
+Para el VPS con AlmaLinux y Docker utiliza la [guía de Telegram en Hostinger](TELEGRAM.md).
+Incluye un asistente compatible con Python 3.9, token oculto, verificación de la
+primera cuenta por código y administración manual de invitados. Los comandos
+`uv` siguientes corresponden a una instalación de desarrollo con Python 3.12.
+
 1. Crea o elige un bot en BotFather. Copia su token únicamente a **`TELEGRAM_BOT_TOKEN`** en las variables privadas del servidor.
 2. Define **`TELEGRAM_WEBHOOK_SECRET`**: un valor aleatorio de 32 a 256 caracteres formado por letras, números, guion o guion bajo. No es el token de BotFather y no se comparte con usuarios.
 3. Configura **`TELEGRAM_ALLOWED_USER_IDS`** con los IDs numéricos de las cuentas autorizadas, separados por comas. El nombre `@usuario` no sustituye al ID. No habilites usuarios desconocidos para probar datos reales.
@@ -103,7 +108,12 @@ Reemplaza `ORIGEN_HTTPS_REAL` por la dirección real, sin rutas. Desde el iPad p
 - Si el comercio pidió la constancia completa, registra esa petición mediante **`/requiere_csf ID_TICKET descripción de la petición`**. Después **`/preparar_con_csf ID_TICKET`** autoriza incluirla en un borrador; aún debes aprobar el correo final.
 - Una solicitud ya enviada no se repite. Se permite un complemento aprobado con CSF si el comercio lo pidió y no se compartió antes; no es una política de recordatorios.
 
-Telegram ofrece un flujo guiado de facturación con IA para leer documentos. La conversación libre del agente general permanece disponible en la web. Los perfiles de la sesión web y de cada ID de Telegram están aislados; todavía no existe vinculación de identidades entre canales ni adaptador de WhatsApp.
+Telegram ofrece conversación libre con el mismo agente, además del flujo fiscal
+guiado. `/nuevo` inicia otra conversación y `/historial` recupera mensajes propios.
+Los documentos exigen autorización de análisis y los envíos una revisión con
+botón, incluso si el texto pide omitirlos. Los perfiles de la web y de cada cuenta
+de Telegram están aislados; no existe vinculación de identidades entre canales ni
+adaptador de WhatsApp.
 
 ## 5. Envía tu primer ticket desde la web
 

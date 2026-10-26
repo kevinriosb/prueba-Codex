@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 import time
 import uuid
@@ -87,6 +88,14 @@ class Database:
     def delete_session(self, token_hash):
         with self.connection() as conn:
             conn.execute("DELETE FROM auth_sessions WHERE token_hash=?", (token_hash,))
+
+    def ensure_telegram_user(self, identifier):
+        """Identidad interna del canal; nunca crea credenciales de acceso web."""
+        if not re.fullmatch(r'tg_[0-9a-f]{64}', identifier):
+            raise AppError(403, 'channel_identity', 'Identidad de Telegram no válida.')
+        with self.connection(True) as conn:
+            conn.execute("INSERT OR IGNORE INTO users(id,username,password_hash) VALUES(?,?,?)",
+                         (identifier, 'channel:' + identifier, '!channel-login-disabled'))
 
     def create_conversation(self, owner, maximum):
         now = time.time()

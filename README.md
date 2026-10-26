@@ -6,7 +6,11 @@ También incluye un módulo de **perfil fiscal y solicitudes de factura por Gmai
 
 Repositorio del proyecto: [kevinriosb/prueba-Codex](https://github.com/kevinriosb/prueba-Codex).
 
-**La aplicación todavía no está desplegada. El enlace de GitHub permite consultar el código; para usar el chat desde Safari hace falta una URL del backend.**
+El mismo agente puede conversar por **Telegram con acceso por invitación**, historial
+por persona y botones de aprobación. La [guía de Telegram para Hostinger](docs/TELEGRAM.md)
+explica cómo conectar un bot nuevo desde Termius, sin compartir su token.
+
+**GitHub permite consultar el código; para usar el agente hace falta ejecutar el backend.** El propietario ya comprobó su instalación web en Hostinger y una respuesta real con cálculo desde el iPad. La nueva conexión de Telegram requiere actualizar y configurar ese despliegue; no se activa al publicar código.
 
 ## Qué puedes hacer
 
@@ -17,7 +21,7 @@ Repositorio del proyecto: [kevinriosb/prueba-Codex](https://github.com/kevinrios
 - Ver resultados de herramientas y errores en el chat.
 - Aprobar o rechazar llamadas de futuras herramientas que modifiquen datos o sistemas externos.
 
-La versión inicial tiene **un usuario propietario**, configurado por variables de entorno. No incluye registro público de usuarios. El backend vincula cada conversación y aprobación a su propietario; las pruebas comprueban que un usuario no puede leer ni modificar conversaciones ajenas.
+La web tiene **un usuario propietario**, configurado por variables de entorno. Telegram admite cuentas autorizadas mediante su ID, cada una con historial y datos propios. No hay registro público ni vinculación automática entre la cuenta web y Telegram. El backend vincula cada conversación y aprobación a su propietario; las pruebas comprueban que un usuario no puede leer ni modificar conversaciones ajenas.
 
 No hay acceso a shell, ejecución de código generado ni navegación arbitraria. El módulo fiscal admite análisis autorizado de PDF/foto y correo mediante Gmail; sus datos se revisan en Facturación y no se incorporan al historial normal del chat mediante herramientas.
 
@@ -25,10 +29,11 @@ No hay acceso a shell, ejecución de código generado ni navegación arbitraria.
 
 Safari necesita una **URL HTTPS que sirva el backend**. Abrir `frontend/index.html` o una dirección `localhost` de este entorno no permite usar la aplicación desde tu iPad.
 
-Tienes dos caminos:
+Tienes tres opciones:
 
 1. **Sin contratar servicios:** ejecutar el proyecto en una computadora de tu red y acceder desde el iPad. Las instrucciones están abajo; esta modalidad es solo para desarrollo en una red de confianza.
 2. **Posteriormente en Railway:** conectar el repositorio de GitHub y autorizar la creación/despliegue del servicio, configurar las variables y un volumen persistente. Railway y la API de OpenAI pueden generar cargos. No se ha creado ni contratado un servicio de Railway.
+3. **VPS existente en Hostinger:** seguir [HOSTINGER.md](docs/HOSTINGER.md), reutilizando CyberPanel, HTTPS y un contenedor con volumen persistente. Es el alojamiento elegido para esta instalación; Railway no es necesario.
 
 Cuando exista una URL accesible:
 

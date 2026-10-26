@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **194 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **238 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve.
 
 Se comprobaron:
 
@@ -139,6 +139,47 @@ salida. No se ha modificado la configuración real del usuario ni efectuado
 generación de IA durante esta actualización. La sustitución de la clave y su
 nueva comprobación en el VPS quedan a cargo del usuario.
 
+El usuario completó después la sustitución en Termius y compartió su salida:
+contenedor healthy, control de autenticación de Responses aceptado y metadatos
+del modelo con HTTP 200. A continuación compartió una captura de la prueba real
+desde Safari: respuesta de 575 pesos en total y 287.5 por persona, con dos
+resultados de la herramienta de cálculo visibles. No se recibió el reporte de
+tokens o costo de esa ejecución. Codex no inició llamadas adicionales al modelo.
+
+### Conversación con IA e invitaciones en Telegram
+
+Se implementó el adaptador al mismo `AgentService`, sin otro agente ni nuevas
+dependencias. Las pruebas usan el Runner y herramientas reales con modelo y
+transporte simulados. Comprueban cálculo sin perfil fiscal, presupuesto e
+historial independientes, recuperación tras reiniciar, selección y eliminación
+confirmada de conversaciones propias, duplicados concurrentes y rechazo de
+mensajes de grupos o cuentas no invitadas sin llamar al modelo.
+
+Se comprobaron aprobación y rechazo de una escritura ficticia, bloqueo de otro
+usuario y de su repetición, ausencia de un botón de aprobación si no cabe la
+revisión completa, consulta de IDs propios sin revelar campos fiscales ajenos,
+consentimiento obligatorio antes de analizar y un borrador solicitado en lenguaje
+natural que no envía correo hasta recibir la confirmación de su propietario.
+
+Los asistentes de Telegram se probaron sin APIs reales: vinculación por código
+exacto y chat privado, rechazo de bots y códigos ambiguos, conservación de claves,
+copia privada, autorización y retirada manual por ID, registro explícito y
+verificación de URL de webhook, rechazo de reemplazar la dirección de otro servicio
+y rechazo de listas abiertas o IDs inválidos. La sintaxis de los asistentes del
+VPS se comprobó para Python 3.9.
+
+La imagen Docker actualizada se construyó y pasó `scripts/container_smoke.py`:
+salud, login, UID sin privilegios y recuperación de historial y documento fiscal
+cifrado al recrear con volumen. La validación de `configure_telegram.py` ejecutado
+por stdin dentro de esa imagen pasó con la red desactivada y valores ficticios.
+Los recursos de prueba se eliminaron; no se cambió el VPS.
+
+El bot nuevo todavía debe crearlo el usuario en BotFather, vincular su cuenta y
+aplicar la actualización y el webhook en Termius siguiendo [TELEGRAM.md](TELEGRAM.md).
+No se afirma que exista una conversación real en Telegram comprobada. Gmail,
+envíos, lectura real de documentos, copias de seguridad y pruebas con dos cuentas
+siguen pendientes antes de abrir el piloto a otras personas.
+
 - `scripts/hostinger_smoke.py` pasó con la imagen actualizada: configuración de
   producción real, puerto publicado únicamente en loopback, host autorizado,
   cookies seguras, contraseña ficticia con caracteres especiales, rechazo de
@@ -195,15 +236,17 @@ certificado de respaldo reutilizado. Este ensayo usa dominios, archivos y
 certificados ficticios. Ninguna referencia de producción se ha desactivado aún
 desde Codex; la aplicación de los comandos queda en la terminal del usuario.
 
-Los respaldos de datos, su recuperación, Gmail/Telegram y la prueba física en
-Safari continúan pendientes. La guía es [HOSTINGER.md](HOSTINGER.md).
+Los respaldos y su recuperación, Gmail/Telegram y la prueba fiscal completa en
+Safari continúan pendientes. El chat web sí fue comprobado por el usuario en su
+iPad. La guía de alojamiento es [HOSTINGER.md](HOSTINGER.md).
 
 ### Configuración del entorno de desarrollo y otras opciones
 
-1. Revisar y publicar el nuevo borrador que guarda las instrucciones de inicio con la variable directa validada. Esto publica la configuración de Codex, no una aplicación web accesible desde el iPad.
-2. Una conversación normal con respuesta del modelo después de la herramienta requiere llamadas adicionales y nueva autorización; la prueba real de llamada a herramienta y persistencia ya pasó.
-3. Disponer de una URL accesible: computadora local en red de confianza o un despliegue HTTPS posterior y autorizado.
-4. Para Railway, crear/configurar el servicio y su volumen, revisar permisos del volumen y verificar salud e historial en esa plataforma. Esta parte **no se ejecutó**.
-5. Completar la prueba en Safari del iPad real.
+La configuración de Codex y la del VPS son independientes. Publicar un entorno
+de desarrollo o hacer push a GitHub no cambia por sí solo las variables o la
+imagen activa del VPS. Las actualizaciones de esta instalación se aplican en
+Termius, conservando su archivo privado, volumen y clave de cifrado.
 
-El usuario publicó la configuración con las credenciales y la variable directa antes de la prueba real. Después se guardó un nuevo borrador con las instrucciones de inicio verificadas. Guardar ese último borrador no lo publica ni suministra credenciales: el usuario debe revisar y publicar el entorno para conservar ese cambio en su configuración activa.
+Railway continúa como alternativa documentada: no se creó ni desplegó un servicio
+en esa plataforma. El alojamiento elegido por el usuario es su VPS existente.
+No se han contratado recursos nuevos durante esta actualización.

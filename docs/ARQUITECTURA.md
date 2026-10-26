@@ -85,6 +85,26 @@ Gmail usa OAuth 2.0 con PKCE y estado aleatorio, de un solo uso y con vencimient
 
 Telegram exige secreto del webhook, ID numérico permitido y chat privado. Sus propietarios son HMAC del identificador del canal, separados del propietario de la web. Las actualizaciones se deduplican y tienen un límite diario. Se pide consentimiento antes de analizar un documento y se confirma el resumen antes de guardar el perfil. No se configura automáticamente un bot ni se vinculan identidades entre canales. WhatsApp podrá reutilizar los servicios con su propio adaptador y verificación de identidad.
 
+`telegram_agent.py` adapta el texto libre al mismo `AgentService`, con los límites
+y herramientas del Runner. Cada propietario de Telegram tiene una identidad
+interna sin acceso web y conversaciones vinculadas por clave foránea. El ID de la
+conversación activa se guarda en el estado cifrado; al recuperar o borrar se vuelve
+a comprobar su propietario. `/conversaciones` permite recuperar conversaciones
+anteriores; eliminarlas exige un botón explícito y no elimina perfiles fiscales.
+
+`billing_workspace` devuelve solo IDs y estados propios. Las herramientas pueden
+añadir eventos de revisión estructurados al contexto del servidor; estos se
+traducen a botones en Telegram después de responder. No se interpretan como
+acciones el texto o JSON generado por el modelo. El SDK también puede pausar
+futuras herramientas de escritura: su aprobación va vinculada al propietario,
+conversación, ID y caducidad. Las revisiones que excedan el límite del canal solo
+permiten rechazar. No hay reintentos automáticos de ejecución o envíos.
+
+Los asistentes de despliegue usan entrada oculta y escrituras privadas con copia
+anterior. La primera cuenta se prueba con un código aleatorio enviado a un bot
+nuevo; no se autoriza a la primera persona que escriba. Las invitaciones siguientes
+son cambios manuales por ID realizados desde el servidor, nunca por el modelo.
+
 El seguimiento periódico requiere habilitación del servidor y consentimiento por ticket para una política acotada. Solo lee Gmail: no envía recordatorios ni consulta al SAT. Conserva sus contadores, se detiene tras tres errores consecutivos o el máximo de consultas y deduplica los avisos de estado. La consulta de vigencia al SAT exige una autorización específica del usuario para RFC/UUID/importe; nunca adjunta la CSF. Coincidencias del XML y vigencia no equivalen a una validación criptográfica de sellos o al esquema XSD completo.
 
 La configuración y los límites detallados están en [FACTURACION.md](FACTURACION.md).

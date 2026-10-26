@@ -1,3 +1,4 @@
+import asyncio
 import secrets
 import time
 import uuid
@@ -10,6 +11,7 @@ from fastapi import APIRouter, Request
 from ..errors import AppError
 from .models import CFDI_USES
 from .providers import normalized_email
+from .telegram_agent import TelegramAgent
 
 
 class TelegramClient:
@@ -74,13 +76,15 @@ class TelegramClient:
 
 
 class TelegramBridge:
-    def __init__(self,settings,billing,*,client=None):
+    def __init__(self,settings,billing,*,agent_service=None,client=None):
         self.settings,self.billing=settings,billing
         self.client=client or TelegramClient(settings)
         try:
             self.allowed={int(value.strip()) for value in settings.telegram_allowed_user_ids.split(',') if value.strip()}
         except ValueError:
             self.allowed=set()
+        self.agent=TelegramAgent(agent_service,self) if agent_service else None
+        self._locks={}
 
     @property
     def configured(self):
@@ -131,8 +135,41 @@ class TelegramBridge:
 
     async def _preview(self,owner,chat_id,ticket_id,*,csf=False):
         approval=self.billing.request_email_send_approval(owner,ticket_id,include_csf=csf,authorize_csf=csf)
+        await self._email_review(owner,chat_id,approval['id'])
+
+    async def _email_review(self,owner,chat_id,identifier):
+        approval=self.billing.store.get('email_approval',owner,identifier)
+        if approval['_state']!='pending':
+            raise AppError(409,'billing_approval','La autorización caducó o ya fue utilizada.')
         text=f"Revisa antes de enviar\nPara: {approval['to']}\nAsunto: {approval['subject']}\nAdjuntos: "+', '.join(item['label'] for item in approval['attachments'])+'\n\n'+approval['body']
-        await self.client.send(chat_id,text,[('Confirmar y enviar este correo','se:'+approval['id']),('Rechazar envío','no:'+approval['id'])])
+        # Nunca ofrecer aprobar una revisión recortada por el límite de Telegram.
+        if len(text)>3900:
+            await self.client.send(chat_id,'El borrador es demasiado largo para revisarlo completo en Telegram. Recházalo y solicita una revisión manual.',
+                [('Rechazar envío','no:'+approval['id'])])
+        else:
+            await self.client.send(chat_id,text,[('Confirmar y enviar este correo','se:'+approval['id']),('Rechazar envío','no:'+approval['id'])])
+
+    async def show_review(self,owner,chat_id,review):
+        identifier=review.get('id','')
+        kind=review.get('kind')
+        if kind=='email':
+            await self._email_review(owner,chat_id,identifier)
+        elif kind=='ticket':
+            await self._ticket(owner,chat_id,identifier)
+        elif kind=='document':
+            self.billing.document(owner,identifier)
+            await self.client.send(chat_id,'Analizar este documento lo comparte con OpenAI. Revisa y autoriza solo si deseas continuar.',
+                [('Autorizar análisis con OpenAI','an:'+identifier)])
+        elif kind=='profile':
+            draft=self.billing.store.get('profile_draft',owner,identifier)
+            state=self._state(owner)
+            state.update(draft_id=identifier,cfdi_use=draft.get('cfdi_use'))
+            self._save_state(owner,state)
+            if not draft.get('cfdi_use') or not draft.get('email'):
+                await self.client.send(chat_id,'Completa la elección de uso de CFDI y correo con los pasos del perfil antes de confirmar. /usos muestra el catálogo.')
+            else:
+                summary='Revisa antes de guardar:\n'+'\n'.join(f'{label}: {draft.get(key) or "Ilegible"}' for key,label in [('rfc','RFC'),('name','Nombre'),('postal_code','CP fiscal'),('fiscal_regime','Régimen'),('cfdi_use','Uso CFDI'),('email','Correo')])
+                await self.client.send(chat_id,summary,[('Confirmar y guardar perfil','pf:'+identifier),('Descartar','pd:'+identifier)])
 
     async def handle(self,update):
         if not isinstance(update,dict):
@@ -151,6 +188,14 @@ class TelegramBridge:
         lookup=self.billing.store.digest('telegram-update:'+str(update_id))
         if self.billing.store.find('channel_update',owner,lookup):
             return {'ok':True,'duplicate':True}
+        lock=self._locks.setdefault(user_id,asyncio.Lock())
+        if lock.locked():
+            await self.client.send(user_id,'Estoy procesando tu solicitud anterior. Espera la respuesta y vuelve a enviar este mensaje.')
+            return {'ok':True,'busy':True}
+        async with lock:
+            return await self._handle_authorized(owner,user_id,update_id,lookup,message,callback)
+
+    async def _handle_authorized(self,owner,user_id,update_id,lookup,message,callback):
         today=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
         with self.billing.database.connection() as conn:
             used=conn.execute("SELECT COUNT(*) FROM billing_records WHERE kind='channel_update' AND owner=? AND created>=?",(owner,today)).fetchone()[0]
@@ -180,7 +225,18 @@ class TelegramBridge:
             uuid.UUID(identifier)
         except ValueError:
             raise AppError(422,'telegram_callback','Acción no válida.') from None
-        if prefix=='an':
+        if prefix in {'go','gd'}:
+            if not self.agent:
+                raise AppError(503,'telegram_agent','El agente de Telegram no está configurado.')
+            if prefix=='go':
+                await self.agent.open(owner,chat_id,identifier)
+            else:
+                await self.agent.delete(owner,chat_id,identifier)
+        elif prefix in {'ga','gr'}:
+            if not self.agent:
+                raise AppError(503,'telegram_agent','El agente de Telegram no está configurado.')
+            await self.agent.decide(owner,chat_id,identifier,prefix=='ga')
+        elif prefix=='an':
             document=self.billing.document(owner,identifier)
             if document['purpose']=='csf':
                 draft=await self.billing.process_fiscal_certificate(owner,identifier,consent=True,replace_profile_id=document.get('profile_id'))
@@ -191,6 +247,9 @@ class TelegramBridge:
                 await self.client.send(chat_id,'Datos extraídos; todavía no se han guardado como perfil:\n'+fields+'\nEnvía el código de uso de CFDI que hayas elegido. Usa /usos para ver el catálogo.')
             else:
                 ticket=await self.billing.analyze_ticket(owner,identifier,consent=True)
+                state=self._state(owner)
+                state['last_ticket_id']=ticket['id']
+                self._save_state(owner,state)
                 await self._ticket(owner,chat_id,ticket['id'])
         elif prefix=='pf':
             profile=self.billing.confirm_fiscal_profile(owner,identifier,confirmed=True)
@@ -242,8 +301,24 @@ class TelegramBridge:
         text=message.get('text','').strip()
         state=self._state(owner)
         profiles=self.billing.store.list('profile',owner)
-        if text=='/start':
-            await self.client.send(chat_id,'Primero envía tu Constancia de Situación Fiscal en PDF o fotografía. Extraeremos los datos con tu autorización, elegirás uso de CFDI y correo, y confirmarás el perfil antes de facturar.' if not profiles else 'Envía un ticket para el perfil activo. /perfiles muestra perfiles; /tickets muestra solicitudes; /conectar_gmail conecta tu buzón. Usa la descripción /csf en una constancia para agregar otro perfil.')
+        if text in {'/start','/ayuda'}:
+            await self.client.send(chat_id,'Puedes escribir peticiones en lenguaje natural: responderé con IA y utilizaré las herramientas autorizadas. Cada mensaje al agente puede consumir saldo de OpenAI. /nuevo inicia otra conversación y /historial recupera los mensajes.\n\n'+
+                ('Para facturar, primero envía tu Constancia de Situación Fiscal en PDF o fotografía. Extraeremos los datos con tu autorización, elegirás uso de CFDI y correo, y confirmarás el perfil antes de facturar.' if not profiles else 'Envía un ticket para el perfil activo. /perfiles muestra perfiles; /tickets muestra solicitudes; /conectar_gmail conecta tu buzón. Usa la descripción /csf en una constancia para agregar otro perfil.'))
+        elif text=='/nuevo' and self.agent:
+            self.agent.conversation(owner,new=True)
+            await self.client.send(chat_id,'Conversación nueva creada. El historial anterior y tus perfiles se conservan. Puedes escribir tu petición.')
+        elif text=='/historial' and self.agent:
+            await self.agent.history(owner,chat_id)
+        elif text=='/conversaciones' and self.agent:
+            await self.agent.conversations(owner,chat_id)
+        elif text.startswith('/eliminar_conversacion ') and self.agent:
+            identifier=text.split(maxsplit=1)[1]
+            self.agent.service.public_conversation(identifier,owner)
+            await self.client.send(chat_id,'¿Confirmas eliminar los mensajes y aprobaciones pendientes de esta conversación? Tus perfiles y tickets se conservan.',
+                [('Confirmar eliminación','gd:'+identifier)])
+        elif text.startswith('/vincular_'):
+            # Código de configuración previo al webhook; nunca autoriza cuentas aquí.
+            return
         elif text=='/usos':
             await self.client.send(chat_id,'Elige el uso correcto según tu situación fiscal; no lo seleccionaremos por ti:\n'+'\n'.join(key+' — '+value for key,value in CFDI_USES.items()))
         elif text=='/perfiles':
@@ -291,8 +366,11 @@ class TelegramBridge:
                 raise AppError(413,'document_size','El archivo supera el límite permitido.')
             data=await self.client.download(attachment['file_id'])
             document=self.billing.receive_document(owner,purpose,data,profile_id=profile_id)
+            state['last_document_id']=document['id']
+            self._save_state(owner,state)
             await self.client.send(chat_id,'Documento recibido y cifrado temporalmente. Si autorizas el análisis, se enviará a OpenAI y aplicarán sus condiciones de tratamiento de datos. No se enviará a comercios. Pulsa el botón solo si autorizas este análisis.', [('Autorizar análisis con OpenAI','an:'+document['id'])])
-        elif state.get('draft_id'):
+        elif state.get('draft_id') and ((not state.get('cfdi_use') and text.upper() in CFDI_USES)
+                or (state.get('cfdi_use') and '@' in text)):
             if not state.get('cfdi_use'):
                 if text.upper() not in CFDI_USES:
                     raise AppError(422,'cfdi_use','Selecciona expresamente un código válido. /usos muestra el catálogo.')
@@ -304,6 +382,10 @@ class TelegramBridge:
                 draft=self.billing.profile_options(owner,state['draft_id'],state['cfdi_use'],email)
                 summary='Revisa antes de guardar:\n'+'\n'.join(f'{label}: {draft.get(key) or "Ilegible"}' for key,label in [('rfc','RFC'),('name','Nombre'),('postal_code','CP fiscal'),('fiscal_regime','Régimen'),('cfdi_use','Uso CFDI'),('email','Correo')])
                 await self.client.send(chat_id,summary,[('Confirmar y guardar perfil','pf:'+draft['id']),('Descartar','pd:'+draft['id'])])
+        elif text.startswith('/'):
+            await self.client.send(chat_id,'Comando no reconocido. /ayuda muestra las opciones; también puedes escribir una petición en lenguaje natural.')
+        elif text and self.agent:
+            await self.agent.reply(owner,chat_id,text=text)
         else:
             await self.client.send(chat_id,'Usa /start para comenzar, /perfiles para elegir perfil o /tickets para consultar solicitudes. Los documentos y correos nunca autorizan acciones por sí solos.')
 
