@@ -127,12 +127,21 @@ la constancia y pide solo uso, correo, análisis o confirmación que falte. Una 
 elección de perfil disponible puede recuperarse sin otra pregunta; varias sin
 perfil activo exigen elegir. No se comparten perfiles entre usuarios.
 
-Las instrucciones del agente se compactaron y fijan respuestas de 1–2 frases,
-con máximo orientativo de 35 palabras. El límite predeterminado de salida de chat
-se redujo de 600 a 150 tokens y se envía en la solicitud del proveedor. El historial,
-herramientas e instrucciones siguen teniendo costo de entrada; `/nuevo` conserva
-datos fiscales y abre contexto vacío. La extracción de documentos mantiene un
-presupuesto aparte para completar su salida estructurada sin truncarla.
+El módulo `telegram_profiles.py` controla alta y edición por botones en el chat,
+sin depender de que el modelo invente pasos o redirija a la web. Las preguntas de
+estado reconocidas, uso de CFDI y correo no solicitan generación. La herramienta
+`review_fiscal_setup` entrega el mismo flujo al agente para otras formulaciones.
+Las revisiones guardan propietario, versión del borrador y vencimiento; un botón
+antiguo no confirma datos modificados. El perfil previo permanece vigente hasta
+confirmar y los reemplazos conservan el ID y su versión para invalidar aprobaciones
+de correo preparadas con datos anteriores.
+
+Telegram pide frases con objetivo de 50 caracteres y un máximo de presentación
+de 160, configurable. El proveedor recibe hasta 100 tokens de salida por llamada
+del chat Telegram; la web conserva 150. El recorte posterior no reduce el consumo
+ya generado ni se aplica a revisiones humanas. El historial, herramientas e
+instrucciones siguen teniendo costo de entrada; `/nuevo` conserva datos fiscales
+y abre contexto vacío. La extracción de documentos mantiene un presupuesto aparte.
 
 El seguimiento periódico requiere habilitación del servidor y consentimiento por ticket para una política acotada. Solo lee Gmail: no envía recordatorios ni consulta al SAT. Conserva sus contadores, se detiene tras tres errores consecutivos o el máximo de consultas y deduplica los avisos de estado. La consulta de vigencia al SAT exige una autorización específica del usuario para RFC/UUID/importe; nunca adjunta la CSF. Coincidencias del XML y vigencia no equivalen a una validación criptográfica de sellos o al esquema XSD completo.
 

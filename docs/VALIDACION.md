@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **256 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **273 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram.
 
 Se comprobaron:
 
@@ -199,7 +199,7 @@ expone como opción de subida en la API web. No se realizaron nuevas extraccione
 de pago ni se utilizó el ticket real del usuario en las pruebas. La corrección
 requiere actualizar y recrear el contenedor en el VPS; no se aplicó por SSH.
 
-### Respuestas breves y CSF reutilizable
+### Respuestas breves y CSF reutilizable (versión anterior)
 
 Las instrucciones se compactaron y piden 1–2 frases, con máximo orientativo de
 35 palabras. El valor predeterminado de `MAX_OUTPUT_TOKENS` cambió de 600 a 150.
@@ -219,6 +219,33 @@ anteriores también comprueban el nuevo valor por defecto de ticket.
 El historial anterior permanece guardado: `/nuevo` abre contexto vacío sin borrar
 perfiles ni tickets. Entradas, herramientas e imágenes siguen consumiendo tokens;
 estas modificaciones no garantizan un porcentaje fijo de ahorro monetario.
+
+### Respuestas concretas y confirmación del perfil en Telegram
+
+La versión actual pide una frase con objetivo de 50 caracteres y fija un máximo
+de presentación de 160 para texto de IA. Las ofertas genéricas finales se retiran
+sin pedir otra generación. La prueba del adaptador Responses con HTTP simulado
+verifica `max_output_tokens=100` para Telegram y 150 para la web, además de
+`store=false`, llamadas a herramientas y retorno de su resultado. Recortar el
+texto ya generado no reduce su consumo; el límite del proveedor y los pasos
+resueltos sin IA son las medidas de control. La extracción mantiene su presupuesto
+independiente. No se hicieron nuevas generaciones reales para medir calidad.
+
+Las pruebas recorren alta completa sin abrir la web, selección explícita de uso
+por botón, captura de correo, revisión completa, confirmación de un solo uso,
+edición sin modificar el perfil previo, rechazo de botones anteriores tras editar,
+aislamiento de propietarios, descarte de cambios y reemplazo de CSF conservando
+el ID del perfil. Un «sí» no confirma ni autoriza el análisis. También comprueban
+que un borrador caducado recupera la extracción disponible sin otra llamada de IA,
+que cambiar el correo no exige el original ya vencido, que una CSF antigua no
+reinicia el alta tras un reemplazo y que se conserva la elección de uso guardada
+por la versión anterior. Los botones antiguos abren una revisión nueva.
+
+La herramienta `review_fiscal_setup` abre el flujo del servidor en este mismo
+chat; no interpreta JSON del modelo como acciones ni remite al portal web.
+Las revisiones de aprobación muestran todos los datos y no se recortan. No se
+hicieron llamadas reales a OpenAI, Telegram, Gmail o SAT durante estas pruebas.
+La aplicación de esta versión al VPS queda a cargo del usuario desde Termius.
 
 - `scripts/hostinger_smoke.py` pasó con la imagen actualizada: configuración de
   producción real, puerto publicado únicamente en loopback, host autorizado,

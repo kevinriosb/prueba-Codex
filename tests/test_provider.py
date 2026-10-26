@@ -1,6 +1,8 @@
 import json
+from functools import partial
 
 import httpx2
+import pytest
 from agents.models.openai_responses import OpenAIResponsesModel
 from openai import AsyncOpenAI
 from backend.app.tools.registry import ToolSpec
@@ -9,7 +11,8 @@ from .conftest import conversation, login
 from .fake_model import answer, call
 
 
-async def test_real_responses_adapter_without_network_or_charges(make_client):
+@pytest.mark.parametrize('channel,max_tokens', [('web', 150), ('telegram', 100)])
+async def test_real_responses_adapter_without_network_or_charges(make_client, channel, max_tokens):
     requests = []
     outputs = [[call('calculator', expression='500 * 1.15 / 2')], [answer('Cada persona paga 287.50 pesos.')]]
 
@@ -18,7 +21,7 @@ async def test_real_responses_adapter_without_network_or_charges(make_client):
         assert request.method == 'POST'
         body = json.loads(request.content)
         assert body['store'] is False
-        assert body['max_output_tokens'] == 150
+        assert body['max_output_tokens'] == max_tokens
         assert body['parallel_tool_calls'] is False
         requests.append(body)
         return httpx2.Response(200, json={
@@ -34,13 +37,18 @@ async def test_real_responses_adapter_without_network_or_charges(make_client):
     async with AsyncOpenAI(api_key='clave-ficticia-solo-pruebas', max_retries=0,
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(transport))) as provider:
         model = OpenAIResponsesModel(model='gpt-4.1-mini', openai_client=provider)
-        client, _ = make_client(model=model)
+        client, app = make_client(model=model)
         login(client)
         identifier = conversation(client)
-        response = client.post(f'/api/conversations/{identifier}/messages', json={'text': 'Divide la cuenta con propina'})
-        assert response.status_code == 200, response.text
-        assert '287.50' in response.json()['messages'][-1]['content']
-        assert 'clave-ficticia' not in response.text
+        if channel == 'web':
+            response = client.post(f'/api/conversations/{identifier}/messages', json={'text': 'Divide la cuenta con propina'})
+            assert response.status_code == 200, response.text
+            result = response.json()
+        else:
+            result = client.portal.call(partial(app.state.service.execute, identifier, 'owner',
+                text='Divide la cuenta con propina', channel='telegram'))
+        assert '287.50' in result['messages'][-1]['content']
+        assert 'clave-ficticia' not in json.dumps(result)
         assert len(requests) == 2
         assert any(item.get('type') == 'function_call_output' for item in requests[1]['input'])
 

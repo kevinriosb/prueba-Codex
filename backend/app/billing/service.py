@@ -192,8 +192,16 @@ class BillingService:
             fields['rfc']=fields['rfc'].upper().strip()
         draft=self.store.add('profile_draft',owner,fields|{'document_id':document['id'],
             'replace_profile_id':replace_profile_id,'replace_version':existing['_version'] if existing else None,
-            'cfdi_use':None,'email':None},expires=time.time()+3600)
+            'cfdi_use':existing.get('cfdi_use') if existing else None,'email':existing.get('email') if existing else None},expires=time.time()+3600)
         return public(draft)|{'complete':validate_fiscal(fields)}
+
+    def draft_profile_update(self,owner,profile_id):
+        """Copia un perfil propio a un borrador; no cambia el perfil confirmado."""
+        self.require_enabled()
+        profile=self.store.get('profile',owner,profile_id)
+        fields={key:profile[key] for key in ('rfc','name','postal_code','fiscal_regime','cfdi_use','email','document_id')}
+        return self.store.add('profile_draft',owner,fields|{'replace_profile_id':profile_id,
+            'replace_version':profile['_version']},expires=time.time()+3600)
 
     def extract_fiscal_profile(self,owner,draft_id):
         self.require_enabled()

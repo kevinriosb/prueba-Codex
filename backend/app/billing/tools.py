@@ -5,7 +5,7 @@ from .models import validate_fiscal
 OPERATIONS={
     'process_fiscal_certificate':'Preparar una CSF ya analizada con autorización del usuario. El identificador es de documento.',
     'extract_fiscal_profile':'Consultar si un borrador fiscal está completo, sin divulgar datos fiscales al chat.',
-    'confirm_fiscal_profile':'Solicitar confirmación del perfil en el apartado privado Facturación; nunca confirma por el usuario.',
+    'confirm_fiscal_profile':'Mostrar revisión y botones de confirmación en el canal actual; nunca confirma por el usuario.',
     'analyze_ticket':'Recuperar el análisis autorizado de un ticket. Primero debe existir un perfil confirmado.',
     'detect_billing_channels':'Determinar el canal disponible para un ticket: portal compatible, correo o intervención manual.',
     'verify_billing_email':'Solicitar que el usuario revise el correo en el ticket original. No verifica automáticamente.',
@@ -37,6 +37,15 @@ def build_billing_tools(billing):
             'active_profile_id':(state or {}).get('active_profile'),
             'last_document_id':(state or {}).get('last_document_id'),
             'last_ticket_id':(state or {}).get('last_ticket_id')}
+
+    @function_tool
+    async def review_fiscal_setup(ctx:RunContextWrapper[dict])->dict:
+        """Abre en Telegram el siguiente paso del perfil propio: datos, uso, correo o confirmación. No necesita IDs ni confirma nada."""
+        billing.require_enabled()
+        if ctx.context.get('channel') != 'telegram':
+            return {'review_in':'Facturación','confirmation_required':True}
+        review(ctx,'profile_setup',None)
+        return {'review_in':'Telegram','next_step_shown':True,'confirmation_required':True}
 
     @function_tool
     async def review_received_document(ctx:RunContextWrapper[dict],identifier:str)->dict:
@@ -108,5 +117,6 @@ def build_billing_tools(billing):
                 'sat_authorization_required':not bool((ticket.get('validation') or {}).get('sat_verified')),'review_in':location}
         return function_tool(action,name_override=name,description_override=description,
             timeout=billing.settings.run_timeout_seconds,
-            failure_error_function=lambda _ctx,_error:'No se completó la operación fiscal. Revisa el estado y las autorizaciones en Facturación; no repitas envíos automáticamente.')
-    return [billing_workspace,review_received_document]+[build(name,description) for name,description in OPERATIONS.items()]
+            failure_error_function=lambda ctx,_error:('No se completó la operación. Usa review_fiscal_setup para mostrar el siguiente paso aquí; no inventes el resultado.'
+                if ctx.context.get('channel')=='telegram' else 'No se completó la operación fiscal. Revisa Facturación; no repitas envíos automáticamente.'))
+    return [billing_workspace,review_received_document,review_fiscal_setup]+[build(name,description) for name,description in OPERATIONS.items()]

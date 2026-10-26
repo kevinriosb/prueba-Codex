@@ -10,7 +10,7 @@ El mismo agente puede conversar por **Telegram con acceso por invitación**, his
 por persona y botones de aprobación. La [guía de Telegram para Hostinger](docs/TELEGRAM.md)
 explica cómo conectar un bot nuevo desde Termius, sin compartir su token.
 
-**GitHub permite consultar el código; para usar el agente hace falta ejecutar el backend.** El propietario ya comprobó su instalación web en Hostinger y una respuesta real con cálculo desde el iPad. La nueva conexión de Telegram requiere actualizar y configurar ese despliegue; no se activa al publicar código.
+**GitHub permite consultar el código; para usar el agente hace falta ejecutar el backend.** El propietario comprobó su instalación web en Hostinger, un cálculo real y conversación con IA en su bot nuevo de Telegram. Los cambios posteriores requieren actualizar y recrear el contenedor; hacer push no cambia el VPS.
 
 ## Qué puedes hacer
 
@@ -23,7 +23,7 @@ explica cómo conectar un bot nuevo desde Termius, sin compartir su token.
 
 La web tiene **un usuario propietario**, configurado por variables de entorno. Telegram admite cuentas autorizadas mediante su ID, cada una con historial y datos propios. No hay registro público ni vinculación automática entre la cuenta web y Telegram. El backend vincula cada conversación y aprobación a su propietario; las pruebas comprueban que un usuario no puede leer ni modificar conversaciones ajenas.
 
-No hay acceso a shell, ejecución de código generado ni navegación arbitraria. El módulo fiscal admite análisis autorizado de PDF/foto y correo mediante Gmail; sus datos se revisan en Facturación y no se incorporan al historial normal del chat mediante herramientas.
+No hay acceso a shell, ejecución de código generado ni navegación arbitraria. El módulo fiscal admite análisis autorizado de PDF/foto y correo mediante Gmail. Sus datos se revisan en Facturación o con botones de Telegram, sin incorporarlos al historial normal del modelo mediante herramientas.
 
 ## Desde tu iPad: qué necesitas para probarla
 
@@ -98,6 +98,7 @@ HTTP no cifra el tráfico. Usa esta modalidad únicamente en una red de confianz
 | `MAX_INPUT_CHARS` | Longitud del mensaje | `4000` |
 | `MAX_CONTEXT_BYTES` | Tamaño del historial enviado al modelo | `16000` |
 | `MAX_OUTPUT_TOKENS` | Máximo de salida del chat por llamada al modelo | `150` |
+| `TELEGRAM_REPLY_MAX_CHARS` | Tope del texto de IA mostrado en Telegram; revisiones completas aparte | `160`; objetivo de 50 en pasos simples. Telegram usa hasta 100 tokens de salida por llamada |
 | `MAX_AGENT_TURNS` | Máximo de llamadas al modelo por ejecución del SDK | `3` |
 | `MAX_TOOL_CALLS` | Máximo de herramientas ejecutadas por solicitud | `5` |
 | `RUN_TIMEOUT_SECONDS` | Tiempo máximo de una ejecución | `35` segundos |

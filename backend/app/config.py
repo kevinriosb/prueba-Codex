@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     telegram_bot_token: SecretStr = SecretStr('')
     telegram_webhook_secret: SecretStr = SecretStr('')
     telegram_allowed_user_ids: str = ''
+    telegram_reply_max_chars: int = Field(default=160, ge=50, le=500)
 
     @field_validator("app_login_password")
     @classmethod

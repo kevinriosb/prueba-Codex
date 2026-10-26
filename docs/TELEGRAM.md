@@ -7,8 +7,9 @@ No se ha registrado automáticamente un bot real durante el desarrollo.
 
 ## Primera conexión desde el iPad y Termius
 
-Necesitas el backend funcionando por HTTPS. El usuario ya comprobó el chat web
-y un cálculo real con OpenAI; la conexión nueva de Telegram aún requiere pruebas.
+Necesitas el backend funcionando por HTTPS. El usuario ya comprobó el chat web,
+un cálculo real con OpenAI y la conversación en su bot nuevo. Estos pasos sirven
+para una primera instalación; las actualizaciones no exigen repetir la vinculación.
 
 1. En Telegram abre [@BotFather](https://t.me/BotFather), envía `/newbot`, elige
    nombre y usuario terminado en `bot`. Guarda el token completo en privado.
@@ -63,6 +64,16 @@ contenedor: no necesitas instalar el SDK en el Python 3.9 del sistema.
 ## Qué probar
 
 - `/start` muestra ayuda sin solicitar generación.
+- `/perfil` retoma el siguiente paso del alta **dentro de Telegram**. Elegir el
+  uso de CFDI muestra botones; después escribes el correo y confirmas la revisión
+  completa. «Tienes los datos para facturar?» abre este mismo flujo sin llamar al
+  modelo ni terminar con «¿te ayudo?». «Sí» abre el paso pendiente, nunca confirma.
+- Con perfil guardado, `/perfil` → **Ver o editar perfil** permite cambiar correo
+  o uso de CFDI. También se acepta `mi correo es nuevo@example.com`. Los cambios
+  quedan en borrador hasta pulsar **Confirmar y guardar**. **Actualizar CSF**
+  permite revisar nuevos datos fiscales y reemplazar el mismo perfil, conservando
+  sus tickets. Requiere consentimiento de análisis y confirmación de la revisión.
+  No cambies datos fiscales escribiéndolos al modelo: proceden de la constancia.
 - «Divide 500 pesos con 15 % de propina entre dos personas» usa OpenAI. Haz una
   primera petición únicamente cuando autorices su consumo de tokens.
 - `/historial` recupera los últimos mensajes propios sin llamar al modelo.
@@ -130,10 +141,15 @@ no es una garantía de capacidad para atenderlas simultáneamente.
 
 ## Límites y privacidad
 
-- El chat responde por defecto en 1–2 frases y hasta 35 palabras. El máximo de
-  salida por llamada es `MAX_OUTPUT_TOKENS=150` (antes 600). Se conserva la variable
-  para cambiarlo; si ya la configuraste explícitamente en el servidor prevalece
-  ese valor. No se recorta el texto después de generarlo: el límite se envía a OpenAI.
+- Telegram pide una frase directa con objetivo de 50 caracteres y tope de
+  `TELEGRAM_REPLY_MAX_CHARS=160`. Los pasos simples del perfil no superan 50.
+  Las revisiones fiscales, consentimientos y correos muestran los datos completos:
+  no se recortan para aprobar. El texto del modelo elimina ofertas genéricas
+  finales y aplica el tope de presentación sin otra llamada al modelo.
+- El máximo de salida enviado al proveedor para Telegram es
+  `min(100, MAX_OUTPUT_TOKENS)` por llamada. La web conserva el valor predeterminado
+  de 150. El recorte de presentación no recupera tokens ya generados. La selección
+  de uso, captura de correo y confirmación se resuelven sin generar texto de IA.
 - Instrucciones, herramientas e historial también consumen tokens de entrada.
   `/nuevo` reduce el contexto de futuras peticiones y conserva perfiles y tickets.
   La extracción estructurada de documentos mantiene su presupuesto independiente,
@@ -146,6 +162,10 @@ no es una garantía de capacidad para atenderlas simultáneamente.
   un límite exacto de dinero.
 - Cada conversación y aprobación tiene propietario. Las identidades internas
   de Telegram no tienen contraseña ni acceso a la web.
+- La revisión del perfil queda vinculada al borrador y a su versión por 15 minutos
+  como máximo. Editar datos invalida botones anteriores; cada confirmación solo
+  puede consumirse una vez. Los botones antiguos sin versión abren una revisión
+  nueva y no guardan automáticamente el perfil.
 - Datos fiscales y estado del canal cifrados. El historial general conserva
   SQLite privado, sin cifrado por mensaje. Usa adjuntos y controles fiscales para
   CSF/tickets; no pegues claves o documentos completos en la conversación libre.

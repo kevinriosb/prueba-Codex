@@ -66,12 +66,12 @@ class TelegramAgent:
         result = await self.service.execute(conversation['id'], owner, text=text,
             approval_id=approval_id, approve=approve, channel='telegram',channel_context=self.bridge.agent_context(owner))
         message = result['messages'][-1]
-        await self.send_text(chat_id, message['content'])
+        reviews = [event['review'] for event in message['events'] if isinstance(event.get('review'), dict)]
+        if not reviews and not result['approval']:
+            await self.send_text(chat_id, message['content'])
         # Solo eventos creados por herramientas del servidor; nunca JSON del modelo.
-        for event in message['events']:
-            review = event.get('review')
-            if isinstance(review, dict):
-                await self.bridge.show_review(owner, chat_id, review)
+        for review in reviews:
+            await self.bridge.show_review(owner, chat_id, review)
         if result['approval']:
             await self.show_approval(chat_id,result['approval'])
 

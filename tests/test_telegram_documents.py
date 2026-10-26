@@ -36,7 +36,7 @@ def test_ticket_before_profile_is_kept_and_resumed_without_resubmission(billing_
     source_id=button(telegram,'dt').split(':')[1]
     before=app.state.billing.document(owner(app),source_id)
     chat(data=button(telegram,'dt'))
-    assert 'No necesitas volver a subirlo' in telegram.messages[-1][1]
+    assert any('Ticket guardado' in message[1] for message in telegram.messages)
     assert extractor.calls==[]
     confirm_profile(telegram,chat)
     assert 'Tickets guardados' in telegram.messages[-1][1]
@@ -87,7 +87,7 @@ def test_legacy_wrong_csf_can_be_corrected_by_text_and_recovers_original_bytes(b
     app.state.telegram._save_state(owner(app),state)
     chat('Es un ticket')
     assert model.inputs==[] and len(extractor.calls)==1
-    assert 'Ticket guardado' in telegram.messages[-1][1]
+    assert any('Ticket guardado' in message[1] for message in telegram.messages)
     extractor.fiscal=FISCAL.copy()
     confirm_profile(telegram,chat)
     chat(data=button(telegram,'dt'))
@@ -136,7 +136,7 @@ def test_explicit_ticket_caption_does_not_analyze_or_lose_file_without_profile(b
     client,app,extractor,mail,sat,telegram,chat=create(billing_client)
     telegram.files['receipt']=image()
     chat(document='receipt',caption='/ticket')
-    assert 'Ticket guardado' in telegram.messages[-1][1] and extractor.calls==[]
+    assert any('Ticket guardado' in message[1] for message in telegram.messages) and extractor.calls==[]
     chat('/documentos')
     assert button(telegram,'dv')
     chat(data=button(telegram,'dv'))
@@ -215,8 +215,8 @@ def test_ticket_after_csf_analysis_asks_only_for_missing_profile_step(billing_cl
     chat(document='csf',caption='/csf')
     chat(data=button(telegram,'an'))
     chat(document='receipt')
-    assert 'Tu CSF ya está recibida' in telegram.messages[-1][1]
-    assert '/usos' in telegram.messages[-1][1]
+    assert telegram.messages[-1][1]=='Elige tu uso de CFDI.'
+    assert button(telegram,'cu')
     assert 'Envía tu CSF' not in telegram.messages[-1][1]
     assert len(extractor.calls)==1
     state=app.state.telegram._state(owner(app))
