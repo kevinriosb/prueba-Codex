@@ -4,7 +4,7 @@ import time
 import unicodedata
 
 from ..errors import AppError
-from .models import CFDI_USES, validate_fiscal
+from .models import CFDI_USES, REGIMES, RFC, missing_fiscal_fields, regime_code, validate_fiscal
 from .providers import normalized_email
 
 
@@ -67,13 +67,46 @@ class TelegramProfiles:
         state.update(draft_id=identifier, cfdi_use=draft.get('cfdi_use'), profile_input=None)
         self.bridge._save_state(owner, state)
         if not validate_fiscal(draft):
-            await self.send(chat_id, 'CSF ilegible. Envía una copia clara con /csf.')
+            await self.ask_fiscal_field(owner, chat_id, identifier)
         elif not draft.get('cfdi_use'):
             await self.uses(owner, chat_id, identifier)
         elif not draft.get('email'):
             await self.ask_email(owner, chat_id, identifier)
         else:
             await self.review(owner, chat_id, identifier)
+
+    async def ask_fiscal_field(self, owner, chat_id, identifier):
+        state, draft = self.current_draft(owner, identifier)
+        missing = missing_fiscal_fields(draft)
+        if not missing:
+            await self.show_draft(owner, chat_id, identifier)
+            return
+        field = missing[0]
+        state['profile_input'] = {'draft_id': identifier, 'field': field}
+        self.bridge._save_state(owner, state)
+        prompts = {'rfc': 'Falta el RFC. Escríbelo según tu CSF.',
+            'name': 'Falta el nombre fiscal. Envía /dato NOMBRE.',
+            'postal_code': 'Falta el CP fiscal. Escribe sus 5 dígitos.',
+            'fiscal_regime': 'Falta el régimen. Elígelo según tu CSF.'}
+        buttons = [(code + ' · ' + label[:50], 'rf:' + identifier + ':' + code)
+            for code, label in REGIMES.items()] if field == 'fiscal_regime' else []
+        last = state.get('last_document_id')
+        if last and last != draft.get('document_id'):
+            try:
+                received = self.billing.document(owner, last)
+            except AppError as error:
+                if error.status != 404:
+                    raise
+                received = None
+            if received and received['mime'] == 'application/pdf' and received['purpose'] in {'csf', 'ticket', 'unclassified'}:
+                buttons.append(('Usar último PDF como CSF', 'dc:' + last))
+        buttons.append(('Usar otra CSF', 'fc:' + identifier))
+        await self.send(chat_id, prompts[field], buttons)
+
+    async def complete_field(self, owner, chat_id, identifier, field, value):
+        self.current_draft(owner, identifier)
+        self.billing.complete_fiscal_field(owner, identifier, field, value)
+        await self.show_draft(owner, chat_id, identifier)
 
     async def uses(self, owner, chat_id, identifier):
         self.current_draft(owner, identifier)
@@ -133,7 +166,7 @@ class TelegramProfiles:
         profile = self.billing.confirm_fiscal_profile(owner, draft['id'], confirmed=True)
         state = self.bridge._state(owner)
         state.update(active_profile=profile['id'], draft_id=None, cfdi_use=None, profile_input=None,
-            csf_document_id=None, replace_profile_id=None)
+            csf_document_id=None, replace_profile_id=None, expected_upload=None)
         self.bridge._save_state(owner, state)
         await self.send(chat_id, 'Perfil guardado. Envía tu ticket.')
         await self.bridge._pending_tickets(owner, chat_id)
@@ -151,7 +184,15 @@ class TelegramProfiles:
             [('Actualizar CSF', 'px:' + profile['id'])])
 
     async def callback(self, owner, chat_id, prefix, identifier, code=None):
-        if prefix == 'cu':
+        if prefix == 'rf':
+            await self.complete_field(owner, chat_id, identifier, 'fiscal_regime', code)
+        elif prefix == 'fc':
+            state, draft = self.current_draft(owner, identifier)
+            state['expected_upload'] = 'csf'
+            state['replace_profile_id'] = draft.get('replace_profile_id')
+            self.bridge._save_state(owner, state)
+            await self.send(chat_id, 'Envía la otra CSF aquí, como PDF o foto.')
+        elif prefix == 'cu':
             await self.choose_use(owner, chat_id, identifier, code)
         elif prefix == 'pe':
             await self.edit(owner, chat_id, identifier)
@@ -179,7 +220,9 @@ class TelegramProfiles:
                 'ya tienes mis datos', 'ya tienes mis datos para facturar', 'completar perfil',
                 'completar mi perfil', 'quiero completar mi perfil', 'confirmar perfil',
                 'confirmar mi perfil', 'quiero confirmar mi perfil', 'mis datos fiscales',
-                'tengo perfil fiscal', 'mi perfil', 'ver mi perfil'}:
+                'tengo perfil fiscal', 'mi perfil', 'ver mi perfil',
+                'por que ilegible', 'por que es ilegible', 'por que no lo lee',
+                'por que no lees la csf', 'que dato falta', 'que datos faltan'}:
             await self.resume(owner, chat_id)
             return True
         if plain in {'actualizar perfil', 'actualizar mi perfil', 'cambiar mis datos',
@@ -193,6 +236,19 @@ class TelegramProfiles:
             # «Sí» solo abre el paso pendiente. No concede consentimiento ni confirma.
             await self.resume(owner, chat_id)
             return True
+        pending = state.get('profile_input')
+        if isinstance(pending, dict) and draft and pending.get('draft_id') == draft['id']:
+            field = pending.get('field')
+            # Las dudas siguen disponibles; las respuestas a un campo no van al modelo.
+            if field in missing_fiscal_fields(draft) and '?' not in text and '¿' not in text:
+                explicit = text.casefold().startswith('/dato ')
+                value = text.split(maxsplit=1)[1] if explicit else text
+                shaped = ((field == 'rfc' and RFC.fullmatch(value.upper()))
+                    or (field == 'postal_code' and re.fullmatch(r'\d{5}', value))
+                    or (field == 'fiscal_regime' and (regime_code(value) is not None or re.fullmatch(r'\d{3}', value))))
+                if explicit or shaped:
+                    await self.complete_field(owner, chat_id, draft['id'], field, value)
+                    return True
         code_match = re.fullmatch(r'(?:(?:uso(?: de)? cfdi|uso)\s*:?\s*)?([a-z]{1,2}\d{2})', plain)
         email_match = re.fullmatch(r'(?:(?:mi correo(?: es)?|correo(?: es)?)\s*:?\s*)?([^\s@]+@[^\s@]+)', text, re.I)
         if not (code_match or email_match):

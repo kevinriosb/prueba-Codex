@@ -9,7 +9,7 @@ import httpx2
 from fastapi import APIRouter, Request
 
 from ..errors import AppError
-from .models import CFDI_USES
+from .models import CFDI_USES, missing_fiscal_fields, validate_fiscal
 from .telegram_agent import TelegramAgent
 from .telegram_profiles import TelegramProfiles
 
@@ -139,6 +139,7 @@ class TelegramBridge:
         return {'profile_confirmed':bool(profiles),'active_profile_id':state.get('active_profile') if any(item['id']==state.get('active_profile') for item in profiles) else None,
             'csf_received':bool(profiles or draft or csf),'profile_setup_pending':bool(draft or csf),
             'draft_id':draft['id'] if draft else None,'csf_document_id':csf['id'] if csf else None,
+            'missing_fiscal_fields':missing_fiscal_fields(draft) if draft else [],
             'last_document':{'id':last['id'],'purpose':last.get('intended_purpose') or last['purpose'],
                 'awaiting_profile':last.get('intended_purpose')=='ticket'} if last else None,
             'pending_ticket_count':sum(item.get('intended_purpose')=='ticket' for item in documents)}
@@ -176,8 +177,18 @@ class TelegramBridge:
         current=self.billing.document(owner,result['id'])
         state['last_document_id']=current['id']
         if purpose=='csf':
+            if state.get('draft_id'):
+                try:
+                    previous=self.billing.store.get('profile_draft',owner,state['draft_id'])
+                except AppError as error:
+                    if error.status!=404:
+                        raise
+                    previous=None
+                if not previous or previous.get('document_id')!=current['id']:
+                    state.update(draft_id=None,cfdi_use=None,profile_input=None)
             state['csf_document_id']=current['id']
             state['replace_profile_id']=None
+            state['expected_upload']=None
         if current.get('ticket_id'):
             state['last_ticket_id']=current['ticket_id']
         self._save_state(owner,state)
@@ -333,13 +344,13 @@ class TelegramBridge:
         if not separator:
             raise AppError(422,'telegram_callback','Acción no válida.')
         code=None
-        if prefix=='cu':
+        if prefix in {'cu','rf'}:
             identifier,_,code=identifier.partition(':')
         try:
             uuid.UUID(identifier)
         except ValueError:
             raise AppError(422,'telegram_callback','Acción no válida.') from None
-        if prefix in {'cu','pe','pm','pu','pp','px'}:
+        if prefix in {'cu','rf','fc','pe','pm','pu','pp','px'}:
             await self.profiles.callback(owner,chat_id,prefix,identifier,code)
         elif prefix in {'dc','dt','dv'}:
             if prefix=='dv':
@@ -387,7 +398,7 @@ class TelegramBridge:
             self.profiles.current_draft(owner,identifier)
             self.billing.store.delete('profile_draft',owner,identifier)
             state=self._state(owner)
-            state.update(draft_id=None,cfdi_use=None,profile_input=None)
+            state.update(draft_id=None,cfdi_use=None,profile_input=None,expected_upload=None,replace_profile_id=None)
             self._save_state(owner,state)
             await self.client.send(chat_id,'Cambios descartados.')
         elif prefix=='ve':
@@ -518,6 +529,19 @@ class TelegramBridge:
                 await self._choose_document(owner,chat_id,document['id'],'csf',profile_id=caption.split(maxsplit=1)[1] if ' ' in caption else state.get('replace_profile_id'))
             elif state.get('replace_profile_id'):
                 await self._choose_document(owner,chat_id,document['id'],'csf',profile_id=state['replace_profile_id'])
+            elif state.get('expected_upload')=='csf':
+                await self._choose_document(owner,chat_id,document['id'],'csf')
+            elif not profiles:
+                draft,csf=self._profile_setup(owner,state)
+                filename=attachment.get('file_name','').casefold()
+                named_csf=filename.startswith(('csf','constancia')) or 'situacion_fiscal' in filename or 'situación_fiscal' in filename
+                retry_csf=(draft and not validate_fiscal(draft)) or (csf and csf.get('extracted') is not None and not csf['extracted'].get('readable'))
+                if named_csf or retry_csf:
+                    await self._choose_document(owner,chat_id,document['id'],'csf')
+                elif draft or csf:
+                    await self._choose_document(owner,chat_id,document['id'],'ticket')
+                else:
+                    await self._document_choice(owner,chat_id,document['id'])
             elif profiles or any(self._profile_setup(owner,state)):
                 await self._choose_document(owner,chat_id,document['id'],'ticket')
             else:

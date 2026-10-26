@@ -150,6 +150,8 @@ def test_actual_sdk_extracts_structured_document_without_network(billing_client,
     result=client.portal.call(extractor.extract,'csf',mime,content)
     assert result.rfc==FISCAL['rfc'] and len(model.inputs)==1
     assert model.inputs[0][0]['content'][1]['type']==expected
+    if expected=='input_image':
+        assert model.inputs[0][0]['content'][1]['detail']=='high'
     assert app.state.billing.store.list('profile','owner')==[]
 
 

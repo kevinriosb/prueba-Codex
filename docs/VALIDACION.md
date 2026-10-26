@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **273 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **296 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones.
 
 Se comprobaron:
 
@@ -246,6 +246,32 @@ chat; no interpreta JSON del modelo como acciones ni remite al portal web.
 Las revisiones de aprobación muestran todos los datos y no se recortan. No se
 hicieron llamadas reales a OpenAI, Telegram, Gmail o SAT durante estas pruebas.
 La aplicación de esta versión al VPS queda a cargo del usuario desde Termius.
+
+### CSF parcialmente extraída y PDF de reemplazo
+
+La captura del usuario mostró «CSF ilegible» después de crear un borrador: ese
+mensaje se usaba para cualquier campo ausente o inválido. También mostró nuevos
+PDF tratados como tickets por existir un alta pendiente. Se corrigieron ambas
+condiciones; no se atribuye al archivo una falta de legibilidad sin evidencia.
+El campo pendiente aparece expresamente y puede completarse desde la CSF, con
+validación del servidor y revisión final antes de confirmar. La entrada de estos
+campos no se envía al modelo ni dispara otra extracción.
+
+Las pruebas nuevas comprueban equivalencias exactas de regímenes por nombre,
+rechazo de descripciones ambiguas, cuatro tipos de campo pendiente, botones ligados
+al propietario, rechazo de un valor inválido, sustitución del PDF sin heredar el
+borrador anterior, conservación del perfil al reemplazar una CSF de actualización,
+recuperación del último PDF guardado sin otra subida y que una queja de texto no
+se use como nombre fiscal. Una prueba genera un PDF escaneado ficticio sin capa
+de texto y verifica que el Runner recibe sus bytes completos como `input_file`.
+Las fotos utilizan `detail=high`, comprobado en la entrada del adaptador; eso puede
+aumentar tokens de entrada respecto a `low`, sin reintentos automáticos.
+
+La imagen actualizada pasó `scripts/container_smoke.py`: salud, login, UID 10001,
+exclusión de secretos/pruebas y persistencia de historial y documento cifrado tras
+recrear el contenedor. No se hicieron nuevas llamadas reales a OpenAI, Telegram,
+Gmail o SAT. El PDF personal del usuario no se recibió ni analizó en estas pruebas;
+la verificación de su resultado concreto se realizará tras actualizar el VPS.
 
 - `scripts/hostinger_smoke.py` pasó con la imagen actualizada: configuración de
   producción real, puerto publicado únicamente en loopback, host autorizado,

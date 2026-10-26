@@ -14,7 +14,7 @@ from .cfdi import SatVerifier, validate_cfdi
 from .channels import official_contacts
 from .documents import inspect_document
 from .extraction import DocumentExtractor
-from .models import CFDI_USES, REGIMES, FiscalExtraction, Status, TicketExtraction, validate_fiscal
+from .models import CFDI_USES, REGIMES, FiscalExtraction, Status, TicketExtraction, missing_fiscal_fields, regime_code, validate_fiscal
 from .providers import GmailProvider, normalized_email
 from .store import BillingStore
 
@@ -190,6 +190,7 @@ class BillingService:
         fields={key:data[key] for key in ('rfc','name','postal_code','fiscal_regime')}
         if fields['rfc']:
             fields['rfc']=fields['rfc'].upper().strip()
+        fields['fiscal_regime']=regime_code(fields['fiscal_regime'])
         draft=self.store.add('profile_draft',owner,fields|{'document_id':document['id'],
             'replace_profile_id':replace_profile_id,'replace_version':existing['_version'] if existing else None,
             'cfdi_use':existing.get('cfdi_use') if existing else None,'email':existing.get('email') if existing else None},expires=time.time()+3600)
@@ -202,6 +203,26 @@ class BillingService:
         fields={key:profile[key] for key in ('rfc','name','postal_code','fiscal_regime','cfdi_use','email','document_id')}
         return self.store.add('profile_draft',owner,fields|{'replace_profile_id':profile_id,
             'replace_version':profile['_version']},expires=time.time()+3600)
+
+    def complete_fiscal_field(self,owner,draft_id,field,value):
+        """Completa un dato pendiente con entrada humana; no confirma el perfil."""
+        self.require_enabled()
+        draft=self.store.get('profile_draft',owner,draft_id)
+        if field not in missing_fiscal_fields(draft) or not isinstance(value,str):
+            raise AppError(409,'fiscal_field','Ese campo no está pendiente. Escribe /perfil.')
+        value=value.strip()
+        if not value or len(value)>250 or any(ord(char)<32 for char in value):
+            raise AppError(422,'fiscal_field','Escribe solo el dato tal como aparece en tu CSF.')
+        if field=='rfc':
+            value=value.upper()
+        elif field=='fiscal_regime':
+            value=regime_code(value)
+        candidate=draft|{field:value}
+        if field in missing_fiscal_fields(candidate):
+            raise AppError(422,'fiscal_field','El dato no es válido. Revísalo en tu CSF.')
+        result=self.store.update('profile_draft',owner,draft_id,candidate,version=draft['_version'])
+        self.store.audit(owner,draft_id,'fiscal_field_completed_by_user')
+        return result
 
     def extract_fiscal_profile(self,owner,draft_id):
         self.require_enabled()

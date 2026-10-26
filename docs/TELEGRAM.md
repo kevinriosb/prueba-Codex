@@ -96,6 +96,16 @@ contenedor: no necesitas instalar el SDK en el Python 3.9 del sistema.
   El perfil confirmado se conserva al usar `/nuevo`, reiniciar o vencer el archivo
   temporal de la CSF. Actualizar datos o adjuntar una CSF original vencida puede
   requerir una nueva copia, según el caso.
+- Si falta extraer un dato, el bot indica **RFC, nombre, CP o régimen pendiente**,
+  sin declarar ilegible todo el archivo. Puedes completar el campo desde tu CSF
+  en este chat; para el nombre usa `/dato NOMBRE`, para el régimen hay botones.
+  Revisa todos los datos antes de guardar. **Usar otra CSF** permite reemplazar
+  el archivo del alta pendiente sin tratarlo como ticket ni repetir el error viejo.
+  **Usar último PDF como CSF** recupera un archivo guardado que haya quedado
+  clasificado incorrectamente, sin descargarlo ni subirlo otra vez.
+  El PDF puede ser digital o escaneado: no se exige convertirlo ni capa de texto.
+  Un régimen por nombre se convierte solo por equivalencia exacta del catálogo;
+  los regímenes desconocidos o ambiguos requieren elección humana.
 - «Prepara el correo de este ticket» solicita el borrador revisable. El botón
   muestra destinatario, contenido y adjuntos; solo su confirmación puede enviarlo.
   Gmail debe estar conectado y el envío habilitado por el operador.
@@ -155,6 +165,10 @@ no es una garantía de capacidad para atenderlas simultáneamente.
   La extracción estructurada de documentos mantiene su presupuesto independiente,
   para no truncar los campos fiscales. Las revisiones de confirmación muestran
   todos los datos necesarios y no solicitan generación de texto por sí solas.
+- Las fotos de documentos se envían con detalle alto para leer letra pequeña;
+  esto puede aumentar tokens de entrada respecto al detalle bajo anterior. No hay
+  reintentos de análisis automáticos: exige consentimiento y conserva el resultado.
+  Completar un campo manualmente no vuelve a llamar al modelo.
 - Una instancia de agente; una ejecución general a la vez y una operación de
   Telegram a la vez por persona. Si está ocupado, avisa sin reenviar al modelo.
 - Se reutilizan límites de pasos, tiempo, tamaño y consumo diario por persona.

@@ -14,11 +14,13 @@ class Chat:
     def __init__(self, client):
         self.client, self.sequence = client, 1000
 
-    def __call__(self, text=None, *, user=123, data=None, document=None, caption=None, chat_type='private'):
+    def __call__(self, text=None, *, user=123, data=None, document=None, caption=None, file_name=None, chat_type='private'):
         self.sequence += 1
         message = {'from':{'id':user}, 'chat':{'id':user,'type':chat_type}}
         if document:
             message['document'] = {'file_id':document}
+            if file_name is not None:
+                message['document']['file_name']=file_name
             if caption is not None:
                 message['caption']=caption
         elif text is not None:

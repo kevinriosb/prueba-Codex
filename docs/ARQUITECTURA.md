@@ -127,6 +127,20 @@ la constancia y pide solo uso, correo, análisis o confirmación que falte. Una 
 elección de perfil disponible puede recuperarse sin otra pregunta; varias sin
 perfil activo exigen elegir. No se comparten perfiles entre usuarios.
 
+Una extracción parcial no se presenta como archivo ilegible. El servidor enumera
+campos fiscales pendientes y permite completarlos con entrada humana explícita,
+validada y ligada al borrador propio. No se aceptan correcciones generadas por el
+modelo ni se confirma el perfil sin revisar todos los datos. El régimen por nombre
+se convierte mediante equivalencias exactas del catálogo; una descripción ambigua
+queda pendiente. El PDF conserva sus bytes y puede ser escaneado, sin capa de texto.
+Las imágenes usan detalle alto en la extracción para leer tipografía pequeña;
+mantiene sus límites y consentimiento, aunque puede incrementar tokens de entrada.
+
+Con un alta incompleta, un archivo de reemplazo no hereda el borrador fallido.
+El estado de recepción y un nombre de archivo explícito de CSF orientan el tipo,
+sin autorizar análisis ni validar el documento por su nombre. Puede recuperarse
+el último PDF guardado y corregir su tipo con un botón ligado al propietario.
+
 El módulo `telegram_profiles.py` controla alta y edición por botones en el chat,
 sin depender de que el modelo invente pasos o redirija a la web. Las preguntas de
 estado reconocidas, uso de CFDI y correo no solicitan generación. La herramienta

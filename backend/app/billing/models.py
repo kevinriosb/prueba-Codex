@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
@@ -30,6 +31,33 @@ CFDI_USES = {
 RFC = re.compile(r'^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$')
 
 
+def regime_code(value):
+    """Equivalencia exacta de catálogo, sin deducir el régimen del contribuyente."""
+    if value is None:
+        return None
+    value = str(value).strip()
+    if value in REGIMES:
+        return value
+    def key(label):
+        label = ''.join(char for char in unicodedata.normalize('NFD', label.casefold())
+            if unicodedata.category(char) != 'Mn')
+        label = re.sub(r'^regimen\s+', '', label)
+        return ' '.join(label.split())
+    labels = {key(label): code for code, label in REGIMES.items()}
+    labels.update({key('Sueldos y Salarios e Ingresos Asimilados a Salarios'): '605',
+        key('Personas Físicas con Actividades Empresariales y Profesionales'): '612',
+        key('Régimen de las Actividades Empresariales con ingresos a través de Plataformas Tecnológicas'): '625'})
+    return labels.get(key(value))
+
+
+def missing_fiscal_fields(data):
+    checks = {'rfc': bool(RFC.fullmatch(data.get('rfc') or '')),
+        'name': bool((data.get('name') or '').strip()),
+        'postal_code': bool(re.fullmatch(r'[0-9]{5}', data.get('postal_code') or '')),
+        'fiscal_regime': data.get('fiscal_regime') in REGIMES}
+    return [field for field, valid in checks.items() if not valid]
+
+
 class Status(StrEnum):
     TICKET_RECIBIDO = 'TICKET_RECIBIDO'
     DATOS_EXTRAIDOS = 'DATOS_EXTRAIDOS'
@@ -54,7 +82,12 @@ class FiscalExtraction(SafeModel):
     rfc: str | None = Field(max_length=13)
     name: str | None = Field(max_length=250)
     postal_code: str | None = Field(max_length=5)
-    fiscal_regime: str | None = Field(max_length=3)
+    fiscal_regime: str | None = Field(max_length=160)
+
+    @field_validator('fiscal_regime')
+    @classmethod
+    def normalize_regime(cls, value):
+        return regime_code(value)
 
 
 class TicketExtraction(SafeModel):
@@ -99,6 +132,4 @@ class TicketExtraction(SafeModel):
 
 
 def validate_fiscal(data):
-    return bool(RFC.fullmatch(data.get('rfc') or '') and (data.get('name') or '').strip()
-        and re.fullmatch(r'[0-9]{5}', data.get('postal_code') or '')
-        and data.get('fiscal_regime') in REGIMES)
+    return not missing_fiscal_fields(data)
