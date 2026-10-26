@@ -15,7 +15,7 @@ from .errors import AppError
 from .replies import brief_reply
 from .tools.registry import build_tools
 
-POLICY_VERSION = 'personal-agent-0.7-receipt-channels-sdk-0.24.0'
+POLICY_VERSION = 'personal-agent-0.8-portal-fields-sdk-0.24.0'
 INSTRUCTIONS = """Asistente personal en español. Responde en 1–2 frases, máximo 35 palabras.
 Da el resultado o siguiente paso; sin introducciones, repeticiones ni requisitos ya resueltos.
 Amplía solo si lo piden. Usa calculator para cálculos y current_server_time para fecha/hora.
@@ -40,6 +40,9 @@ El estado del servidor es la fuente de verdad; no supongas que el chat confirmó
 Si el archivo actual es ticket, no expliques su error como si fuera una CSF.
 Un fallo del proveedor o de formato no demuestra que el archivo sea ilegible.
 Usa los datos y revisiones del servidor. Detectar una página no significa haber facturado.
+Cuenta, Folio, Referencia y Código son distintos. Usa inspect_billing_portal para revisar
+los campos públicos autorizados antes de proponer valores. Una alternativa no validada
+no se presenta como Cuenta confirmada. Leer el formulario no valida ni factura la compra.
 Se admiten PDF digitales, PDF escaneados e imágenes. Un campo pendiente no hace ilegible
 todo el archivo. No inventes causas ni pidas convertir el PDF: usa review_fiscal_setup
 para mostrar el campo pendiente y los controles de corrección en este chat.

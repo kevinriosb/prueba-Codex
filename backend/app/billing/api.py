@@ -107,6 +107,10 @@ def create_billing_router(payload_base):
     async def verify_email(identifier:uuid.UUID,payload:Confirm,request:Request,user=Depends(authenticated)):
         return service(request).verify_billing_email(user['id'],str(identifier),confirmed=payload.confirmed)
 
+    @router.post('/tickets/{identifier}/inspect-portal',dependencies=[Depends(check_csrf)])
+    async def inspect_portal(identifier:uuid.UUID,request:Request,user=Depends(authenticated)):
+        return public(await service(request).inspect_billing_portal(user['id'],str(identifier)))
+
     @router.post('/tickets/{identifier}/prepare-email',dependencies=[Depends(check_csrf)])
     async def prepare_email(identifier:uuid.UUID,payload:Prepare,request:Request,user=Depends(authenticated)):
         return service(request).request_email_send_approval(user['id'],str(identifier),**payload.model_dump())

@@ -96,6 +96,8 @@ class TicketExtraction(SafeModel):
     issuer_rfc: str | None = Field(max_length=13)
     purchase_date: str | None = Field(max_length=10)
     folio: str | None = Field(max_length=100)
+    account_number: str | None = Field(default=None,max_length=100)
+    reference_number: str | None = Field(default=None,max_length=160)
     total: str | None = Field(max_length=24)
     currency: str | None = Field(max_length=3)
     branch: str | None = Field(max_length=160)

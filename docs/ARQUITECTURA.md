@@ -82,6 +82,24 @@ propone como facturación cuando existe evidencia textual de esa finalidad. Los
 portales sin adaptador ejecutable se presentan como `portal_manual`, con datos
 propios para revisión, sin afirmar que la factura se haya solicitado.
 
+`portal_inspection.py` consulta exclusivamente páginas HTTPS registradas en el
+servidor, con tiempo y tamaño acotados. Resuelve DNS, rechaza direcciones internas
+o mezcladas, conecta a la IP pública validada y conserva Host/SNI para verificar
+TLS. No usa proxies, cookies o credenciales del entorno. Las redirecciones deben
+seguir dentro de las páginas aprobadas. Nunca envía números de compra, query
+strings, RFC ni constancias: solo lee el HTML público, sin ejecutar JavaScript,
+rellenar campos o pulsar controles. Los nombres reconocidos se convierten a un
+catálogo del servidor, evitando pasar HTML o instrucciones al modelo.
+
+La extracción distingue `account_number`, `folio`, `reference_number` y
+`billing_code`. El plan separa el valor del campo solicitado de referencias
+alternativas sin validar. Una plantilla obtenida de la captura aportada para
+Al Bat no se presenta como consulta en vivo. La caché del formulario solo contiene
+etiquetas públicas y estados, nunca datos de una persona. El resultado deja
+`purchase_validated=false` y `submitted=false`: revisar el formulario no valida
+la compra. Los datos requeridos procedentes del perfil se combinan después, solo
+en el registro cifrado del propietario.
+
 Los fallos de extracción conservan un código y explicación segura, sin cuerpos ni
 excepciones del proveedor. Una actualización permite, por botón humano, crear una
 lectura nueva del mismo archivo fallido conservando bytes, TTL e intento anterior.
@@ -93,6 +111,11 @@ compra pendientes pueden completarse con comandos humanos, sin volver al modelo.
 Las doce funciones fiscales se registran como herramientas del agente cuando el módulo está configurado. Sus resultados del chat contienen IDs/estados y orientaciones; los datos fiscales y documentos se consultan en la vista privada. Confirmar perfiles, verificar destinatarios, adjuntar CSF y enviar correos requiere una operación humana por la API protegida o un botón del chat privado autenticado de Telegram. La herramienta del modelo `send_invoice_request_email` solicita esa revisión: no puede confirmar ni enviar por sí sola.
 
 La aprobación de correo es un snapshot cifrado del destinatario, texto, datos, versión de perfil y hashes de adjuntos. Se consume atómicamente antes del único intento externo. Un resultado ambiguo queda protegido contra repetición incluso después de caducar el borrador. El envío se registra como solicitud, nunca como factura completada. Para cotejar la respuesta se conserva el perfil autorizado en el envío, no se sustituye por cambios posteriores del perfil.
+
+Las aprobaciones nuevas también incluyen una huella de los datos de compra;
+modificar Cuenta u otra referencia exige revisar un correo nuevo. Los correos
+incluyen las etiquetas de los identificadores disponibles y admiten tickets que
+solo tengan Cuenta o Referencia, sin inventar un folio.
 
 En Telegram el usuario puede elegir adjuntar su CSF completa al preparar la
 solicitud. Esa decisión se registra como `user_requested` y todavía requiere la

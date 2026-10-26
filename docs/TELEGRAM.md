@@ -117,6 +117,19 @@ contenedor: no necesitas instalar el SDK en el Python 3.9 del sistema.
 - Con página identificada aparece **Ver datos para el portal**: muestra el enlace,
   la compra y tu perfil. La captura en el portal sigue siendo manual; no hay un
   adaptador comercial que emita o solicite automáticamente esa factura.
+- Cuenta, Folio, Referencia y Código de facturación se extraen y guardan por
+  separado. Antes de mostrar la propuesta, el agente intenta leer los campos del
+  formulario público de una página aprobada. Para Al Bat está aprobada
+  `https://f.zetus.mx/albat`. Esa consulta no envía datos del ticket, RFC o CSF.
+  Si el portal pide **Cuenta**, muestra Cuenta; no la rellena silenciosamente con
+  el folio. Si falta el valor, permite completarlo o autorizar una lectura nueva
+  del archivo anterior a esta versión, sin volver a subirlo.
+- Cuando no logra leer el formulario, distingue la plantilla observada en la
+  captura de una consulta en vivo y muestra folio/referencias como alternativas
+  **sin validar**. Leer los campos del formulario no comprueba la cuenta contra
+  la base del comercio, no pulsa **Siguiente** y no genera una factura.
+  Otros portales deben registrarse como páginas públicas aprobadas antes de poder
+  consultarlos mediante `BILLING_PORTAL_INSPECTION_URLS`.
 - Si no hay página y sí un correo explícito de facturación, **Confirmar correo +
   revisar con CSF** prepara una solicitud con ticket, perfil y CSF completa por tu
   elección. Revisa el destinatario en el original y después el borrador completo.

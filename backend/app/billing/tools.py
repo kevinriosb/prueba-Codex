@@ -8,6 +8,7 @@ OPERATIONS={
     'confirm_fiscal_profile':'Mostrar revisión y botones de confirmación en el canal actual; nunca confirma por el usuario.',
     'analyze_ticket':'Recuperar el análisis autorizado de un ticket. Primero debe existir un perfil confirmado.',
     'detect_billing_channels':'Determinar el canal disponible para un ticket: portal compatible, correo o intervención manual.',
+    'inspect_billing_portal':'Consultar solo los campos públicos de un portal aprobado y preparar la revisión. No busca la compra ni envía datos fiscales.',
     'verify_billing_email':'Solicitar que el usuario revise el correo en el ticket original. No verifica automáticamente.',
     'prepare_invoice_request_email':'Preparar una solicitud con el correo verificado y crear su revisión privada; no la envía.',
     'request_email_send_approval':'Crear o recuperar la aprobación privada del correo del ticket; no la confirma.',
@@ -94,6 +95,12 @@ def build_billing_tools(billing):
                 return {'ticket_id':ticket['id'],'status':ticket['status']}
             if name=='detect_billing_channels':
                 return billing.detect_billing_channels(owner,identifier)
+            if name=='inspect_billing_portal':
+                ticket=await billing.inspect_billing_portal(owner,identifier)
+                review(ctx,'ticket',identifier)
+                plan=ticket['portal_inspection']
+                return {'ticket_id':identifier,'status':plan['status'],'purchase_validated':False,
+                    'fields':[{'key':item['key'],'matched':item['matched']} for item in plan['fields']]}
             if name=='verify_billing_email':
                 billing.store.get('ticket',owner,identifier)
                 review(ctx,'ticket',identifier)

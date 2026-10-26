@@ -80,4 +80,24 @@ def receipt_qr_urls(document):
 
 
 def missing_receipt_fields(ticket):
-    return [field for field in ('merchant', 'purchase_date', 'folio', 'total') if not ticket.get(field)]
+    return [field for field in ('merchant', 'purchase_date', 'folio', 'total')
+        if not ticket.get(field) and (field!='folio' or not any(ticket.get(key) for key in ('account_number','reference_number','billing_code')))]
+
+
+def purchase_reference(ticket):
+    for key,label in (('folio','Folio'),('account_number','Cuenta'),('reference_number','Referencia'),('billing_code','Código')):
+        if ticket.get(key):
+            return key,label,ticket[key]
+    return None,'Referencia',None
+
+
+def pending_receipt_fields(ticket):
+    fields=missing_receipt_fields(ticket)
+    portal_fields=(ticket.get('portal_inspection') or {}).get('fields',[])
+    identifiers={item['key'] for item in portal_fields} & {'account_number','reference_number','billing_code','folio'}
+    if identifiers and 'folio' not in identifiers and 'folio' in fields:
+        fields.remove('folio')
+    for item in portal_fields:
+        if item['key'] in {'account_number','reference_number','billing_code','folio'} and not ticket.get(item['key']) and item['key'] not in fields:
+            fields.append(item['key'])
+    return fields

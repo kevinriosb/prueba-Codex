@@ -101,6 +101,7 @@ HTTP no cifra el tráfico. Usa esta modalidad únicamente en una red de confianz
 | `MAX_CONTEXT_BYTES` | Tamaño del historial enviado al modelo | `16000` |
 | `MAX_OUTPUT_TOKENS` | Máximo de salida del chat por llamada al modelo | `150` |
 | `TELEGRAM_REPLY_MAX_CHARS` | Tope del texto de IA mostrado en Telegram; revisiones completas aparte | `160`; objetivo de 50 en pasos simples. Telegram usa hasta 100 tokens de salida por llamada |
+| `BILLING_PORTAL_INSPECTION_URLS` | Páginas públicas HTTPS aprobadas para leer campos, separadas por coma | `https://f.zetus.mx/albat`; consulta sin enviar datos ni tramitar facturas |
 | `MAX_AGENT_TURNS` | Máximo de llamadas al modelo por ejecución del SDK | `3` |
 | `MAX_TOOL_CALLS` | Máximo de herramientas ejecutadas por solicitud | `5` |
 | `RUN_TIMEOUT_SECONDS` | Tiempo máximo de una ejecución | `35` segundos |

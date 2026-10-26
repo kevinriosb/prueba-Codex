@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **322 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **347 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis.
 
 Se comprobaron:
 
@@ -378,3 +378,30 @@ Termius, conservando su archivo privado, volumen y clave de cifrado.
 Railway continúa como alternativa documentada: no se creó ni desplegó un servicio
 en esa plataforma. El alojamiento elegido por el usuario es su VPS existente.
 No se han contratado recursos nuevos durante esta actualización.
+
+### Cuenta, folio y requisitos del formulario
+
+Veinticinco regresiones adicionales comprueban la extracción independiente de
+Cuenta/Folio/Referencia con el Runner, lectura de etiquetas asociadas y anidadas,
+rechazo de controles ocultos o de contraseña e instrucciones dentro de scripts,
+campos pendientes y referencias alternativas sin validar. También cubren tickets
+con Cuenta y sin Folio, identificadores sensibles a mayúsculas, edición de una
+Cuenta pendiente desde Telegram y relectura autorizada de un ticket válido
+anterior a esta versión sin duplicar la solicitud, alterar bytes ni ampliar su TTL.
+
+El cliente HTTP se comprobó con transporte simulado: GET a una IP pública fijada,
+Host/SNI del comercio, sin body, query, cookies ni Authorization. DNS privado o
+mixto impide cualquier llamada HTTP; una URL no aprobada no llega a resolver DNS.
+Las redirecciones fuera de las páginas permitidas se rechazan y se acepta una
+redirección segura que añade una barra final. No se envían cuentas, RFC ni datos
+del perfil para leer el formulario. Leer campos y validar la compra tienen estados
+separados; no se pulsa Siguiente ni se solicita una factura. Cambiar un identificador
+de compra invalida una aprobación nueva de correo con los datos anteriores.
+
+La consulta real al portal no pudo completarse desde este entorno. La captura
+del usuario es la evidencia de que Al Bat pide Cuenta; su plantilla se etiqueta
+como tal y no se presenta como consulta en vivo. No se hicieron nuevas llamadas
+de generación, consultas de cuentas de consumo ni envíos reales. La imagen se
+construyó, pasó el smoke de salud/login/persistencia y el JavaScript modificado
+pasó la comprobación de sintaxis. Falta probar la consulta pública desde el VPS
+y verificar la Cuenta extraída del ticket real.

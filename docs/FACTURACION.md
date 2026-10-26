@@ -115,6 +115,11 @@ Reemplaza `ORIGEN_HTTPS_REAL` por la dirección real, sin rutas. Desde el iPad p
   facturación, **Confirmar correo + revisar con CSF** prepara ticket, datos y CSF
   por elección expresa del usuario. La confirmación final envía una sola vez,
   siempre que Gmail y el envío estén activados; de otro modo solo muestra borrador.
+- Antes de mostrar datos del portal, intenta leer el formulario público aprobado
+  y distingue **Cuenta**, **Folio**, **Referencia** y **Código**. Si la consulta no
+  es concluyente, las alternativas se identifican como no validadas. La consulta
+  no busca la cuenta en el comercio ni emite la factura. El formulario de Al Bat
+  tiene además una plantilla de Cuenta basada en la captura compartida.
 - **`/perfiles`** permite elegir perfil. **`/perfil` → Ver o editar perfil** cambia correo o uso de CFDI con una revisión nueva. **Actualizar CSF** prepara el reemplazo de los datos fiscales, sin cambiar el perfil hasta confirmar. Para agregar otro, envía **`/csf`**; **`/csf ID_DEL_PERFIL`** también permite actualizar uno. El borrado sigue disponible con `/eliminar_perfil ID` y su confirmación.
 - **`/tickets`** muestra solicitudes, archivos de factura y botones para consultar el buzón o autorizar el seguimiento.
 - Si el comercio pidió la constancia completa, registra esa petición mediante **`/requiere_csf ID_TICKET descripción de la petición`**. Después **`/preparar_con_csf ID_TICKET`** autoriza incluirla en un borrador; aún debes aprobar el correo final.
