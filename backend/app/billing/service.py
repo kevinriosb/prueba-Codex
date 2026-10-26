@@ -13,9 +13,10 @@ from ..errors import AppError
 from .cfdi import SatVerifier, validate_cfdi
 from .channels import official_contacts
 from .documents import inspect_document
-from .extraction import DocumentExtractor
+from .extraction import DocumentExtractor, EXTRACTION_VERSION
 from .models import CFDI_USES, REGIMES, FiscalExtraction, Status, TicketExtraction, missing_fiscal_fields, regime_code, validate_fiscal
 from .providers import GmailProvider, normalized_email
+from .receipt import missing_receipt_fields, purchase_date, purchase_total, receipt_qr_urls
 from .store import BillingStore
 
 
@@ -91,8 +92,8 @@ class BillingService:
         mime,content=inspect_document(data,self.settings.billing_max_upload_bytes)
         return self._store_document(owner,purpose,mime,base64.b64encode(content).decode(),hashlib.sha256(content).hexdigest(),profile_id)
 
-    def _store_document(self,owner,purpose,mime,encoded,sha256,profile_id,*,source=None):
-        lookup=self.store.digest(f'{purpose}:{profile_id or ""}:'+sha256)
+    def _store_document(self,owner,purpose,mime,encoded,sha256,profile_id,*,source=None,lookup_suffix=''):
+        lookup=self.store.digest(f'{purpose}:{profile_id or ""}:'+sha256+lookup_suffix)
         existing=self.store.find('document',owner,lookup)
         if existing:
             return {'id':existing['id'],'purpose':purpose,'duplicate':True,'expires':existing['_expires']}
@@ -161,7 +162,7 @@ class BillingService:
                     conn.execute('INSERT INTO billing_extractions VALUES(?,?,?,?)',(owner,day,identifier,'started'))
                 except sqlite3.IntegrityError:
                     raise AppError(409,'extraction_attempted','Este documento ya se intentó analizar. No se repetirá automáticamente; envía una copia nueva si es necesario.') from None
-            document['analysis_consent']=True
+            document.update(analysis_consent=True,extraction_version=EXTRACTION_VERSION,analysis_error=None)
             document=self.store.update('document',owner,identifier,document)
             try:
                 result=await self.extractor.extract(purpose,document['mime'],base64.b64decode(document['data']))
@@ -172,10 +173,13 @@ class BillingService:
                 with self.database.connection(True) as conn:
                     conn.execute("UPDATE billing_extractions SET status='complete' WHERE owner=? AND document_id=?",(owner,identifier))
                 return document,extracted
-            except Exception:
+            except Exception as error:
                 with self.database.connection(True) as conn:
                     conn.execute("UPDATE billing_extractions SET status='failed' WHERE owner=? AND document_id=?",(owner,identifier))
-                raise AppError(422,'document_extraction','No se pudo extraer información fiable. Revisa la copia o la configuración antes de repetir.') from None
+                failure=error if isinstance(error,AppError) else AppError(422,'extraction_format','La respuesta de IA no tuvo el formato esperado. El archivo sigue guardado.')
+                document['analysis_error']={'code':failure.code,'message':failure.message}
+                self.store.update('document',owner,identifier,document)
+                raise failure from None
 
     async def process_fiscal_certificate(self,owner,document_id,*,consent=False,replace_profile_id=None):
         document,data=await self._extract(owner,document_id,'csf',consent)
@@ -265,13 +269,17 @@ class BillingService:
             raise AppError(409,'duplicate_ticket','Este ticket ya se analizó. Revisa su solicitud antes de repetirlo.')
         try:
             document,data=await self._extract(owner,document_id,'ticket',consent)
-        except AppError:
-            self._status(owner,pending,Status.ERROR,'No se pudo completar el análisis. No se repetirá automáticamente.')
+        except AppError as error:
+            pending['analysis_error']={'code':error.code,'message':error.message}
+            self._status(owner,pending,Status.ERROR,error.message)
             raise
-        if not data['is_ticket'] or not data['readable']:
-            self._status(owner,pending,Status.REQUIERE_INTERVENCION,'El ticket no es legible.')
-            raise AppError(422,'unreadable_ticket','No se identificó un ticket legible. Envía una copia más clara.')
-        complete=all(data.get(key) for key in ('merchant','purchase_date','folio','total'))
+        qr_urls=receipt_qr_urls(document)
+        if not data.get('billing_url') and len(qr_urls)==1 and re.search(r'factur|cfdi',data.get('billing_url_evidence') or '',re.I):
+            data['billing_url']=qr_urls[0]
+        if not data['is_ticket'] or (not data['readable'] and not any(data.get(key) for key in ('merchant','folio','total','billing_url','billing_email'))):
+            self._status(owner,pending,Status.REQUIERE_INTERVENCION,'No se identificaron datos de compra. El archivo sigue guardado.')
+            raise AppError(422,'unreadable_ticket','No pude identificar datos de compra en este archivo. Revisa el tipo o la foto.')
+        complete=not missing_receipt_fields(data)
         merchant=(data.get('issuer_rfc') or data.get('merchant') or '').strip().upper()
         amount=format(Decimal(data['total']).normalize(),'f') if data.get('total') else ''
         identity='|'.join([merchant,data.get('purchase_date') or '',(data.get('folio') or '').strip().upper(),amount])
@@ -290,7 +298,7 @@ class BillingService:
             'status':Status.DATOS_EXTRAIDOS if complete else Status.REQUIERE_INTERVENCION,
             'status_history':pending['status_history'],
             'delivery':None,'certificate_requested':False,'csf_supplement_sent':False,'invoice_documents':[],
-            'validation':None,'note':'' if complete else 'Faltan datos legibles de la compra.'}
+            'qr_urls':qr_urls,'validation':None,'note':'' if complete else 'Falta completar: '+', '.join(missing_receipt_fields(data))+'.'}
         ticket=self.store.update('ticket',owner,pending['id'],ticket)
         ticket=self._status(owner,ticket,ticket['status'])
         return public(ticket)|{'channels':self.detect_billing_channels(owner,ticket['id'])}
@@ -303,6 +311,44 @@ class BillingService:
         self.store.audit(owner,ticket['id'],str(status))
         return ticket
 
+    def retry_ticket_after_update(self,owner,document_id):
+        source=self.document(owner,document_id)
+        ticket=self.store.get('ticket',owner,source.get('ticket_id',''))
+        if source['purpose']!='ticket' or source.get('superseded_by') or ticket.get('delivery') or ticket['status'] not in {Status.ERROR,Status.REQUIERE_INTERVENCION}:
+            raise AppError(409,'analysis_retry','Este archivo ya se procesó. Consulta /tickets.')
+        if source.get('extraction_version')==EXTRACTION_VERSION:
+            raise AppError(409,'analysis_retry','Ya se intentó con esta versión. No se repetirá automáticamente.')
+        result=self._store_document(owner,'ticket',source['mime'],source['data'],source['sha256'],source['profile_id'],
+            source=source,lookup_suffix=':retry:'+EXTRACTION_VERSION)
+        source['superseded_by']=result['id']
+        self.store.update('document',owner,source['id'],source)
+        ticket['superseded_by']=self.document(owner,result['id'])['ticket_id']
+        self._status(owner,ticket,Status.REQUIERE_INTERVENCION,'Archivo recuperado para una nueva lectura autorizada.')
+        return result
+
+    def complete_ticket_field(self,owner,ticket_id,field,value):
+        ticket=self.store.get('ticket',owner,ticket_id)
+        document=self.document(owner,ticket['document_id'])
+        if ticket.get('delivery') or not (document.get('extracted') or {}).get('is_ticket') or field not in missing_receipt_fields(ticket):
+            raise AppError(409,'ticket_field','Ese dato no está pendiente. Consulta /tickets.')
+        value=value.strip()
+        if not value or len(value)>160 or any(ord(char)<32 for char in value):
+            raise AppError(422,'ticket_field','Escribe solo el dato visible en el ticket.')
+        if field=='purchase_date':
+            value=purchase_date(value)
+        elif field=='total':
+            value=purchase_total(value)
+        elif field=='folio' and len(value)>100:
+            value=None
+        if not value:
+            raise AppError(422,'ticket_field','El dato no tiene un formato válido.')
+        ticket[field]=value
+        ticket.setdefault('fields_completed_by_user',[]).append(field)
+        self.store.audit(owner,ticket_id,'ticket_field_completed_by_user')
+        complete=not missing_receipt_fields(ticket)
+        return self._status(owner,ticket,Status.DATOS_EXTRAIDOS if complete else Status.REQUIERE_INTERVENCION,
+            '' if complete else 'Hay datos de compra pendientes.')
+
     def detect_billing_channels(self,owner,ticket_id):
         self.require_enabled()
         ticket=self.store.get('ticket',owner,ticket_id)
@@ -311,6 +357,9 @@ class BillingService:
             if adapter.authorized and adapter.supports(ticket):
                 return {'method':'portal','adapter':adapter.name,'authorized':True,
                     'reason':'Hay un portal o API compatible, verificado y autorizado.'}
+        if ticket.get('billing_url'):
+            return {'method':'portal_manual','url':ticket['billing_url'],'authorized':False,
+                'reason':'Página de facturación identificada. No hay automatización instalada para este portal.'}
         if ticket.get('billing_email') and ticket.get('email_explicitly_for_billing'):
             return {'method':'email','verified':bool(ticket.get('verified_email')),
                 'official_source':(self.contacts.get(ticket.get('issuer_rfc')) or {}).get('official_url'),
@@ -332,7 +381,7 @@ class BillingService:
         self.store.audit(owner,ticket_id,'billing_email_verified_by_user')
         return public(self.store.update('ticket',owner,ticket_id,ticket))
 
-    def prepare_invoice_request_email(self,owner,ticket_id,*,include_csf=False,authorize_csf=False):
+    def prepare_invoice_request_email(self,owner,ticket_id,*,include_csf=False,authorize_csf=False,user_requested_csf=False):
         self.require_enabled()
         ticket=self.store.get('ticket',owner,ticket_id)
         profile=self.store.get('profile',owner,ticket['profile_id'])
@@ -348,9 +397,14 @@ class BillingService:
             raise AppError(409,'already_requested','La solicitud ya fue enviada; no se enviará otra automáticamente.')
         attachments=[self.document(owner,ticket['document_id'])]
         if include_csf:
-            if authorize_csf is not True or not ticket.get('certificate_requested'):
-                raise AppError(409,'csf_authorization','La constancia completa necesita una petición expresa del comercio y una autorización específica del usuario.')
-            attachments.append(self.document(owner,profile['document_id']))
+            if authorize_csf is not True or not (ticket.get('certificate_requested') or user_requested_csf is True):
+                raise AppError(409,'csf_authorization','La constancia necesita petición del comercio o elección explícita del usuario, y autorización específica.')
+            try:
+                attachments.append(self.document(owner,profile['document_id']))
+            except AppError as error:
+                if error.status!=404:
+                    raise
+                raise AppError(409,'csf_expired','La copia de tu CSF venció. Actualízala para adjuntarla; el perfil sigue guardado.') from None
         if sum(len(base64.b64decode(item['data'])) for item in attachments)>6_000_000:
             raise AppError(413,'email_attachment_size','Los adjuntos de un correo deben sumar como máximo 6 MB. Reduce el tamaño de los archivos antes de preparar el envío.')
         subject='Solicitud de factura CFDI 4.0 — Ticket '+re.sub(r'[\r\n\x00-\x1f]',' ',ticket['folio'])
@@ -379,14 +433,15 @@ Saludos.'''
             'to':verified['email'],'subject':subject,'body':body,'fiscal_data':{key:profile[key] for key in ('rfc','name','postal_code','fiscal_regime','cfdi_use','email')},
             'attachments':[{'id':item['id'],'sha256':item['sha256'],'mime':item['mime'],
                 'label':'Constancia de Situación Fiscal' if item['purpose']=='csf' else 'Ticket de compra'} for item in attachments],
-            'include_csf':include_csf,'supplement':supplement,'rfc_message_id':'<'+uuid.uuid4().hex+'@agente.invalid>'}
+            'include_csf':include_csf,'csf_share_reason':('user_requested' if user_requested_csf else 'merchant_requested') if include_csf else None,
+            'supplement':supplement,'rfc_message_id':'<'+uuid.uuid4().hex+'@agente.invalid>'}
         account=self.mail.account(owner)
         if account:
             payload['rfc_message_id']='<'+uuid.uuid4().hex+'@'+normalized_email(account['email']).split('@',1)[1]+'>'
         self._status(owner,ticket,Status.CORREO_PREPARADO)
         return payload
 
-    def request_email_send_approval(self,owner,ticket_id,*,include_csf=False,authorize_csf=False):
+    def request_email_send_approval(self,owner,ticket_id,*,include_csf=False,authorize_csf=False,user_requested_csf=False):
         for existing in self.store.list('email_approval',owner):
             if existing['ticket_id']==ticket_id and existing['_state'] in {'claimed','unknown'}:
                 raise AppError(409,'mail_delivery_unknown','Hay un envío con resultado incierto. Revísalo manualmente antes de repetir cualquier acción.')
@@ -394,7 +449,7 @@ Saludos.'''
                 if bool(existing['include_csf'])!=bool(include_csf):
                     raise AppError(409,'pending_email_approval','Rechaza primero el borrador anterior antes de cambiar sus adjuntos.')
                 return public(existing)|{'expires':existing['_expires']}
-        payload=self.prepare_invoice_request_email(owner,ticket_id,include_csf=include_csf,authorize_csf=authorize_csf)
+        payload=self.prepare_invoice_request_email(owner,ticket_id,include_csf=include_csf,authorize_csf=authorize_csf,user_requested_csf=user_requested_csf)
         approval=self.store.add('email_approval',owner,payload,expires=time.time()+self.settings.approval_ttl_seconds,state='pending')
         ticket=self.store.get('ticket',owner,ticket_id)
         ticket['approval_id']=approval['id']

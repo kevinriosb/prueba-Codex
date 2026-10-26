@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **296 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **322 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis.
 
 Se comprobaron:
 
@@ -272,6 +272,40 @@ exclusión de secretos/pruebas y persistencia de historial y documento cifrado t
 recrear el contenedor. No se hicieron nuevas llamadas reales a OpenAI, Telegram,
 Gmail o SAT. El PDF personal del usuario no se recibió ni analizó en estas pruebas;
 la verificación de su resultado concreto se realizará tras actualizar el VPS.
+
+### Tickets con página, QR o correo de facturación
+
+Se reprodujo con el Runner real y una respuesta programada la lectura de una URL
+sin esquema y un importe con símbolo de moneda. El validador anterior podía
+rechazar toda la extracción; ahora normaliza campos visibles y conserva los demás
+si uno no es interpretable. Un ticket parcialmente legible permanece guardado y
+permite completar el dato pendiente por comando humano, sin otra llamada a IA.
+Los fallos de autenticación, cuota, timeout y formato conservan códigos seguros,
+sin imprimir respuestas o excepciones del proveedor ni atribuirlos a la CSF.
+
+Las regresiones verifican normalización de URL, rechazo de esquemas indebidos,
+credenciales en enlaces y direcciones internas; QR sintéticos reales leídos con
+ZXing-C++, descarte de QR de encuesta como canal fiscal, visualización del portal
+y datos propios, aislamiento de botones, preparación de correo con CSF elegida por
+el usuario y envío MIME simulado tras una sola confirmación válida. Gmail inactivo
+solo ofrece vista previa; no muestra un botón para enviar. También se verifican
+la recuperación autorizada de un ticket que falló antes de la actualización,
+conservación de bytes/TTL, ausencia de un segundo intento en la misma versión,
+diagnóstico del documento actual y consulta del ticket tras vencer su original.
+
+La nueva dependencia está fijada en `pyproject.toml`, `uv.lock` y requisitos con
+hashes. El Dockerfile de producción se construyó y se ejecutó el smoke de salud,
+login y persistencia. El entorno local requirió resolver el proxy de construcción
+y montar su CA de confianza; se mantuvieron TLS y verificación de hashes, sin
+cambiar el Dockerfile ni los requisitos de red del VPS. La lectura de un QR real
+sintético también pasó dentro de la imagen con red desactivada y UID sin privilegios.
+
+No se hicieron nuevas llamadas de generación ni se enviaron correos reales. La
+consulta de la página pública del comercio no pudo completarse desde este entorno;
+no se enviaron datos fiscales ni se desarrolló o validó un automatismo para ese
+portal. El ticket personal mostrado en la captura no se analizó con el proveedor.
+Google OAuth y la conexión individual de Gmail siguen pendientes de configuración
+en el VPS. No se ha afirmado una factura emitida ni un envío real completado.
 
 - `scripts/hostinger_smoke.py` pasó con la imagen actualizada: configuración de
   producción real, puerto publicado únicamente en loopback, host autorizado,

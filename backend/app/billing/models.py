@@ -1,11 +1,10 @@
 import re
 import unicodedata
-from datetime import date
-from decimal import Decimal
 from enum import StrEnum
-from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .receipt import portal_url, purchase_date, purchase_total
 
 REGIMES = {
     '601': 'General de Ley Personas Morales', '603': 'Personas Morales con Fines no Lucrativos',
@@ -102,6 +101,7 @@ class TicketExtraction(SafeModel):
     branch: str | None = Field(max_length=160)
     billing_code: str | None = Field(max_length=160)
     billing_url: str | None = Field(max_length=500)
+    billing_url_evidence: str | None = Field(default=None,max_length=500)
     billing_email: str | None = Field(max_length=254)
     billing_email_evidence: str | None = Field(max_length=500)
     email_explicitly_for_billing: bool
@@ -109,26 +109,17 @@ class TicketExtraction(SafeModel):
     @field_validator('purchase_date')
     @classmethod
     def valid_date(cls, value):
-        if value:
-            date.fromisoformat(value)
-        return value
+        return purchase_date(value)
 
-    @field_validator('total')
+    @field_validator('total', mode='before')
     @classmethod
     def valid_total(cls, value):
-        if value is not None:
-            if not re.fullmatch(r'[0-9]{1,10}(?:\.[0-9]{1,2})?', value) or Decimal(value) <= 0:
-                raise ValueError('Importe no válido')
-        return value
+        return purchase_total(value)
 
     @field_validator('billing_url')
     @classmethod
     def valid_url(cls, value):
-        if value:
-            parsed = urlsplit(value)
-            if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password:
-                raise ValueError('Portal no válido')
-        return value
+        return portal_url(value)
 
 
 def validate_fiscal(data):

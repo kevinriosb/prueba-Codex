@@ -75,11 +75,31 @@ El paquete `backend/app/billing/` reutiliza la autenticación, configuración, S
 
 Los documentos no entran en el historial general. `DocumentExtractor` utiliza una configuración del mismo agente con herramientas vacías, salida Pydantic estructurada, una sola llamada, timeout y almacenamiento del proveedor desactivado. El documento es entrada no confiable; no habilita navegación, shell ni acciones. El usuario debe autorizar su envío a OpenAI. Las pruebas no ejecutan extracción de pago.
 
+`receipt.py` normaliza importes visibles y URL de portales sin descartar todos los
+campos por uno opcional inválido. ZXing-C++ decodifica QR en las imágenes ya
+validadas; no abre enlaces ni ejecuta su contenido. Una única URL del QR solo se
+propone como facturación cuando existe evidencia textual de esa finalidad. Los
+portales sin adaptador ejecutable se presentan como `portal_manual`, con datos
+propios para revisión, sin afirmar que la factura se haya solicitado.
+
+Los fallos de extracción conservan un código y explicación segura, sin cuerpos ni
+excepciones del proveedor. Una actualización permite, por botón humano, crear una
+lectura nueva del mismo archivo fallido conservando bytes, TTL e intento anterior.
+No hay reintentos automáticos ni más de un intento por versión. Los campos de
+compra pendientes pueden completarse con comandos humanos, sin volver al modelo.
+
 `BillingStore` cifra cada payload con AES-256-GCM y nonce aleatorio. Tipo, propietario e ID se autentican como AAD; intercambiar un ciphertext entre usuarios falla. Los campos de búsqueda son HMAC; las consultas filtran por propietario. Los documentos se guardan cifrados en SQLite, no en rutas derivadas del nombre del archivo. Al listar documentos se retienen solo metadatos, evitando acumular todos los archivos descifrados en memoria. Los originales vencen por TTL y hay borrado explícito. No se promete borrar copias externas ni backups.
 
 Las doce funciones fiscales se registran como herramientas del agente cuando el módulo está configurado. Sus resultados del chat contienen IDs/estados y orientaciones; los datos fiscales y documentos se consultan en la vista privada. Confirmar perfiles, verificar destinatarios, adjuntar CSF y enviar correos requiere una operación humana por la API protegida o un botón del chat privado autenticado de Telegram. La herramienta del modelo `send_invoice_request_email` solicita esa revisión: no puede confirmar ni enviar por sí sola.
 
 La aprobación de correo es un snapshot cifrado del destinatario, texto, datos, versión de perfil y hashes de adjuntos. Se consume atómicamente antes del único intento externo. Un resultado ambiguo queda protegido contra repetición incluso después de caducar el borrador. El envío se registra como solicitud, nunca como factura completada. Para cotejar la respuesta se conserva el perfil autorizado en el envío, no se sustituye por cambios posteriores del perfil.
+
+En Telegram el usuario puede elegir adjuntar su CSF completa al preparar la
+solicitud. Esa decisión se registra como `user_requested` y todavía requiere la
+revisión final del destinatario, contenido y adjuntos. Las herramientas del modelo
+no pueden activar esa elección ni confirmar el envío. La ruta API anterior sigue
+exigiendo petición del comercio cuando no hay una elección humana explícita de
+Telegram. Si Gmail o el envío están desactivados, la revisión no ofrece enviar.
 
 Gmail usa OAuth 2.0 con PKCE y estado aleatorio, de un solo uso y con vencimiento. Los tokens de cada propietario quedan cifrados. El callback verifica el estado y no depende de una cookie en la navegación de regreso desde Google. El cliente solo accede a destinos fijos de Google y a hilos almacenados de solicitudes propias; no acepta URLs del modelo. No renueva ni envía con reintentos automáticos. Desconectar elimina tokens locales; revocar el permiso en Google es una acción aparte del usuario.
 

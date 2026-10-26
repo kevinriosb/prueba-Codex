@@ -109,6 +109,30 @@ contenedor: no necesitas instalar el SDK en el Python 3.9 del sistema.
 - «Prepara el correo de este ticket» solicita el borrador revisable. El botón
   muestra destinatario, contenido y adjuntos; solo su confirmación puede enviarlo.
   Gmail debe estar conectado y el envío habilitado por el operador.
+- El ticket conserva los campos válidos aunque falte fecha, folio u otro dato.
+  **Completar dato** permite escribirlo con `/dato_ticket VALOR`, sin otra lectura
+  de IA. La página impresa admite direcciones sin `https://`; los QR de fotografías
+  se decodifican localmente sin visitar sus enlaces. Un QR de encuesta no se toma
+  automáticamente como portal de facturación.
+- Con página identificada aparece **Ver datos para el portal**: muestra el enlace,
+  la compra y tu perfil. La captura en el portal sigue siendo manual; no hay un
+  adaptador comercial que emita o solicite automáticamente esa factura.
+- Si no hay página y sí un correo explícito de facturación, **Confirmar correo +
+  revisar con CSF** prepara una solicitud con ticket, perfil y CSF completa por tu
+  elección. Revisa el destinatario en el original y después el borrador completo.
+  Solo **Confirmar y enviar** puede enviarlo. Gmail debe estar conectado y el envío
+  habilitado; de lo contrario se presenta como vista previa sin botón de envío.
+- Cada persona utiliza `/conectar_gmail` para elegir su propio Gmail. Hay un solo
+  cliente OAuth de la aplicación en el servidor, con tokens cifrados separados por
+  usuario; no se configura una cuenta de correo global para todos los invitados.
+  El correo receptor del perfil y el buzón emisor conectado pueden ser distintos.
+- Si una lectura falló antes de esta actualización, `/tickets` ofrece **Autorizar
+  nueva lectura guardada**. Usa los mismos bytes y vencimiento, conserva el intento
+  anterior y solo admite un nuevo intento por versión. Requiere autorizar el
+  consumo de OpenAI; no se reintenta automáticamente ni se reenvían correos.
+- «Por qué no es fiable?» muestra el diagnóstico guardado del archivo actual:
+  distingue formato, autenticación, cuota o tiempo de espera. No inventa una causa
+  sobre la CSF cuando el archivo es un ticket y no solicita otra generación.
 
 Se comprobó con Runner real, modelo simulado y servicios ficticios. Esto no
 sustituye la prueba desde tu cuenta. No se reintentan errores automáticamente.

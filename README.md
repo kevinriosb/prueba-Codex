@@ -20,6 +20,8 @@ explica cómo conectar un bot nuevo desde Termius, sin compartir su token.
 - Crear varias conversaciones y volver a ellas después de cerrar el navegador o reiniciar el servidor.
 - Ver resultados de herramientas y errores en el chat.
 - Aprobar o rechazar llamadas de futuras herramientas que modifiquen datos o sistemas externos.
+- Leer datos de tickets, página impresa y QR de facturación; completar campos pendientes desde Telegram.
+- Preparar correo con datos, ticket y CSF por elección del usuario. Cada persona conecta su propio Gmail y confirma el envío. Los portales encontrados muestran enlace y datos; su automatización comercial sigue pendiente.
 
 La web tiene **un usuario propietario**, configurado por variables de entorno. Telegram admite cuentas autorizadas mediante su ID, cada una con historial y datos propios. No hay registro público ni vinculación automática entre la cuenta web y Telegram. El backend vincula cada conversación y aprobación a su propietario; las pruebas comprueban que un usuario no puede leer ni modificar conversaciones ajenas.
 

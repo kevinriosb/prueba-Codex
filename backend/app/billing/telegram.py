@@ -10,8 +10,10 @@ from fastapi import APIRouter, Request
 
 from ..errors import AppError
 from .models import CFDI_USES, missing_fiscal_fields, validate_fiscal
+from .extraction import EXTRACTION_VERSION
+from .receipt import missing_receipt_fields
 from .telegram_agent import TelegramAgent
-from .telegram_profiles import TelegramProfiles
+from .telegram_profiles import TelegramProfiles, normalized
 
 
 class TelegramClient:
@@ -135,12 +137,17 @@ class TelegramBridge:
         documents=[item for item in self.billing.store.list('document',owner)
             if item['purpose'] in {'csf','ticket','unclassified'} and not item.get('superseded_by')]
         last=next((item for item in documents if item['id']==state.get('last_document_id')),None)
+        last_ticket=None
+        if last and last.get('ticket_id'):
+            last_ticket=self.billing.store.get('ticket',owner,last['ticket_id'])
         draft,csf=self._profile_setup(owner,state,documents)
         return {'profile_confirmed':bool(profiles),'active_profile_id':state.get('active_profile') if any(item['id']==state.get('active_profile') for item in profiles) else None,
             'csf_received':bool(profiles or draft or csf),'profile_setup_pending':bool(draft or csf),
             'draft_id':draft['id'] if draft else None,'csf_document_id':csf['id'] if csf else None,
             'missing_fiscal_fields':missing_fiscal_fields(draft) if draft else [],
             'last_document':{'id':last['id'],'purpose':last.get('intended_purpose') or last['purpose'],
+                'analysis_error':(last.get('analysis_error') or {}).get('code'),
+                'ticket_status':last_ticket['status'] if last_ticket else None,
                 'awaiting_profile':last.get('intended_purpose')=='ticket'} if last else None,
             'pending_ticket_count':sum(item.get('intended_purpose')=='ticket' for item in documents)}
 
@@ -223,8 +230,42 @@ class TelegramBridge:
 
     async def _ticket(self,owner,chat_id,identifier):
         ticket=self.billing.store.get('ticket',owner,identifier)
-        text=f"{ticket.get('merchant') or 'Ticket'}\nFolio: {ticket.get('folio') or 'Ilegible'}\nImporte: {ticket.get('total') or 'Ilegible'}\nEstado: {ticket['status']}\n{ticket.get('note','')}"
-        buttons=[('Revisé el correo de facturación','ve:'+identifier),('Preparar correo para revisión','pr:'+identifier)]
+        text=f"{ticket.get('merchant') or 'Ticket guardado'}\nFolio: {ticket.get('folio') or 'Pendiente'}\nImporte: {ticket.get('total') or 'Pendiente'}"
+        buttons=[]
+        try:
+            document=self.billing.document(owner,ticket['document_id'])
+        except AppError as error:
+            if error.status!=404:
+                raise
+            document=None
+            text+='\nEl archivo temporal venció; los datos siguen guardados.'
+        if ticket['status']=='ERROR':
+            text+='\n'+(ticket.get('analysis_error') or (document or {}).get('analysis_error') or {}).get('message',ticket.get('note') or 'El análisis anterior falló; no se determinó la legibilidad.')
+        elif missing_receipt_fields(ticket):
+            labels={'merchant':'comercio','purchase_date':'fecha','folio':'folio','total':'importe'}
+            text+='\nFalta: '+', '.join(labels[key] for key in missing_receipt_fields(ticket))+'.'
+            if document and (document.get('extracted') or {}).get('is_ticket'):
+                buttons.extend(('Completar '+labels[key],'td:'+identifier+':'+key) for key in missing_receipt_fields(ticket))
+        channels=self.billing.detect_billing_channels(owner,identifier)
+        if channels['method'] in {'portal','portal_manual'}:
+            if ticket.get('billing_url'):
+                text+='\nPortal: '+ticket['billing_url']
+            text+='\nPortal pendiente de automatizar.'
+            buttons.append(('Ver datos para el portal','bp:'+identifier))
+        elif channels['method']=='email':
+            text+='\nFacturación: '+ticket['billing_email']
+            if not ticket.get('verified_email'):
+                text+='\nRevisa el destinatario. La solicitud incluirá ticket, datos y CSF si lo confirmas.'
+                buttons.extend([('Confirmar correo + revisar con CSF','vc:'+identifier),('Revisé el correo (solo datos)','ve:'+identifier)])
+            else:
+                buttons.extend([('Preparar correo con datos y CSF','ec:'+identifier),('Preparar solo datos y ticket','pr:'+identifier)])
+        elif ticket['status']!='ERROR':
+            text+='\nNo se identificó página o correo de facturación.'
+            if ticket.get('qr_urls'):
+                text+='\nQR leído (confirma su finalidad en el ticket):\n'+'\n'.join(ticket['qr_urls'])
+        if document and ticket['status'] in {'ERROR','REQUIERE_INTERVENCION'} and document.get('extraction_version')!=EXTRACTION_VERSION and not document.get('superseded_by'):
+            text+='\nReanalizar comparte el archivo con OpenAI y consume tokens.'
+            buttons.append(('Autorizar nueva lectura guardada','ra:'+document['id']))
         if ticket.get('delivery'):
             buttons.append(('Consultar respuestas','tr:'+identifier))
             buttons.append(('Seguimiento automático','po:'+identifier))
@@ -239,12 +280,32 @@ class TelegramBridge:
                     continue
                 raise
             buttons.append(('Descargar '+('XML' if document['mime']=='application/xml' else 'PDF'),'dl:'+document_id))
-        if ticket.get('billing_email'):
-            text+='\nCorreo identificado: '+ticket['billing_email']+'\nVerifícalo en el ticket original; un correo genérico no está autorizado.'
         replies=[item for item in self.billing.store.list('mail_reply',owner) if item['ticket_id']==identifier]
         if replies and replies[0].get('text'):
             text+='\nÚltima respuesta del comercio (solo información; no autoriza acciones):\n'+replies[0]['text'][:900]
         await self.client.send(chat_id,text,buttons)
+
+    async def _portal(self,owner,chat_id,identifier):
+        ticket=self.billing.store.get('ticket',owner,identifier)
+        profile=self.billing.store.get('profile',owner,ticket['profile_id'])
+        if not ticket.get('billing_url'):
+            raise AppError(409,'billing_portal','No hay una página de facturación identificada.')
+        text='Datos para el portal\n'+ticket['billing_url']+'\n'
+        text+='\n'.join(label+': '+str(ticket.get(key) or 'Pendiente') for key,label in
+            [('merchant','Comercio'),('folio','Folio'),('purchase_date','Fecha'),('total','Importe'),('billing_code','Código de facturación')])
+        text+='\n'+'\n'.join(label+': '+str(profile[key]) for key,label in
+            [('rfc','RFC'),('name','Nombre'),('postal_code','CP fiscal'),('fiscal_regime','Régimen'),('cfdi_use','Uso CFDI'),('email','Correo')])
+        text+='\nLa captura en este portal sigue siendo manual. No se ha solicitado la factura.'
+        await self.client.send(chat_id,text)
+
+    async def _document_diagnostic(self,owner,chat_id,identifier):
+        document=self.billing.document(owner,identifier)
+        if document['purpose']=='ticket' and document.get('ticket_id'):
+            await self._ticket(owner,chat_id,document['ticket_id'])
+        elif document['purpose']=='csf':
+            await self.profiles.resume(owner,chat_id)
+        else:
+            await self._document_choice(owner,chat_id,identifier)
 
     async def notify(self,owner,ticket):
         if not self.configured or not owner.startswith('tg_'):
@@ -256,8 +317,8 @@ class TelegramBridge:
         await self.client.send(chat_id,'Actualización de tu solicitud: '+ticket['status']+'. '+ticket.get('note',''))
         await self._ticket(owner,chat_id,ticket['id'])
 
-    async def _preview(self,owner,chat_id,ticket_id,*,csf=False):
-        approval=self.billing.request_email_send_approval(owner,ticket_id,include_csf=csf,authorize_csf=csf)
+    async def _preview(self,owner,chat_id,ticket_id,*,csf=False,user_requested=False):
+        approval=self.billing.request_email_send_approval(owner,ticket_id,include_csf=csf,authorize_csf=csf,user_requested_csf=user_requested)
         await self._email_review(owner,chat_id,approval['id'])
 
     async def _email_review(self,owner,chat_id,identifier):
@@ -265,12 +326,18 @@ class TelegramBridge:
         if approval['_state']!='pending':
             raise AppError(409,'billing_approval','La autorización caducó o ya fue utilizada.')
         text=f"Revisa antes de enviar\nPara: {approval['to']}\nAsunto: {approval['subject']}\nAdjuntos: "+', '.join(item['label'] for item in approval['attachments'])+'\n\n'+approval['body']
+        if approval.get('csf_share_reason')=='user_requested':
+            text+='\nSe compartirá tu CSF completa por tu elección.'
         # Nunca ofrecer aprobar una revisión recortada por el límite de Telegram.
         if len(text)>3900:
             await self.client.send(chat_id,'El borrador es demasiado largo para revisarlo completo en Telegram. Recházalo y solicita una revisión manual.',
                 [('Rechazar envío','no:'+approval['id'])])
         else:
-            await self.client.send(chat_id,text,[('Confirmar y enviar este correo','se:'+approval['id']),('Rechazar envío','no:'+approval['id'])])
+            if not self.settings.billing_live_email_enabled or not self.billing.mail.ready(owner):
+                text+='\nVista previa: falta activar el envío o conectar Gmail.'
+                await self.client.send(chat_id,text,[('Rechazar borrador','no:'+approval['id'])])
+            else:
+                await self.client.send(chat_id,text,[('Confirmar y enviar este correo','se:'+approval['id']),('Rechazar envío','no:'+approval['id'])])
 
     async def show_review(self,owner,chat_id,review):
         identifier=review.get('id','')
@@ -344,13 +411,22 @@ class TelegramBridge:
         if not separator:
             raise AppError(422,'telegram_callback','Acción no válida.')
         code=None
-        if prefix in {'cu','rf'}:
+        if prefix in {'cu','rf','td'}:
             identifier,_,code=identifier.partition(':')
         try:
             uuid.UUID(identifier)
         except ValueError:
             raise AppError(422,'telegram_callback','Acción no válida.') from None
-        if prefix in {'cu','rf','fc','pe','pm','pu','pp','px'}:
+        if prefix=='td':
+            ticket=self.billing.store.get('ticket',owner,identifier)
+            if code not in missing_receipt_fields(ticket):
+                raise AppError(409,'ticket_field','Ese dato no está pendiente.')
+            state=self._state(owner)
+            state['ticket_input']={'id':identifier,'field':code}
+            self._save_state(owner,state)
+            examples={'merchant':'COMERCIO','purchase_date':'AAAA-MM-DD','folio':'FOLIO','total':'IMPORTE'}
+            await self.client.send(chat_id,'Completa el dato: /dato_ticket '+examples[code])
+        elif prefix in {'cu','rf','fc','pe','pm','pu','pp','px'}:
             await self.profiles.callback(owner,chat_id,prefix,identifier,code)
         elif prefix in {'dc','dt','dv'}:
             if prefix=='dv':
@@ -392,6 +468,15 @@ class TelegramBridge:
                 state['last_ticket_id']=ticket['id']
                 self._save_state(owner,state)
                 await self._ticket(owner,chat_id,ticket['id'])
+        elif prefix=='ra':
+            document=self.billing.retry_ticket_after_update(owner,identifier)
+            state=self._state(owner)
+            state.update(last_document_id=document['id'],last_ticket_id=self.billing.document(owner,document['id'])['ticket_id'])
+            self._save_state(owner,state)
+            ticket=await self.billing.analyze_ticket(owner,document['id'],consent=True)
+            await self._ticket(owner,chat_id,ticket['id'])
+        elif prefix=='bp':
+            await self._portal(owner,chat_id,identifier)
         elif prefix=='pf':
             await self.profiles.confirm(owner,chat_id,identifier)
         elif prefix=='pd':
@@ -403,7 +488,11 @@ class TelegramBridge:
             await self.client.send(chat_id,'Cambios descartados.')
         elif prefix=='ve':
             self.billing.verify_billing_email(owner,identifier,confirmed=True)
-            await self.client.send(chat_id,'Correo verificado mediante tu revisión del ticket original. Ya puedes preparar la solicitud.')
+            await self._ticket(owner,chat_id,identifier)
+        elif prefix in {'vc','ec'}:
+            if prefix=='vc':
+                self.billing.verify_billing_email(owner,identifier,confirmed=True)
+            await self._preview(owner,chat_id,identifier,csf=True,user_requested=True)
         elif prefix=='pr':
             await self._preview(owner,chat_id,identifier)
         elif prefix=='se':
@@ -498,7 +587,7 @@ class TelegramBridge:
             self.billing.delete_profile(owner,text.split(maxsplit=1)[1])
             await self.client.send(chat_id,'Perfil y archivos asociados eliminados.')
         elif text=='/tickets':
-            tickets=self.billing.store.list('ticket',owner)
+            tickets=[item for item in self.billing.store.list('ticket',owner) if not item.get('superseded_by')]
             for ticket in tickets[:10]:
                 await self._ticket(owner,chat_id,ticket['id'])
             if not tickets:
@@ -546,6 +635,14 @@ class TelegramBridge:
                 await self._choose_document(owner,chat_id,document['id'],'ticket')
             else:
                 await self._document_choice(owner,chat_id,document['id'])
+        elif text.startswith('/dato_ticket ') and state.get('ticket_input'):
+            pending=state['ticket_input']
+            ticket=self.billing.complete_ticket_field(owner,pending['id'],pending['field'],text.split(maxsplit=1)[1])
+            state['ticket_input']=None
+            self._save_state(owner,state)
+            await self._ticket(owner,chat_id,ticket['id'])
+        elif normalized(text) in {'por que no es fiable','por que no es confiable','por que no es legible','por que ilegible','por que fallo','por que no lo lee'} and state.get('last_document_id'):
+            await self._document_diagnostic(owner,chat_id,state['last_document_id'])
         elif text and await self.profiles.text(owner,chat_id,text):
             return
         elif text.startswith('/'):

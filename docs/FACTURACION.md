@@ -11,7 +11,7 @@ La actualización amplía el agente existente. Conserva el chat, autenticación,
 | Tickets | Emisor, fecha, folio, total, sucursal, código, portal y correo; selección de canal y deduplicación por usuario | No se obedecen instrucciones del documento ni se visitan sus enlaces. Un correo de soporte no se autoriza por contener la palabra facturación en su dirección |
 | Gmail | OAuth 2.0 con PKCE, tokens cifrados por usuario, renovación, envío MIME y lectura de respuestas del hilo autorizado | Protocolo HTTP probado con transporte simulado. Hace falta configurar Google y conectar cada buzón |
 | Aprobación de envío | Vista del destinatario, datos, texto y adjuntos; autorización de un solo uso, vencimiento, protección contra repetición y datos modificados | Desactivado por defecto. Un resultado incierto bloquea reintentos incluso tras reiniciar o caducar el borrador |
-| CSF adjunta | Petición expresa del comercio registrada y autorización específica del usuario, además de la aprobación final del correo | Nunca se adjunta por defecto. Si el original ya venció debe recibirse otra copia |
+| CSF adjunta | Petición del comercio o elección explícita del usuario en Telegram, autorización específica y aprobación final del correo | Nunca la adjunta el modelo por sí solo. Si el original ya venció debe recibirse otra copia |
 | Respuestas | Asociación por propietario, destinatario, hilo e identificador; PDF/XML, validación de coincidencias y descarga privada | Una respuesta de otro remitente/hilo exige intervención. No se asocia una factura solo por un asunto parecido |
 | CFDI 4.0 | Parser XML sin DTD/entidades, versión, timbre/UUID y coincidencia de receptor, régimen, uso, CP, nombre, importe y emisor cuando existe en el ticket | No incluye validación XSD completa ni verificación criptográfica de sellos. La presencia de un PDF no valida un CFDI |
 | Vigencia SAT | Adaptador SOAP con destino HTTPS fijo, desactivado por defecto; autorización expresa para compartir RFC, UUID e importe | Transporte simulado. No se hizo una consulta fiscal real. Consulta de vigencia y verificación criptográfica son comprobaciones distintas |
@@ -66,6 +66,11 @@ Desde Safari en el iPad puedes administrar [Google Cloud Console](https://consol
 6. Reinicia la aplicación. En **Facturación → Conectar Gmail**, elige tu cuenta y revisa los permisos: envío y lectura (`gmail.send` y `gmail.readonly`). El backend almacena los tokens cifrados; no los devuelve al navegador.
 7. Para conectar el buzón de un usuario de Telegram, usa **`/conectar_gmail` desde ese chat** y autoriza el enlace de Google. La cuenta se vincula a ese usuario de Telegram, no al propietario de la sesión web.
 
+La aplicación necesita un único cliente OAuth configurado por el operador. Después,
+cada invitado elige y autoriza su propio Gmail, personal o de Workspace según sus
+permisos de Google. Los tokens y buzones no se comparten. Para esta instalación,
+la redirección que debes registrar es **`https://agente.lilyapp.mx/api/billing/gmail/callback`**.
+
 En el modo de pruebas de Google, los tokens de renovación pueden caducar a los siete días con permisos de Gmail; en ese caso vuelve a conectar. No se crean automáticamente cuentas de Google ni servicios de pago.
 
 **Desconectar Gmail** elimina del agente los tokens de esa cuenta. Para revocar también el permiso otorgado a Google, utiliza las conexiones de terceros en la configuración de tu cuenta de Google.
@@ -105,6 +110,11 @@ Reemplaza `ORIGEN_HTTPS_REAL` por la dirección real, sin rutas. Desde el iPad p
 - `/documentos` permite recuperar un archivo vigente y corregir su tipo. «Es un ticket» corrige el último recibido; no autoriza automáticamente una nueva extracción.
 - Tras la extracción: completa únicamente los campos pendientes que señale el bot, si los hay. El régimen puede elegirse del catálogo; para un nombre pendiente usa `/dato NOMBRE`. Después elige uso de CFDI, escribe el correo y confirma el resumen con **Confirmar y guardar**. Todo se hace en Telegram; **`/perfil`** retoma el paso pendiente sin pedir otra CSF disponible. Se admiten PDF digitales, escaneados y fotos.
 - Envía el ticket para el perfil activo, autoriza su análisis y revisa el correo identificado en el original. Prepara la solicitud y confirma o rechaza su envío.
+- Si hay página/QR de facturación, el bot muestra el enlace y los datos para el
+  portal. Su automatización comercial sigue pendiente. Si solo hay correo de
+  facturación, **Confirmar correo + revisar con CSF** prepara ticket, datos y CSF
+  por elección expresa del usuario. La confirmación final envía una sola vez,
+  siempre que Gmail y el envío estén activados; de otro modo solo muestra borrador.
 - **`/perfiles`** permite elegir perfil. **`/perfil` → Ver o editar perfil** cambia correo o uso de CFDI con una revisión nueva. **Actualizar CSF** prepara el reemplazo de los datos fiscales, sin cambiar el perfil hasta confirmar. Para agregar otro, envía **`/csf`**; **`/csf ID_DEL_PERFIL`** también permite actualizar uno. El borrado sigue disponible con `/eliminar_perfil ID` y su confirmación.
 - **`/tickets`** muestra solicitudes, archivos de factura y botones para consultar el buzón o autorizar el seguimiento.
 - Si el comercio pidió la constancia completa, registra esa petición mediante **`/requiere_csf ID_TICKET descripción de la petición`**. Después **`/preparar_con_csf ID_TICKET`** autoriza incluirla en un borrador; aún debes aprobar el correo final.
