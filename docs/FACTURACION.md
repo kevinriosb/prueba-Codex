@@ -100,7 +100,9 @@ Reemplaza `ORIGEN_HTTPS_REAL` por la dirección real, sin rutas. Desde el iPad p
 
 ### Recorrido en Telegram
 
-- Sin perfil: envía CSF en PDF o fotografía; el bot pide autorización antes de enviarla a OpenAI.
+- El bot pregunta si el archivo es CSF o ticket, salvo que lo indiques con la descripción `/csf` o `/ticket`. Elegir el tipo no autoriza el análisis.
+- Sin perfil: puedes guardar primero el ticket. Quedará pendiente mientras envías la CSF, autorizas su análisis y confirmas el perfil. Después retomas el ticket guardado, sin otra subida.
+- `/documentos` permite recuperar un archivo vigente y corregir su tipo. «Es un ticket» corrige el último recibido; no autoriza automáticamente una nueva extracción.
 - Tras la extracción: elige expresamente un uso de CFDI. **`/usos`** muestra el catálogo. Después introduce el correo de recepción y confirma el resumen con el botón de guardar.
 - Envía el ticket para el perfil activo, autoriza su análisis y revisa el correo identificado en el original. Prepara la solicitud y confirma o rechaza su envío.
 - **`/perfiles`** permite elegir o eliminar perfiles. Para agregar otro, envía una constancia con la descripción **`/csf`**; para actualizar uno utiliza **`/csf ID_DEL_PERFIL`**.

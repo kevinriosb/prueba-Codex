@@ -80,7 +80,7 @@ class BillingService:
 
     def receive_document(self,owner,purpose,data,*,profile_id=None):
         self.require_enabled()
-        if purpose not in {'csf','ticket'}:
+        if purpose not in {'csf','ticket','unclassified'}:
             raise AppError(422,'document_purpose','Indica si el archivo es una constancia o un ticket.')
         if profile_id:
             self.store.get('profile',owner,profile_id)
@@ -88,17 +88,24 @@ class BillingService:
             if not profile_id:
                 raise AppError(409,'fiscal_profile_required','Primero envía tu Constancia de Situación Fiscal y confirma un perfil.')
             self.store.get('profile',owner,profile_id)
-        if self.store.count('document',owner)>=self.settings.billing_max_documents:
-            raise AppError(429,'document_limit','Elimina documentos anteriores antes de subir más archivos.')
         mime,content=inspect_document(data,self.settings.billing_max_upload_bytes)
-        lookup=self.store.digest(f'{purpose}:{profile_id or ""}:'+hashlib.sha256(content).hexdigest())
+        return self._store_document(owner,purpose,mime,base64.b64encode(content).decode(),hashlib.sha256(content).hexdigest(),profile_id)
+
+    def _store_document(self,owner,purpose,mime,encoded,sha256,profile_id,*,source=None):
+        lookup=self.store.digest(f'{purpose}:{profile_id or ""}:'+sha256)
         existing=self.store.find('document',owner,lookup)
         if existing:
             return {'id':existing['id'],'purpose':purpose,'duplicate':True,'expires':existing['_expires']}
-        record=self.store.add('document',owner,{'purpose':purpose,'mime':mime,
-            'data':base64.b64encode(content).decode(),'profile_id':profile_id,
-            'sha256':hashlib.sha256(content).hexdigest(),'analysis_consent':False,'extracted':None},
-            lookup=lookup,expires=time.time()+self.settings.billing_document_retention_hours*3600)
+        payload={'purpose':purpose,'mime':mime,'data':encoded,'profile_id':profile_id,
+            'sha256':sha256,'analysis_consent':False,'extracted':None}
+        if source and source['purpose']=='unclassified':
+            record=self.store.update('document',owner,source['id'],payload)
+            self.store.change_lookup('document',owner,source['id'],lookup)
+        else:
+            if self.store.count('document',owner)>=self.settings.billing_max_documents:
+                raise AppError(429,'document_limit','Elimina documentos anteriores antes de subir más archivos.')
+            record=self.store.add('document',owner,payload,lookup=lookup,
+                expires=min(source['_expires'],time.time()+self.settings.billing_document_retention_hours*3600) if source and source['_expires'] else time.time()+self.settings.billing_document_retention_hours*3600)
         if purpose=='ticket':
             pending={key:None for key in TicketExtraction.model_fields}
             pending.update(profile_id=profile_id,document_id=record['id'],verified_email=None,status=Status.TICKET_RECIBIDO,
@@ -109,6 +116,29 @@ class BillingService:
             record=self.store.update('document',owner,record['id'],record)
         self.store.audit(owner,record['id'],'document_received')
         return {'id':record['id'],'purpose':purpose,'duplicate':False,'expires':record['_expires']}
+
+    def classify_document(self,owner,identifier,purpose,*,profile_id=None):
+        """Clasifica bytes ya validados; no vuelve a subirlos ni llama al modelo.
+
+        Una corrección después de un análisis conserva el intento y crea otro
+        documento tipado, sin reutilizar extracciones de un esquema diferente.
+        """
+        source=self.document(owner,identifier)
+        if purpose not in {'csf','ticket'} or source['purpose'] not in {'unclassified','csf','ticket'}:
+            raise AppError(422,'document_purpose','Solo puedes clasificar una constancia o un ticket propio.')
+        if purpose=='ticket' and not profile_id:
+            raise AppError(409,'fiscal_profile_required','El ticket queda pendiente hasta confirmar un perfil fiscal.')
+        if profile_id:
+            self.store.get('profile',owner,profile_id)
+        result=self._store_document(owner,purpose,source['mime'],source['data'],source['sha256'],profile_id,source=source)
+        target=self.document(owner,result['id'])
+        if target.get('superseded_by') or target.get('intended_purpose'):
+            target.update(superseded_by=None,intended_purpose=None)
+            self.store.update('document',owner,target['id'],target)
+        if result['id']!=source['id']:
+            source.update(superseded_by=result['id'],intended_purpose=None)
+            self.store.update('document',owner,source['id'],source)
+        return result
 
     async def _extract(self,owner,identifier,purpose,consent):
         self.require_enabled()

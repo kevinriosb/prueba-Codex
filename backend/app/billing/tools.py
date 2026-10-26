@@ -32,10 +32,21 @@ def build_billing_tools(billing):
         state=billing.store.find('channel_state',owner,'telegram') if ctx.context.get('channel')=='telegram' else None
         return {'profiles':[{'id':item['id']} for item in billing.store.list('profile',owner)[:10]],
             'tickets':[{'id':item['id'],'status':item['status']} for item in billing.store.list('ticket',owner)[:10]],
-            'documents':[{'id':item['id'],'purpose':item['purpose']} for item in billing.store.list('document',owner)[:10]],
+            'documents':[{'id':item['id'],'purpose':item.get('intended_purpose') or item['purpose'],
+                'awaiting_profile':item.get('intended_purpose')=='ticket'} for item in billing.store.list('document',owner) if not item.get('superseded_by')][:10],
             'active_profile_id':(state or {}).get('active_profile'),
             'last_document_id':(state or {}).get('last_document_id'),
             'last_ticket_id':(state or {}).get('last_ticket_id')}
+
+    @function_tool
+    async def review_received_document(ctx:RunContextWrapper[dict],identifier:str)->dict:
+        """Recupera un archivo propio ya recibido y solicita revisar si es CSF o ticket; no lo analiza."""
+        document=billing.document(ctx.context['user_id'],identifier)
+        if document['purpose'] not in {'csf','ticket','unclassified'}:
+            return {'available':False,'reason':'No es un archivo de CSF o ticket.'}
+        review(ctx,'document_type',identifier)
+        return {'document_id':identifier,'available':True,'purpose':document.get('intended_purpose') or document['purpose'],
+            'type_confirmation_required':True,'analysis_performed':False}
 
     def build(name,description):
         async def action(ctx:RunContextWrapper[dict],identifier:str)->dict:
@@ -44,6 +55,10 @@ def build_billing_tools(billing):
             location='Telegram' if ctx.context.get('channel')=='telegram' else 'Facturación'
             if name=='process_fiscal_certificate':
                 document=billing.document(owner,identifier)
+                if ctx.context.get('channel')=='telegram' and (document['purpose']!='csf' or document.get('intended_purpose') or document.get('superseded_by')
+                        or (document.get('extracted') is not None and not document['extracted'].get('is_fiscal_certificate'))):
+                    review(ctx,'document_type',identifier)
+                    return {'document_id':identifier,'type_confirmation_required':True}
                 if ctx.context.get('channel')=='telegram' and document.get('extracted') is None:
                     review(ctx,'document',identifier)
                     return {'document_id':identifier,'analysis_consent_required':True,'review_in':'Telegram'}
@@ -59,6 +74,9 @@ def build_billing_tools(billing):
                 return {'confirmation_required':True,'review_in':location,'draft_id':identifier}
             if name=='analyze_ticket':
                 document=billing.document(owner,identifier)
+                if ctx.context.get('channel')=='telegram' and (document['purpose']!='ticket' or not document.get('profile_id') or document.get('intended_purpose') or document.get('superseded_by')):
+                    review(ctx,'document_type',identifier)
+                    return {'document_id':identifier,'type_confirmation_required':True}
                 if ctx.context.get('channel')=='telegram' and document.get('extracted') is None:
                     review(ctx,'document',identifier)
                     return {'document_id':identifier,'analysis_consent_required':True,'review_in':'Telegram'}
@@ -91,4 +109,4 @@ def build_billing_tools(billing):
         return function_tool(action,name_override=name,description_override=description,
             timeout=billing.settings.run_timeout_seconds,
             failure_error_function=lambda _ctx,_error:'No se completó la operación fiscal. Revisa el estado y las autorizaciones en Facturación; no repitas envíos automáticamente.')
-    return [billing_workspace]+[build(name,description) for name,description in OPERATIONS.items()]
+    return [billing_workspace,review_received_document]+[build(name,description) for name,description in OPERATIONS.items()]

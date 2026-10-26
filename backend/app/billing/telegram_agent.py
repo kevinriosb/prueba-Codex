@@ -64,7 +64,7 @@ class TelegramAgent:
     async def reply(self, owner, chat_id, *, text=None, approval_id=None, approve=None):
         conversation = self.conversation(owner)
         result = await self.service.execute(conversation['id'], owner, text=text,
-            approval_id=approval_id, approve=approve, channel='telegram')
+            approval_id=approval_id, approve=approve, channel='telegram',channel_context=self.bridge.agent_context(owner))
         message = result['messages'][-1]
         await self.send_text(chat_id, message['content'])
         # Solo eventos creados por herramientas del servidor; nunca JSON del modelo.

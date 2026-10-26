@@ -69,8 +69,17 @@ contenedor: no necesitas instalar el SDK en el Python 3.9 del sistema.
 - `/nuevo` inicia otra conversación; conserva las anteriores y los perfiles.
 - `/conversaciones` permite volver a una anterior. `/eliminar_conversacion ID`
   solicita un botón de confirmación para borrar solo esa conversación propia.
-- Una CSF/foto exige el botón para autorizar su análisis. El perfil se confirma
-  después de elegir uso de CFDI y correo. Un mensaje no sustituye autorizaciones.
+- Al enviar un archivo sin descripción, el bot pregunta **CSF o Ticket** antes
+  de analizarlo. También puedes usar `/csf` o `/ticket` como descripción del
+  archivo. Elegir su tipo no solicita IA; el análisis necesita un botón aparte.
+- Si envías primero el ticket, se guarda cifrado y queda pendiente hasta confirmar
+  el perfil fiscal. Después de guardar el perfil aparece **Continuar con ticket**:
+  utiliza el mismo archivo, sin volver a subirlo, y solicita autorizar su análisis.
+- `/documentos` recupera archivos propios vigentes y permite corregir el tipo.
+  También puedes escribir **«Es un ticket»** para corregir el último archivo.
+  Los archivos conservan su vencimiento original; clasificarlos no amplía el TTL.
+- La CSF se analiza con autorización; el perfil se confirma después de elegir uso
+  de CFDI y correo. Mencionar esos datos en el chat no crea un perfil confirmado.
 - «Prepara el correo de este ticket» solicita el borrador revisable. El botón
   muestra destinatario, contenido y adjuntos; solo su confirmación puede enviarlo.
   Gmail debe estar conectado y el envío habilitado por el operador.
@@ -79,6 +88,11 @@ Se comprobó con Runner real, modelo simulado y servicios ficticios. Esto no
 sustituye la prueba desde tu cuenta. No se reintentan errores automáticamente.
 Durante el alta fiscal puedes preguntar al agente sin elegir automáticamente el
 uso de CFDI ni confirmar el perfil. Los comandos y botones siguen disponibles.
+
+Si un ticket anterior fue tratado como CSF, actualiza el backend y usa
+`/documentos` → archivo → **Es un ticket**. El intento anterior se conserva;
+una extracción con otro esquema requiere una nueva autorización de análisis.
+No se reutilizan los campos extraídos como CSF para inventar los de un ticket.
 
 ## Invitar y retirar personas
 

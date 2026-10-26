@@ -98,6 +98,77 @@ class TelegramBridge:
     def _save_state(self,owner,state):
         return self.billing.store.update('channel_state',owner,state['id'],state)
 
+    def agent_context(self,owner):
+        state=self._state(owner)
+        profiles=self.billing.store.list('profile',owner)
+        documents=[item for item in self.billing.store.list('document',owner)
+            if item['purpose'] in {'csf','ticket','unclassified'} and not item.get('superseded_by')]
+        last=next((item for item in documents if item['id']==state.get('last_document_id')),None)
+        return {'profile_confirmed':bool(profiles),'active_profile_id':state.get('active_profile') if any(item['id']==state.get('active_profile') for item in profiles) else None,
+            'last_document':{'id':last['id'],'purpose':last.get('intended_purpose') or last['purpose'],
+                'awaiting_profile':last.get('intended_purpose')=='ticket'} if last else None,
+            'pending_ticket_count':sum(item.get('intended_purpose')=='ticket' for item in documents)}
+
+    async def _document_choice(self,owner,chat_id,identifier,*,reason=None):
+        document=self.billing.document(owner,identifier)
+        if document['purpose'] not in {'csf','ticket','unclassified'}:
+            raise AppError(422,'document_purpose','Elige un archivo de CSF o ticket recibido en este chat.')
+        await self.client.send(chat_id,(reason+'\n\n' if reason else '')+
+            'El archivo está guardado. ¿Es una Constancia de Situación Fiscal (CSF) o un ticket de compra? Elegir el tipo no lo envía a OpenAI.',
+            [('Es una CSF','dc:'+identifier),('Es un ticket','dt:'+identifier)])
+
+    async def _choose_document(self,owner,chat_id,identifier,purpose,*,profile_id=None):
+        document=self.billing.document(owner,identifier)
+        if document['purpose'] not in {'csf','ticket','unclassified'}:
+            raise AppError(422,'document_purpose','No se puede cambiar el tipo de este archivo.')
+        state=self._state(owner)
+        if purpose=='ticket':
+            profile_id=state.get('active_profile')
+            profiles=self.billing.store.list('profile',owner)
+            if not any(item['id']==profile_id for item in profiles):
+                document['intended_purpose']='ticket'
+                self.billing.store.update('document',owner,identifier,document)
+                state['last_document_id']=identifier
+                self._save_state(owner,state)
+                instruction='Selecciona tu perfil con /perfiles.' if profiles else 'Primero envía tu CSF, elige uso de CFDI y correo, y confirma el perfil con su botón.'
+                await self.client.send(chat_id,'Ticket guardado y pendiente de perfil fiscal. No necesitas volver a subirlo. '+instruction+
+                    ' Al confirmar el perfil te ofreceré continuar con este ticket. /documentos permite recuperarlo mientras esté vigente.')
+                return
+        result=self.billing.classify_document(owner,identifier,purpose,profile_id=profile_id)
+        current=self.billing.document(owner,result['id'])
+        state['last_document_id']=current['id']
+        if current.get('ticket_id'):
+            state['last_ticket_id']=current['ticket_id']
+        self._save_state(owner,state)
+        if purpose=='ticket' and current.get('extracted') is not None:
+            await self._ticket(owner,chat_id,current['ticket_id'])
+            return
+        label='CSF' if purpose=='csf' else 'TICKET'
+        profile_text=''
+        if purpose=='ticket':
+            profile=self.billing.store.get('profile',owner,profile_id)
+            profile_text=' Perfil seleccionado: '+profile['name']+'.'
+        await self.client.send(chat_id,'Documento clasificado como '+label+'.'+profile_text+
+            ' Si autorizas su análisis se enviará a OpenAI y consumirá tokens de tu cuenta. No se enviará a comercios.',
+            [('Autorizar análisis con OpenAI','an:'+current['id'])])
+
+    async def _pending_tickets(self,owner,chat_id):
+        pending=[item for item in self.billing.store.list('document',owner)
+            if item.get('intended_purpose')=='ticket' and not item.get('superseded_by')]
+        if pending:
+            await self.client.send(chat_id,'Estos tickets ya están guardados. Puedes continuar con el perfil activo sin volver a subirlos:',
+                [('Continuar con ticket '+str(index+1),'dt:'+item['id']) for index,item in enumerate(pending[:10])])
+
+    async def _documents(self,owner,chat_id):
+        documents=[item for item in self.billing.store.list('document',owner)
+            if item['purpose'] in {'csf','ticket','unclassified'} and not item.get('superseded_by')]
+        if not documents:
+            await self.client.send(chat_id,'No hay archivos de CSF o ticket disponibles. Los archivos temporales vencen según la política del servidor.')
+            return
+        labels={'csf':'CSF','ticket':'Ticket','unclassified':'Sin clasificar'}
+        await self.client.send(chat_id,'Archivos propios recibidos. Elige uno para revisar o corregir su tipo:',
+            [(labels[item.get('intended_purpose') or item['purpose']]+' · '+item['id'][:8],'dv:'+item['id']) for item in documents[:20]])
+
     async def _ticket(self,owner,chat_id,identifier):
         ticket=self.billing.store.get('ticket',owner,identifier)
         text=f"{ticket.get('merchant') or 'Ticket'}\nFolio: {ticket.get('folio') or 'Ilegible'}\nImporte: {ticket.get('total') or 'Ilegible'}\nEstado: {ticket['status']}\n{ticket.get('note','')}"
@@ -157,9 +228,14 @@ class TelegramBridge:
         elif kind=='ticket':
             await self._ticket(owner,chat_id,identifier)
         elif kind=='document':
-            self.billing.document(owner,identifier)
+            document=self.billing.document(owner,identifier)
+            if document['purpose']=='unclassified' or document.get('intended_purpose')=='ticket' or document.get('superseded_by'):
+                await self._document_choice(owner,chat_id,identifier)
+                return
             await self.client.send(chat_id,'Analizar este documento lo comparte con OpenAI. Revisa y autoriza solo si deseas continuar.',
                 [('Autorizar análisis con OpenAI','an:'+identifier)])
+        elif kind=='document_type':
+            await self._document_choice(owner,chat_id,identifier)
         elif kind=='profile':
             draft=self.billing.store.get('profile_draft',owner,identifier)
             state=self._state(owner)
@@ -225,7 +301,12 @@ class TelegramBridge:
             uuid.UUID(identifier)
         except ValueError:
             raise AppError(422,'telegram_callback','Acción no válida.') from None
-        if prefix in {'go','gd'}:
+        if prefix in {'dc','dt','dv'}:
+            if prefix=='dv':
+                await self._document_choice(owner,chat_id,identifier)
+            else:
+                await self._choose_document(owner,chat_id,identifier,'csf' if prefix=='dc' else 'ticket')
+        elif prefix in {'go','gd'}:
             if not self.agent:
                 raise AppError(503,'telegram_agent','El agente de Telegram no está configurado.')
             if prefix=='go':
@@ -238,8 +319,17 @@ class TelegramBridge:
             await self.agent.decide(owner,chat_id,identifier,prefix=='ga')
         elif prefix=='an':
             document=self.billing.document(owner,identifier)
+            if document['purpose']=='unclassified' or document.get('intended_purpose')=='ticket' or document.get('superseded_by'):
+                await self._document_choice(owner,chat_id,identifier,reason='Primero confirma el tipo y el perfil del archivo; el botón anterior ya no corresponde a su estado actual.')
+                return
             if document['purpose']=='csf':
-                draft=await self.billing.process_fiscal_certificate(owner,identifier,consent=True,replace_profile_id=document.get('profile_id'))
+                try:
+                    draft=await self.billing.process_fiscal_certificate(owner,identifier,consent=True,replace_profile_id=document.get('profile_id'))
+                except AppError as error:
+                    if error.code=='not_fiscal_certificate':
+                        await self._document_choice(owner,chat_id,identifier,reason='El análisis no identificó una CSF. Si es un ticket, corrige aquí el tipo; el archivo sigue guardado.')
+                        return
+                    raise
                 state=self._state(owner)
                 state.update(draft_id=draft['id'],cfdi_use=None)
                 self._save_state(owner,state)
@@ -257,6 +347,7 @@ class TelegramBridge:
             state.update(active_profile=profile['id'],draft_id=None,cfdi_use=None)
             self._save_state(owner,state)
             await self.client.send(chat_id,'Perfil fiscal confirmado y cifrado. Ahora puedes enviar un ticket. /perfiles muestra tus perfiles.')
+            await self._pending_tickets(owner,chat_id)
         elif prefix=='pd':
             self.billing.store.delete('profile_draft',owner,identifier)
             state=self._state(owner)
@@ -299,6 +390,7 @@ class TelegramBridge:
 
     async def _message(self,owner,chat_id,message):
         text=message.get('text','').strip()
+        declaration=text.casefold().strip(' .!¡?¿')
         state=self._state(owner)
         profiles=self.billing.store.list('profile',owner)
         if text in {'/start','/ayuda'}:
@@ -311,6 +403,14 @@ class TelegramBridge:
             await self.agent.history(owner,chat_id)
         elif text=='/conversaciones' and self.agent:
             await self.agent.conversations(owner,chat_id)
+        elif text=='/documentos':
+            await self._documents(owner,chat_id)
+        elif declaration in {'es un ticket','es ticket','es un recibo','/ticket','es una csf','es csf','es una constancia','/csf'}:
+            identifier=state.get('last_document_id')
+            if not identifier:
+                await self.client.send(chat_id,'Elige el archivo recibido con /documentos para indicar su tipo.')
+            else:
+                await self._choose_document(owner,chat_id,identifier,'ticket' if declaration in {'es un ticket','es ticket','es un recibo','/ticket'} else 'csf')
         elif text.startswith('/eliminar_conversacion ') and self.agent:
             identifier=text.split(maxsplit=1)[1]
             self.agent.service.public_conversation(identifier,owner)
@@ -329,6 +429,7 @@ class TelegramBridge:
             state['active_profile']=identifier
             self._save_state(owner,state)
             await self.client.send(chat_id,'Perfil seleccionado para los siguientes tickets.')
+            await self._pending_tickets(owner,chat_id)
         elif text.startswith('/eliminar_perfil '):
             identifier=text.split(maxsplit=1)[1]
             profile=self.billing.store.get('profile',owner,identifier)
@@ -355,20 +456,19 @@ class TelegramBridge:
             await self._preview(owner,chat_id,text.split(maxsplit=1)[1],csf=True)
         elif message.get('document') or message.get('photo'):
             caption=message.get('caption','').strip()
-            purpose='csf' if not profiles or caption.startswith('/csf') else 'ticket'
-            profile_id=state.get('active_profile') if purpose=='ticket' else None
-            if purpose=='csf' and caption.startswith('/csf '):
-                profile_id=caption.split(maxsplit=1)[1]
-            if purpose=='ticket' and not profile_id:
-                raise AppError(409,'fiscal_profile_required','Selecciona un perfil con /perfiles antes de enviar el ticket.')
             attachment=message.get('document') or message['photo'][-1]
             if attachment.get('file_size',0)>self.settings.billing_max_upload_bytes:
                 raise AppError(413,'document_size','El archivo supera el límite permitido.')
             data=await self.client.download(attachment['file_id'])
-            document=self.billing.receive_document(owner,purpose,data,profile_id=profile_id)
+            document=self.billing.receive_document(owner,'unclassified',data)
             state['last_document_id']=document['id']
             self._save_state(owner,state)
-            await self.client.send(chat_id,'Documento recibido y cifrado temporalmente. Si autorizas el análisis, se enviará a OpenAI y aplicarán sus condiciones de tratamiento de datos. No se enviará a comercios. Pulsa el botón solo si autorizas este análisis.', [('Autorizar análisis con OpenAI','an:'+document['id'])])
+            if caption.casefold()=='/ticket':
+                await self._choose_document(owner,chat_id,document['id'],'ticket')
+            elif caption.casefold()=='/csf' or caption.casefold().startswith('/csf '):
+                await self._choose_document(owner,chat_id,document['id'],'csf',profile_id=caption.split(maxsplit=1)[1] if ' ' in caption else None)
+            else:
+                await self._document_choice(owner,chat_id,document['id'])
         elif state.get('draft_id') and ((not state.get('cfdi_use') and text.upper() in CFDI_USES)
                 or (state.get('cfdi_use') and '@' in text)):
             if not state.get('cfdi_use'):

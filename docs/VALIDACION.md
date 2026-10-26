@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **238 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **251 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones.
 
 Se comprobaron:
 
@@ -174,11 +174,30 @@ cifrado al recrear con volumen. La validación de `configure_telegram.py` ejecut
 por stdin dentro de esa imagen pasó con la red desactivada y valores ficticios.
 Los recursos de prueba se eliminaron; no se cambió el VPS.
 
-El bot nuevo todavía debe crearlo el usuario en BotFather, vincular su cuenta y
-aplicar la actualización y el webhook en Termius siguiendo [TELEGRAM.md](TELEGRAM.md).
-No se afirma que exista una conversación real en Telegram comprobada. Gmail,
-envíos, lectura real de documentos, copias de seguridad y pruebas con dos cuentas
-siguen pendientes antes de abrir el piloto a otras personas.
+El usuario creó y vinculó un bot nuevo, aplicó la actualización y registró el
+webhook desde Termius. Compartió tanto la salida de registro correcto como
+capturas de la bienvenida y de una respuesta en lenguaje natural sobre las
+capacidades de facturación. Eso comprueba la conversación por Telegram; no
+demuestra todavía que se haya completado una solicitud de factura. Gmail, envíos,
+copias de seguridad y pruebas con dos cuentas siguen pendientes.
+
+### Corrección del tipo de documento y recuperación de archivos
+
+El usuario mostró un ticket rechazado como CSF y una respuesta que le pedía
+subirlo de nuevo. Se corrigió el supuesto que asignaba CSF a cualquier primer
+archivo sin perfil confirmado. Telegram ahora pregunta el tipo y conserva los
+tickets pendientes mientras se confirma el perfil. Los archivos anteriores se
+pueden recuperar con `/documentos` o una declaración explícita de su tipo.
+
+Trece pruebas con archivos y extracción simulados comprueban selección previa sin
+IA, ticket anterior al perfil y continuación con los mismos bytes, CSF con perfil
+ya existente, recuperación de un archivo antiguo mal clasificado y conservación
+del intento anterior, rechazo de controles de otro usuario, estado real sin campos
+fiscales en el contexto del agente, revisión por herramienta y clasificación
+idempotente sin ampliar el vencimiento. El estado interno sin clasificar no se
+expone como opción de subida en la API web. No se realizaron nuevas extracciones
+de pago ni se utilizó el ticket real del usuario en las pruebas. La corrección
+requiere actualizar y recrear el contenedor en el VPS; no se aplicó por SSH.
 
 - `scripts/hostinger_smoke.py` pasó con la imagen actualizada: configuración de
   producción real, puerto publicado únicamente en loopback, host autorizado,
@@ -196,7 +215,8 @@ Para el virtual host compartido por el usuario se preparó el asistente
 `configure_cyberpanel_proxy.py`. Veinte pruebas comprueban conservación de ACME/TLS,
 rechazo de rutas o reglas existentes, repetición sin duplicar bloques, copia
 privada, ediciones concurrentes detectadas y restauración de archivo/recarga ante
-fallos de validación o salud. Su aplicación real continúa pendiente.
+fallos de validación o salud. Su aplicación por el usuario quedó confirmada por
+la salida del asistente y `/health` por HTTPS compartidos en la conversación.
 
 `scripts/cyberpanel_proxy_smoke.py` pasó con OpenLiteSpeed 1.9.3 real en Docker y
 el backend real sin clave de IA. Se verificaron TLS con una CA ficticia de prueba

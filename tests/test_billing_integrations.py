@@ -216,6 +216,9 @@ def test_telegram_onboarding_consent_callbacks_and_owner_isolation(billing_clien
     assert 'Constancia' in telegram.messages[-1][1]
     update({'document':{'file_id':'csf-demo'}})
     assert extractor.calls==[]
+    choose_csf=telegram.messages[-1][2][0][1]
+    assert choose_csf.startswith('dc:')
+    update(data=choose_csf)
     analyze=telegram.messages[-1][2][0][1]
     submitted=update(data=analyze)
     assert len(extractor.calls)==1

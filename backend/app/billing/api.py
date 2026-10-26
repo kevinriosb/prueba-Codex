@@ -1,5 +1,6 @@
 import base64
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse, Response
@@ -48,7 +49,7 @@ def create_billing_router(payload_base):
         return request.app.state.billing.overview(user['id'])
 
     @router.post('/documents',dependencies=[Depends(check_csrf)])
-    async def upload(request:Request,purpose:str,profile_id:uuid.UUID|None=None,user=Depends(authenticated)):
+    async def upload(request:Request,purpose:Literal['csf','ticket'],profile_id:uuid.UUID|None=None,user=Depends(authenticated)):
         return service(request).receive_document(user['id'],purpose,await request.body(),profile_id=str(profile_id) if profile_id else None)
 
     @router.get('/documents/{identifier}')

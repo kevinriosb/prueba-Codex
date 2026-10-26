@@ -105,6 +105,21 @@ anterior. La primera cuenta se prueba con un código aleatorio enviado a un bot
 nuevo; no se autoriza a la primera persona que escriba. Las invitaciones siguientes
 son cambios manuales por ID realizados desde el servidor, nunca por el modelo.
 
+Los adjuntos de Telegram se almacenan inicialmente como `unclassified`, cifrados
+y sin enviar al modelo. Los botones o la descripción del usuario determinan su
+tipo. Un ticket anterior al perfil permanece pendiente y se recupera cuando el
+usuario confirma su perfil. `classify_document` reutiliza los bytes ya validados:
+no vuelve a descargar, recomprimir o ampliar el TTL. Si se corrige un documento
+que ya tuvo extracción con otro esquema, se conserva el original y su registro
+de consumo y se prepara un documento tipado que requiere nueva autorización.
+Las revisiones y clasificaciones vuelven a comprobar el propietario del archivo.
+
+El agente recibe en su contexto del servidor la presencia de un perfil confirmado
+y los metadatos del archivo activo. No se incluyen sus bytes, RFC, razón social o
+datos de perfil en estas instrucciones. `review_received_document` permite pedir
+la revisión de un archivo guardado, sin fingir que no se recibió ni extraerlo por
+su cuenta. Mencionar régimen o correo en el chat no confirma un perfil fiscal.
+
 El seguimiento periódico requiere habilitación del servidor y consentimiento por ticket para una política acotada. Solo lee Gmail: no envía recordatorios ni consulta al SAT. Conserva sus contadores, se detiene tras tres errores consecutivos o el máximo de consultas y deduplica los avisos de estado. La consulta de vigencia al SAT exige una autorización específica del usuario para RFC/UUID/importe; nunca adjunta la CSF. Coincidencias del XML y vigencia no equivalen a una validación criptográfica de sellos o al esquema XSD completo.
 
 La configuración y los límites detallados están en [FACTURACION.md](FACTURACION.md).

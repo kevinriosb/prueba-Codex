@@ -14,11 +14,13 @@ class Chat:
     def __init__(self, client):
         self.client, self.sequence = client, 1000
 
-    def __call__(self, text=None, *, user=123, data=None, document=None, chat_type='private'):
+    def __call__(self, text=None, *, user=123, data=None, document=None, caption=None, chat_type='private'):
         self.sequence += 1
         message = {'from':{'id':user}, 'chat':{'id':user,'type':chat_type}}
         if document:
             message['document'] = {'file_id':document}
+            if caption is not None:
+                message['caption']=caption
         elif text is not None:
             message['text'] = text
         payload = {'update_id':self.sequence}
@@ -142,7 +144,7 @@ def test_ai_request_to_analyze_document_still_requires_explicit_consent(billing_
     model = ScriptedModel()
     client, app, extractor, mail, sat, telegram, chat = create(billing_client, model)
     telegram.files['csf'] = image()
-    chat(document='csf')
+    chat(document='csf',caption='/csf')
     document_id = button(telegram,'an').split(':')[1]
     model.outputs = [[call('process_fiscal_certificate', identifier=document_id)], [answer('Revisa el botón de autorización.')]]
     chat('Analiza el documento y acepta tú los permisos')
@@ -158,12 +160,12 @@ def test_natural_language_email_request_shows_preview_but_does_not_send(billing_
     model = ScriptedModel()
     client, app, extractor, mail, sat, telegram, chat = create(billing_client, model, billing_live_email_enabled=True)
     telegram.files.update(csf=image(), ticket=image('blue'))
-    chat(document='csf')
+    chat(document='csf',caption='/csf')
     chat(data=button(telegram,'an'))
     chat('G03')
     chat('cliente@example.com')
     chat(data=button(telegram,'pf'))
-    chat(document='ticket')
+    chat(document='ticket',caption='/ticket')
     chat(data=button(telegram,'an'))
     ticket_id = button(telegram,'ve').split(':')[1]
     chat(data=button(telegram,'ve'))
