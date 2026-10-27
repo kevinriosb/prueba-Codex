@@ -20,6 +20,7 @@ from .providers import GmailProvider, normalized_email
 from .receipt import browser_missing_fields, missing_receipt_fields, pending_receipt_fields, purchase_date, purchase_reference, purchase_total, receipt_qr_urls
 from .portal_inspection import PortalInspector, portal_plan
 from .browser import PortalBrowserClient
+from .portal_permissions import PortalPermissions,PortalPermissionRequired
 from .store import BillingStore
 
 
@@ -43,6 +44,7 @@ class BillingService:
             self.portals=tuple(portals)
             self.portal_inspector=PortalInspector(settings)
             self.browser=browser or PortalBrowserClient(settings)
+            self.portal_permissions=PortalPermissions(self)
             self.contacts=official_contacts(settings.billing_verified_contacts_json)
             self.store.purge()
 
@@ -341,8 +343,6 @@ class BillingService:
             'qr_urls':qr_urls,'validation':None,'note':'' if complete else 'Falta completar: '+', '.join(missing_receipt_fields(data))+'.'}
         ticket=self.store.update('ticket',owner,pending['id'],ticket)
         ticket=self._status(owner,ticket,ticket['status'])
-        if ticket.get('billing_url'):
-            ticket=await self.inspect_billing_portal(owner,ticket['id'])
         return public(ticket)|{'channels':self.detect_billing_channels(owner,ticket['id'])}
 
     async def inspect_billing_portal(self,owner,ticket_id):
@@ -350,6 +350,7 @@ class BillingService:
         ticket=self.store.get('ticket',owner,ticket_id)
         if not ticket.get('billing_url'):
             raise AppError(409,'billing_portal','No hay una página de facturación identificada.')
+        self.portal_permissions.require(owner,ticket)
         inspection=await self.portal_inspector.inspect(ticket['billing_url'])
         profile=self.store.get('profile',owner,ticket['profile_id'])
         ticket['portal_inspection']=portal_plan(ticket|profile,inspection)
@@ -358,9 +359,9 @@ class BillingService:
         return ticket
 
     def browser_review(self,owner,ticket_id):
-        self.resolve_ticket(owner,ticket_id)
+        ticket=self.resolve_ticket(owner,ticket_id)
         record=self.store.find('browser_review',owner,self.store.digest('browser:'+ticket_id))
-        if not record:
+        if not record or record.get('scope')!=self.portal_permissions.scope(ticket):
             raise AppError(404,'browser_session','La revisión venció. Inicia otra revisión.')
         return record
 
@@ -370,19 +371,31 @@ class BillingService:
         ticket_id=ticket['id']
         if not ticket.get('billing_url'):
             raise AppError(409,'billing_portal','Primero se necesita una página de facturación identificada.')
+        self.portal_permissions.require(owner,ticket)
         lookup=self.store.digest('browser:'+ticket_id)
         previous=self.store.find('browser_review',owner,lookup)
+        if previous and previous.get('scope')!=self.portal_permissions.scope(ticket):
+            await self.sync_portal_permissions(owner,ticket_id,cancel=True)
+            previous=None
+        if not previous:
+            self.portal_permissions._expire_lookup('browser_review',owner,lookup)
         try:
             if reference:
                 if not previous or previous['snapshot']['observation_id']!=observation_id or reference not in {item['reference'] for item in previous['snapshot']['actions']}:
                     raise AppError(409,'browser_stale','La página cambió. Actualiza la revisión.')
+                action=next(item for item in previous['snapshot']['actions'] if item['reference']==reference)
+                if action.get('permission_origin'):
+                    self.portal_permissions.require(owner,ticket,action['permission_origin'])
+                pending=[target for target in previous['snapshot']['blocked_origins'] if target not in self.portal_permissions.allowed(owner,ticket)]
+                if pending:
+                    raise PortalPermissionRequired(pending)
                 if previous['snapshot']['captcha'] or previous['snapshot']['network_blocked']:
                     raise AppError(409,'browser_intervention','La página requiere intervención humana antes de continuar.')
                 snapshot=await self.browser.act(owner,previous['snapshot']['session_id'],observation_id,reference)
             elif previous:
                 snapshot=await self.browser.observe(owner,previous['snapshot']['session_id'])
             else:
-                snapshot=await self.browser.open(owner,ticket['billing_url'])
+                snapshot=await self.browser.open(owner,ticket['billing_url'],allowed=self.portal_permissions.allowed(owner,ticket))
         except AppError as error:
             ticket['portal_browser_error']={'code':error.code,'message':error.message}
             self.store.update('ticket',owner,ticket_id,ticket)
@@ -397,13 +410,38 @@ class BillingService:
             'purchase_validated':False,'submitted':False}
         ticket['portal_browser_error']=None
         self.store.update('ticket',owner,ticket_id,ticket)
-        payload={'ticket_id':ticket_id,'snapshot':snapshot}
+        payload={'ticket_id':ticket_id,'scope':self.portal_permissions.scope(ticket),'snapshot':snapshot}
         if previous:
             record=self.store.update('browser_review',owner,previous['id'],payload)
         else:
             record=self.store.add('browser_review',owner,payload,lookup=lookup,expires=time.time()+150)
         self.store.audit(owner,ticket_id,'public_browser_observed')
         return record
+
+    async def sync_portal_permissions(self,owner,ticket_id,*,cancel=False):
+        ticket=self.resolve_ticket(owner,ticket_id)
+        record=self.store.find('browser_review',owner,self.store.digest('browser:'+ticket['id']))
+        if not record:
+            return
+        if cancel:
+            try:
+                await self.browser.close_session(owner,record['snapshot']['session_id'])
+            except AppError:
+                pass
+            self.store.delete('browser_review',owner,record['id'])
+            return
+        try:
+            snapshot=await self.browser.allow(owner,record['snapshot']['session_id'],self.portal_permissions.allowed(owner,ticket))
+        except AppError as error:
+            if error.code=='browser_session':
+                self.store.delete('browser_review',owner,record['id'])
+                return
+            raise
+        record['snapshot']=snapshot
+        self.store.update('browser_review',owner,record['id'],record)
+        if (ticket.get('portal_browser_error') or {}).get('code')=='portal_permission':
+            ticket['portal_browser_error']=None
+            self.store.update('ticket',owner,ticket['id'],ticket)
 
     def _status(self,owner,ticket,status,note=''):
         ticket['status']=status
@@ -821,7 +859,7 @@ Saludos.'''
 
     def delete_ticket(self,owner,ticket_id):
         ticket=self.store.get('ticket',owner,ticket_id)
-        for kind in ('email_approval','mail_reply','invoice_uuid'):
+        for kind in ('email_approval','mail_reply','invoice_uuid','portal_permission','portal_grant','browser_review'):
             for record in self.store.list(kind,owner):
                 if record['ticket_id']==ticket_id:
                     if kind=='email_approval' and record['_state']=='claimed':

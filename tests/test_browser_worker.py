@@ -209,7 +209,73 @@ def test_worker_auth_health_no_docs_and_rejects_private_payload_fields(tmp_path)
     with TestClient(create_worker(Manager(),token)) as client:
         assert client.get('/health').status_code==200
         assert client.post('/v1/sessions',json={}).status_code==403
+        assert client.post('/v1/sessions/test/origins',json={}).status_code==403
+        assert client.request('DELETE','/v1/sessions/test',json={'owner':'owner-a'}).status_code==403
         headers={'x-browser-key':token.read_text()}
         assert client.get('/docs',headers=headers).status_code==404
         assert client.post('/v1/sessions',headers=headers,json={
             'owner':'owner-a','url':HOME,'allowed':ALLOWED,'rfc':'not-allowed'}).status_code==422
+
+
+async def test_observed_cross_domain_link_waits_for_backend_permission_without_fetch(browser):
+    manager,pages=browser
+    first=await manager.open('owner-a',HOME,[ALLOWED[0]])
+    action=first['actions'][0]
+    assert action['permission_origin']==ALLOWED[1]
+    assert len(pages.calls)==1 and first['blocked_origins']==[]
+    with pytest.raises(BrowserError,match='browser_origin'):
+        await manager.act('owner-a',first['session_id'],first['observation_id'],action['reference'])
+    assert len(pages.calls)==1
+    with pytest.raises(BrowserError,match='browser_session'):
+        await manager.allow('owner-b',first['session_id'],ALLOWED)
+    current=await manager.allow('owner-a',first['session_id'],ALLOWED)
+    assert len(pages.calls)==1  # Permitir enlace no lo abre por sí solo.
+    assert not current['actions'][0].get('permission_origin')
+    after=await manager.act('owner-a',current['session_id'],current['observation_id'],current['actions'][0]['reference'])
+    assert after['page']==FORM and len(pages.calls)==2
+
+
+async def test_redirect_waits_for_new_domain_permission_instead_of_fetching_or_failing_opaquely(browser):
+    manager,_=browser
+    class RedirectPages(Pages):
+        async def fetch(self,url,headers):
+            if url==HOME:
+                self.calls.append((url,headers))
+                return 302,{'location':FORM},b''
+            return await super().fetch(url,headers)
+    manager.fetcher=pages=RedirectPages({FORM:'<label>Cuenta<input></label>'})
+    first=await manager.open('owner-a',HOME,[ALLOWED[0]])
+    assert first['blocked_origins']==[ALLOWED[1]] and first['network_blocked']
+    assert [url for url,_ in pages.calls]==[HOME]
+    current=await manager.allow('owner-a',first['session_id'],ALLOWED)
+    assert not current['network_blocked'] and current['blocked_origins']==[]
+    assert [url for url,_ in pages.calls]==[HOME,HOME]
+    current=await manager.act('owner-a',current['session_id'],current['observation_id'],current['actions'][0]['reference'])
+    assert current['page']==FORM and current['fields'][0]['label']=='Cuenta'
+    assert [url for url,_ in pages.calls]==[HOME,HOME,FORM]
+
+
+async def test_missing_resource_domain_can_be_granted_but_never_clears_unsafe_post_block(browser):
+    manager,pages=browser
+    pages.pages[HOME]='<script src="https://billing.example/app.js"></script><label>Web ID<input></label>'
+    pages.pages['https://billing.example/app.js']='document.title="Carga autorizada"'
+    first=await manager.open('owner-a',HOME,[ALLOWED[0]])
+    assert first['blocked_origins']==[ALLOWED[1]] and len(pages.calls)==1
+    after=await manager.allow('owner-a',first['session_id'],ALLOWED)
+    assert not after['network_blocked'] and any(url.endswith('app.js') for url,_ in pages.calls)
+    pages.pages[HOME]='<script>fetch("/issue",{method:"POST"}).catch(()=>{})</script>'
+    await manager.sessions[first['session_id']].page.reload(wait_until='networkidle')
+    assert manager.sessions[first['session_id']].unsafe_blocked
+    count=len(pages.calls)
+    blocked=await manager.allow('owner-a',first['session_id'],ALLOWED)
+    assert blocked['network_blocked'] and len(pages.calls)==count
+    assert all('/issue' not in url for url,_ in pages.calls)
+
+
+async def test_close_session_is_owner_bound_and_releases_public_context(browser):
+    manager,pages=browser
+    first=await manager.open('owner-a',HOME,ALLOWED)
+    with pytest.raises(BrowserError,match='browser_session'):
+        await manager.close_session('owner-b',first['session_id'])
+    assert await manager.close_session('owner-a',first['session_id'])=={'closed':True}
+    assert manager.sessions=={} and len(pages.calls)==1

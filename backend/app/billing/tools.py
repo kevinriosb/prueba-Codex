@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 from agents import RunContextWrapper, function_tool
 
 from .models import validate_fiscal
+from .portal_permissions import PortalPermissionRequired
 
 OPERATIONS={
     'process_fiscal_certificate':'Preparar una CSF ya analizada con autorización del usuario. El identificador es de documento.',
@@ -73,7 +74,11 @@ def build_billing_tools(billing):
     def browser_failure(ctx,error):
         try:
             ticket=browser_ticket(ctx)
-            review(ctx,'browser',ticket['id'])
+            if isinstance(error,PortalPermissionRequired):
+                permission=billing.portal_permissions.request(ctx.context['user_id'],ticket['id'],origins=error.origins)
+                review(ctx,'portal_permission',permission['id'])
+            else:
+                review(ctx,'browser',ticket['id'])
         except Exception:
             review(ctx,'ticket_list',None)
         return 'No se completó el paso público. Consulta la revisión guardada; no reinicies el perfil ni inventes resultados.'
@@ -167,6 +172,7 @@ def build_billing_tools(billing):
             if name=='detect_billing_channels':
                 return billing.detect_billing_channels(owner,identifier)
             if name=='inspect_billing_portal':
+                ctx.context['inspected_ticket_id']=billing.resolve_ticket(owner,identifier)['id']
                 ticket=await billing.inspect_billing_portal(owner,identifier)
                 review(ctx,'ticket',identifier)
                 plan=ticket['portal_inspection']
@@ -194,6 +200,12 @@ def build_billing_tools(billing):
                 'sat_verified':bool((ticket.get('validation') or {}).get('sat_verified')),
                 'sat_authorization_required':not bool((ticket.get('validation') or {}).get('sat_verified')),'review_in':location}
         def failure(ctx,_error):
+            if isinstance(_error,PortalPermissionRequired):
+                state=billing.store.find('channel_state',ctx.context['user_id'],'telegram') or {}
+                identifier=ctx.context.get('inspected_ticket_id') or state.get('last_ticket_id')
+                permission=billing.portal_permissions.request(ctx.context['user_id'],identifier,origins=_error.origins,intent='details')
+                review(ctx,'portal_permission',permission['id'])
+                return 'Se requiere el botón de permiso humano antes de abrir el portal.'
             if ctx.context.get('channel')=='telegram':
                 kind='profile_setup' if name in {'process_fiscal_certificate','extract_fiscal_profile','confirm_fiscal_profile'} else 'ticket_list'
                 review(ctx,kind,None)

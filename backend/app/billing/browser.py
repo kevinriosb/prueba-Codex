@@ -23,6 +23,7 @@ class PublicAction(BaseModel):
     reference:str=Field(pattern=r'^[a-f0-9]{8}$')
     label:str=Field(max_length=100)
     kind:str=Field(pattern=r'^(link|expand)$')
+    permission_origin:str|None=Field(default=None,max_length=2048)
 
 
 class Observation(BaseModel):
@@ -51,19 +52,10 @@ class PortalBrowserClient:
     def enabled(self):
         return self.settings.billing_browser_enabled
 
-    def origins(self):
-        try:
-            values=[value.strip() for value in self.settings.billing_browser_origins.split(',') if value.strip()]
-            if not values or len(values)>12:
-                raise ValueError()
-            return sorted({origin(value) for value in values})
-        except (BrowserError,ValueError):
-            raise AppError(503,'browser_configuration','Falta autorizar los dominios de navegación con el operador.') from None
-
     async def close(self):
         await self.client.aclose()
 
-    async def _call(self,path,payload,*,method='POST'):
+    async def _call(self,path,payload,*,method='POST',observation=True):
         if not self.enabled:
             raise AppError(503,'browser_disabled','La navegación aún no está activada por el operador.')
         try:
@@ -80,13 +72,17 @@ class PortalBrowserClient:
                 allowed={'browser_origin','browser_stale','browser_steps','browser_session','browser_busy','browser_intervention'}
                 if data.get('code') in allowed:
                     raise AppError(response.status_code,data['code'],{
-                        'browser_origin':'Ese dominio requiere autorización del operador.',
+                        'browser_origin':'Autoriza ese dominio con el botón Permitir en Telegram.',
                         'browser_stale':'La página cambió. Actualiza la revisión.',
                         'browser_steps':'Se alcanzó el límite de navegación. Revisa los campos encontrados.',
                         'browser_session':'La revisión venció. Inicia otra revisión.',
                         'browser_intervention':'Se bloqueó una operación de la página. Requiere intervención humana.',
                         'browser_busy':'El navegador está ocupado. Intenta más tarde.'}[data['code']])
                 raise ValueError()
+            if not observation:
+                if response.json()!={'closed':True}:
+                    raise ValueError()
+                return None
             observation=Observation.model_validate(response.json()).model_dump(mode='json')
             if not observation['public_only'] or observation['submitted'] or observation['purchase_validated']:
                 raise ValueError()
@@ -98,7 +94,7 @@ class PortalBrowserClient:
         except Exception:
             raise AppError(502,'browser_unavailable','No se pudo revisar la página pública. No se envió información fiscal.') from None
 
-    async def open(self,owner,url):
+    async def open(self,owner,url,*,allowed):
         # Solo mejora HTTP a HTTPS en el mismo hostname; TLS debe ser válido.
         uri=urlsplit(url)
         if uri.scheme=='http' and uri.port in {None,80} and not uri.username and not uri.password:
@@ -107,12 +103,22 @@ class PortalBrowserClient:
         # La fase pública no transmite identificadores incluidos en consultas/fragmentos del ticket.
         url=urlunsplit((uri.scheme,uri.netloc,uri.path or '/','',''))
         try:
-            allowed=self.origins()
+            allowed=sorted({origin(value) for value in allowed})
+            if not allowed or len(allowed)>12:
+                raise BrowserError('browser_origin','Dominio no autorizado.')
             if origin(url) not in allowed:
                 raise BrowserError('browser_origin','Dominio no autorizado.')
         except BrowserError:
-            raise AppError(403,'browser_origin','Ese dominio requiere autorización del operador.') from None
+            raise AppError(403,'browser_origin','Autoriza ese dominio con el botón Permitir en Telegram.') from None
         return await self._call('/v1/sessions',{'owner':owner,'url':url,'allowed':allowed})
+
+    async def allow(self,owner,session_id,allowed):
+        return await self._call('/v1/sessions/'+str(UUID(session_id))+'/origins',
+            {'owner':owner,'allowed':allowed})
+
+    async def close_session(self,owner,session_id):
+        return await self._call('/v1/sessions/'+str(UUID(session_id)),{'owner':owner},
+            method='DELETE',observation=False)
 
     async def act(self,owner,session_id,observation_id,reference):
         try:

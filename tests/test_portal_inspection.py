@@ -11,6 +11,7 @@ from .fake_model import ScriptedModel, answer
 from .test_billing import billing_client, prepare, profile, ticket
 from .test_telegram_agent import button, create, owner
 from .test_telegram_documents import confirm_profile
+from .test_adaptive_browser import grant
 
 
 PAGE='https://f.zetus.mx/albat'
@@ -61,7 +62,11 @@ def test_public_form_is_read_before_plan_and_never_receives_purchase_or_fiscal_d
     inspector=install(app,handler)
     extractor.ticket.update(billing_url=PAGE,account_number='9DEMO42AZC',folio='20379')
     item=ticket(client)
-    plan=item['portal_inspection']
+    assert 'portal_inspection' not in item and requests==[]
+    grant(client,item['id'],intent='details')
+    result=client.post('/api/billing/tickets/'+item['id']+'/inspect-portal')
+    assert result.status_code==200
+    plan=result.json()['portal_inspection']
     assert plan['status']=='verified' and plan['source']=='public_html'
     assert plan['fields']==[{'key':'account_number','label':'Cuenta','value':'9DEMO42AZC','matched':True}]
     assert plan['alternatives'][0]['label']=='Folio'
@@ -176,6 +181,11 @@ def test_telegram_shows_account_and_can_complete_it_without_asking_for_folio(bil
     telegram.files['receipt']=image('red')
     chat(document='receipt')
     chat(data=button(telegram,'an'))
+    action=button(telegram,'bp')
+    chat(data=action)
+    assert '¿Permites revisar este portal?' in telegram.messages[-1][1]
+    chat(data=button(telegram,'wa'))
+    chat('/estado')
     assert 'Portal pide: Cuenta' in telegram.messages[-1][1]
     assert 'Folio: 20379' in telegram.messages[-1][1]
     fill=next(value for _,value in telegram.messages[-1][2] if value.endswith(':account_number'))
@@ -202,6 +212,8 @@ def test_legacy_successful_receipt_can_refresh_missing_account_once_without_dupl
     previous=app.state.billing.document(owner(app),state['last_document_id'])
     previous['extraction_version']='document-previous'
     app.state.billing.store.update('document',owner(app),previous['id'],previous)
+    chat(data=button(telegram,'bp'))
+    chat(data=button(telegram,'wa'))
     chat('/tickets')
     retry=button(telegram,'ra')
     extractor.ticket['account_number']='9DEMO42AZC'

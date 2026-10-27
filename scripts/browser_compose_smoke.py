@@ -28,7 +28,7 @@ def main():
         temporary=Path(directory)
         (temporary/'.env.hostinger').write_text('APP_LOGIN_PASSWORD=fake-compose-test-password\nAI_API_KEY=\n'
             'BILLING_ENCRYPTION_KEY=dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHQ=\n'
-            'BILLING_BROWSER_ORIGINS=https://fixture.example\n')
+            '')
         override=temporary/'override.yaml'
         override.write_text('''services:
   agent:

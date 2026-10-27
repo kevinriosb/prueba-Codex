@@ -28,6 +28,17 @@ class Action(BaseModel):
     reference:str=Field(pattern=r'^[a-f0-9]{8}$')
 
 
+class Permission(BaseModel):
+    model_config=ConfigDict(extra='forbid',hide_input_in_errors=True)
+    owner:str=Field(min_length=1,max_length=100)
+    allowed:list[str]=Field(min_length=1,max_length=12)
+
+
+class Close(BaseModel):
+    model_config=ConfigDict(extra='forbid',hide_input_in_errors=True)
+    owner:str=Field(min_length=1,max_length=100)
+
+
 def create_worker(manager=None,token_file=None):
     token_path=Path(token_file or os.environ.get('BROWSER_TOKEN_FILE','/run/browser-auth/token'))
     manager=manager or BrowserManager()
@@ -77,6 +88,12 @@ def create_worker(manager=None,token_file=None):
     @app.post('/v1/sessions/{identifier}/actions')
     async def act(identifier:str,payload:Action):
         return await manager.act(payload.owner,identifier,payload.observation_id,payload.reference)
+    @app.post('/v1/sessions/{identifier}/origins')
+    async def allow(identifier:str,payload:Permission):
+        return await manager.allow(payload.owner,identifier,payload.allowed)
+    @app.delete('/v1/sessions/{identifier}')
+    async def close(identifier:str,payload:Close):
+        return await manager.close_session(payload.owner,identifier)
     return app
 
 

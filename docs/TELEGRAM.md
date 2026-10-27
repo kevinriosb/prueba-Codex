@@ -146,10 +146,16 @@ contenedor: no necesitas instalar el SDK en el Python 3.9 del sistema.
 - Con página identificada aparece **Ver datos para el portal**: muestra el enlace,
   la compra y tu perfil. La captura en el portal sigue siendo manual; no hay un
   adaptador comercial que emita o solicite automáticamente esa factura.
+- Antes de cualquier visita al portal aparece **Permitir / Cancelar** en este chat.
+  El permiso se guarda por usuario y ticket durante 30 minutos; los botones son de
+  un solo uso. Un dominio nuevo pide otro permiso aquí. Cancelar conserva la CSF y
+  los tickets. Consultar `/estado` no abre el sitio ni consume tokens de IA.
 - Cuenta, Folio, Referencia y Código de facturación se extraen y guardan por
   separado. Antes de mostrar la propuesta, el agente intenta leer los campos del
-  formulario público de una página aprobada. Para Al Bat está aprobada
-  `https://f.zetus.mx/albat`. Esa consulta no envía datos del ticket, RFC o CSF.
+  formulario público después del consentimiento. La inspección HTML antigua tiene
+  una plantilla de Al Bat; el [navegador adaptable](NAVEGACION.md) permite seguir
+  enlaces y descubrir formularios de establecimientos diferentes sin recetas fijas.
+  Esa consulta no envía datos del ticket, RFC o CSF.
   Si el portal pide **Cuenta**, muestra Cuenta; no la rellena silenciosamente con
   el folio. Si falta el valor, permite completarlo o autorizar una lectura nueva
   del archivo anterior a esta versión, sin volver a subirlo.
@@ -157,8 +163,9 @@ contenedor: no necesitas instalar el SDK en el Python 3.9 del sistema.
   captura de una consulta en vivo y muestra folio/referencias como alternativas
   **sin validar**. Leer los campos del formulario no comprueba la cuenta contra
   la base del comercio, no pulsa **Siguiente** y no genera una factura.
-  Otros portales deben registrarse como páginas públicas aprobadas antes de poder
-  consultarlos mediante `BILLING_PORTAL_INSPECTION_URLS`.
+  No necesitas registrar dominios del navegador en la configuración del servidor;
+  autorízalos desde los botones de Telegram. La lista
+  `BILLING_PORTAL_INSPECTION_URLS` corresponde solo a la inspección HTML antigua.
 - Si no hay página y sí un correo explícito de facturación, **Confirmar correo +
   revisar con CSF** prepara una solicitud con ticket, perfil y CSF completa por tu
   elección. Revisa el destinatario en el original y después el borrador completo.

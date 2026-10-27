@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short -x`: **407 pruebas pasadas**, sin fallos ni pruebas omitidas (103,88 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short -x`: **421 pruebas pasadas**, sin fallos ni pruebas omitidas (116,49 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
 
 ### Solicitudes repetidas, perfil persistente y cuotas
 
@@ -465,3 +465,42 @@ recrearlo, con UID 10001 y sin incorporar `.env` ni pruebas en la imagen.
 El transporte HTTP compartido no conserva cookies de respuestas. Se comprobó que
 solo se reenvían las cookies (incluidas HttpOnly) del contexto Chromium propio y
 que dos propietarios reciben y reenvían sesiones distintas en el mismo dominio.
+
+
+## Permisos de portal desde Telegram
+
+Cada usuario autoriza el portal de su ticket con **Permitir / Cancelar**, antes de
+cualquier GET, DNS o apertura de Chromium de ese portal. El análisis de documentos
+con OpenAI mantiene su propio consentimiento independiente. Se retiraron las
+inspecciones automáticas al analizar un ticket y consultar su estado. La lista
+global `BILLING_BROWSER_ORIGINS` ya no concede acceso ni necesita configurarse.
+
+Se verificaron diez casos de consentimiento por canal/API y cuatro casos nuevos
+con Chromium real: enlaces entre dominios sin permiso, permiso posterior,
+redirección retenida antes de descargar el destino, recursos de otro dominio,
+bloqueo persistente de POST y cierre por propietario. Los permisos se ligan por
+HMAC al usuario, ticket, perfil y URL original exacta; duran 30 minutos. Las
+confirmaciones pendientes caducan y son de un solo uso. No hay herramienta del
+modelo que apruebe; escribir «sí» tampoco reemplaza el botón humano.
+
+Las regresiones cubren además CSRF, ID ajeno, URL cambiada, permiso vencido,
+configuración antigua que no omite el consentimiento y cancelación sin perder
+perfil/tickets incluso al alcanzar la cuota de mensajes. Repetir el botón no
+vuelve a ejecutar IA. Se comprobaron 421 pruebas en la suite completa y 33
+pruebas específicas de permisos/navegador tras el ajuste final del contador de
+peticiones. Las páginas y respuestas del modelo son ficticias; no se visitó un
+portal de producción ni se hizo ninguna llamada de IA de pago.
+
+Las redirecciones de documentos se convierten en referencias observadas de un
+paso nuevo para mantener cada GET dentro del filtro de red: Chromium no enruta
+todos los saltos 30x por Playwright. Los recursos script/estilo redirigidos quedan
+para intervención humana en esta fase. La lectura pública no rellena formularios,
+no comparte datos fiscales ni emite facturas.
+
+Las imágenes finales del agente y del navegador se construyeron manteniendo TLS
+y hashes de dependencias. La prueba Docker de Chromium verificó el rechazo de un
+enlace entre dominios antes del permiso y su navegación después de autorizarlo.
+La prueba Compose con ambas imágenes finales confirmó `/health`, autenticación
+privada entre servicios y rechazo de archivos locales. La prueba general de
+persistencia también pasó. Todos los contenedores, redes y volúmenes de estas
+pruebas eran temporales y se retiraron; el VPS del usuario no se modificó.

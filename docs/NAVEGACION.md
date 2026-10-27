@@ -16,8 +16,8 @@ existente es una integración separada con sus propias aprobaciones.
 
 - El VPS ya preparado, Docker y la aplicación existente.
 - Espacio para la imagen de Chromium y hasta 768 MB de RAM para su contenedor.
-- Los dominios HTTPS exactos del comercio y del proveedor de facturación, incluidos
-  los destinos de sus enlaces. Autorizar dominios no configura una receta de clics.
+- El portal indicado en el ticket. Cada usuario lo autoriza desde Telegram; no
+  necesitas conocer de antemano todos los comercios ni editar dominios en Termius.
 - La clave de OpenAI existente: las decisiones de navegación usan el mismo agente,
   modelo y presupuestos. No necesitas otra cuenta ni una clave de navegador.
 
@@ -37,25 +37,36 @@ solo conserva su comportamiento; actualizar GitHub no inicia este servicio.
   set -e
   cd /opt/lilyapp-agent
   git pull --ff-only
-  python3 scripts/configure_browser.py
   docker compose -f compose.hostinger.yaml -f compose.browser.yaml build agent browser
   docker compose -f compose.hostinger.yaml -f compose.browser.yaml up -d --wait --wait-timeout 180
   curl --fail --silent --show-error --max-time 20 https://agente.lilyapp.mx/health
 )
 ```
 
-El asistente pide una lista de dominios, por ejemplo
-`https://comercio.example,https://proveedor.example` (ejemplos ficticios).
-Usa los dominios que hayas comprobado en el ticket y en Safari. Si la página pasa
-a otro dominio, debes autorizar también ese destino. El sitio debe aceptar HTTPS
-con certificado válido, incluso si el ticket imprime HTTP. No se continúa por HTTP.
-No hay comodines ni autorización automática de dominios encontrados en documentos.
+No se configura una lista fija de establecimientos. El bot muestra el dominio del
+ticket y pide **Permitir / Cancelar** antes de abrirlo. Si un enlace o redirección
+lleva a otro dominio, o falta un recurso de otro sitio, pide otro permiso en el
+mismo chat. No se descarga ese destino antes de la aprobación.
+
+El permiso es individual, para ese ticket y su URL de origen exacta, y dura
+30 minutos. La confirmación pendiente dura como máximo 15 minutos; para un dominio
+observado en una página dura lo que reste de la revisión (150 segundos como máximo).
+Los botones son de un solo uso. Cancelar revoca los permisos de esa revisión y
+cierra su navegador, conservando perfil y ticket. Escribir «sí» no pulsa el botón.
+
+Permitir autoriza solo lectura y navegación pública con IA; no autoriza escribir
+el perfil, registrar compras ni emitir facturas. Esos pasos tendrán una aprobación
+separada al implementarse. Cada sitio debe aceptar HTTPS con certificado válido,
+aunque el ticket imprima HTTP. No se continúa por HTTP ni hacia redes privadas.
 Las consultas y fragmentos de la URL inicial no se transmiten en esta fase pública.
 Si un portal depende de esos parámetros, puede requerir una adaptación posterior.
+Las redirecciones se presentan como referencias observadas para un paso posterior;
+no se dejan a Chromium fuera del filtro de red. Un recurso script/estilo redirigido
+requiere intervención en esta fase.
 
-El script cambia únicamente `BILLING_BROWSER_ORIGINS` y guarda una copia privada
-anterior. Conserva la clave de cifrado, credenciales, límites y base de datos.
-Enter sin dominios cancela la secuencia antes de construir o iniciar servicios.
+Las configuraciones antiguas de `BILLING_BROWSER_ORIGINS` ya no se usan y no
+sustituyen el consentimiento. `scripts/configure_browser.py` informa del cambio
+sin editar archivos. Las claves, límites, perfil y base de datos se conservan.
 La primera construcción descarga Chromium y puede tardar varios minutos.
 
 El complemento crea una credencial aleatoria **interna**, sin mostrarla, en un
@@ -66,9 +77,12 @@ usarse juntos en las siguientes actualizaciones para conservar esta activación.
 ## Probar desde Telegram
 
 1. Escribe `/estado` o elige un ticket en `/tickets`.
-2. Pulsa **Revisar portal con IA**. Consume una ejecución de chat con sus límites.
-3. El agente observa la página y puede ejecutar un paso público por mensaje.
-4. Si necesita otro paso, aparece **Continuar revisión con IA**. No se reanuda solo.
+2. Revisa el dominio mostrado y pulsa **Permitir**. Antes de ese botón no se abre
+   el portal; consultar `/estado` o cancelar no usa IA.
+3. La revisión autorizada usa una ejecución de chat con sus límites. El agente
+   observa la página y puede ejecutar un paso público por mensaje.
+4. Un dominio nuevo pide permiso aquí mismo. **Continuar revisión con IA** permite
+   otro paso dentro de la autorización vigente; no se reanuda solo.
 5. Revisa los campos descubiertos y sus alternativas. **Cuenta**, **Folio** y
    **Web ID** se mantienen separados; no se completan entre sí por suposición.
 
@@ -105,7 +119,13 @@ con los portales reales ni se han realizado llamadas nuevas de OpenAI de pago.**
 
 Con autenticación, origen válido y CSRF:
 
-- `POST /api/billing/tickets/{id}/browser`: abre o recupera la revisión propia.
+- `POST /api/billing/tickets/{id}/portal-permissions` con `{}` crea la revisión del
+  permiso. `origins` opcional solo admite dominios realmente observados en el ticket
+  o su última página; nunca una URL inventada por el modelo.
+- `POST /api/billing/portal-permissions/{id}/decision` recibe `{"approve":true}` o
+  `{"approve":false}` tras la decisión humana; registra o revoca el permiso.
+- `POST /api/billing/tickets/{id}/browser`: abre o recupera la revisión propia;
+  devuelve 403 si falta el consentimiento, incluso para la inspección estática.
 - `POST /api/billing/tickets/{id}/browser/actions`: recibe exclusivamente
   `observation_id` y `reference` obtenidos de esa revisión.
 

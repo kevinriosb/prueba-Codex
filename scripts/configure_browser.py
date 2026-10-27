@@ -1,16 +1,8 @@
-"""Autoriza dominios públicos sin cambiar contraseñas, cifrado o cuotas. Python 3.9+."""
+"""Compatibilidad del activador anterior. Los permisos ahora se dan en Telegram."""
 import ipaddress
 import re
 import sys
-from pathlib import Path
 from urllib.parse import urlsplit
-
-if __package__:
-    from .configure_hostinger_telegram import render_variables
-    from .update_openai_key import read_private,write_updated
-else:
-    from configure_hostinger_telegram import render_variables
-    from update_openai_key import read_private,write_updated
 
 
 def domains(value):
@@ -35,19 +27,8 @@ def domains(value):
 
 
 def main():
-    path=Path(__file__).resolve().parents[1]/'.env.hostinger'
-    original,_=read_private(path)
-    print('Autoriza solo los dominios públicos que revisarás. No se envían datos fiscales.')
-    value=input('Dominios HTTPS, separados por coma (Enter cancela): ').strip()
-    if not value:
-        print('Cancelado; configuración conservada.')
-        return 1
-    encoded=domains(value)
-    updated=render_variables(original,{'BILLING_BROWSER_ORIGINS':encoded})
-    backup=write_updated(path,updated,original,label='browser')
-    print('Dominios autorizados: '+encoded)
-    print('Configuración privada guardada'+('; copia anterior: '+backup.name if backup else '; sin cambios')+'.')
-    print('No se reiniciaron servicios ni se llamó a OpenAI o a comercios.')
+    print('Ya no necesitas configurar dominios en Termius. Autoriza cada portal con el botón Permitir en Telegram.')
+    print('Este script no cambió archivos ni reinició servicios. Activa el navegador con compose.browser.yaml.')
 
 
 if __name__=='__main__':

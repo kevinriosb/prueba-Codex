@@ -40,6 +40,13 @@ def create_billing_router(payload_base):
         observation_id:str=Field(pattern=r'^[a-f0-9]{8}$')
         reference:str=Field(pattern=r'^[a-f0-9]{8}$')
 
+    class PortalPermissionRequest(payload_base):
+        origins:list[str]|None=Field(default=None,max_length=12)
+        intent:Literal['browse','details']='browse'
+
+    class PortalPermissionDecision(payload_base):
+        approve:bool=Field(strict=True)
+
     class CertificateRequired(Confirm):
         evidence: str = Field(min_length=10,max_length=1000)
 
@@ -103,6 +110,18 @@ def create_billing_router(payload_base):
     @router.post('/tickets/{identifier}/browser',dependencies=[Depends(check_csrf)])
     async def open_browser(identifier:uuid.UUID,request:Request,user=Depends(authenticated)):
         return public(await service(request).browse_portal(user['id'],str(identifier)))
+
+    @router.post('/tickets/{identifier}/portal-permissions',dependencies=[Depends(check_csrf)])
+    async def request_permission(identifier:uuid.UUID,payload:PortalPermissionRequest,request:Request,user=Depends(authenticated)):
+        record=service(request).portal_permissions.request(user['id'],str(identifier),**payload.model_dump())
+        return public(record)|{'state':record['_state'],'expires':record['_expires']}
+
+    @router.post('/portal-permissions/{identifier}/decision',dependencies=[Depends(check_csrf)])
+    async def decide_permission(identifier:uuid.UUID,payload:PortalPermissionDecision,request:Request,user=Depends(authenticated)):
+        billing=service(request)
+        record=billing.portal_permissions.decide(user['id'],str(identifier),approve=payload.approve)
+        await billing.sync_portal_permissions(user['id'],record['ticket_id'],cancel=not payload.approve)
+        return {'approved':payload.approve,'ticket_id':record['ticket_id'],'purpose':'public_read'}
 
     @router.post('/tickets/{identifier}/browser/actions',dependencies=[Depends(check_csrf)])
     async def browser_action(identifier:uuid.UUID,payload:BrowserAction,request:Request,user=Depends(authenticated)):

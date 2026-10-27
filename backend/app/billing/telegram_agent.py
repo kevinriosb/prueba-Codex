@@ -67,6 +67,8 @@ class TelegramAgent:
             approval_id=approval_id, approve=approve, channel='telegram',channel_context=self.bridge.agent_context(owner))
         message = result['messages'][-1]
         reviews = [event['review'] for event in message['events'] if isinstance(event.get('review'), dict)]
+        if any(review.get('kind')=='portal_permission' for review in reviews):
+            reviews=[review for review in reviews if review.get('kind')!='browser']
         # Una observación seguida de un clic reemplaza la vista anterior del portal.
         browser_reviews=[review for review in reviews if review.get('kind')=='browser']
         if browser_reviews:

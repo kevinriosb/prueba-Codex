@@ -15,6 +15,7 @@ from .receipt import browser_missing_fields, missing_receipt_fields, pending_rec
 from .telegram_agent import TelegramAgent
 from .telegram_profiles import TelegramProfiles, normalized
 from .telegram_requests import REQUEST_TEXTS, TelegramRequests
+from .portal_permissions import PortalPermissionRequired
 
 
 class TelegramClient:
@@ -255,8 +256,6 @@ class TelegramBridge:
         state=self._state(owner)
         state['last_ticket_id']=identifier
         self._save_state(owner,state)
-        if ticket.get('billing_url') and not ticket.get('portal_inspection'):
-            ticket=await self.billing.inspect_billing_portal(owner,identifier)
         text=ticket.get('merchant') or 'Ticket guardado'
         for key,label in [('account_number','Cuenta'),('folio','Folio'),('reference_number','Referencia'),('billing_code','Código de facturación')]:
             if ticket.get(key):
@@ -299,7 +298,12 @@ class TelegramBridge:
             text+='\n'+('Revisión pública disponible; solicitud aún manual.' if self.billing.browser.enabled else 'Portal pendiente de automatizar.')
             buttons.append(('Ver datos para el portal','bp:'+identifier))
             if self.billing.browser.enabled:
-                buttons.append(('Revisar portal con IA','bn:'+identifier))
+                if not self.billing.portal_permissions.allowed(owner,ticket):
+                    permission=self.billing.portal_permissions.request(owner,identifier)
+                    text+='\n¿Permites revisar este portal con IA? Consume tokens. Sin enviar datos fiscales.'
+                    buttons.extend(self._permission_buttons(permission))
+                else:
+                    buttons.append(('Revisar portal con IA','bn:'+identifier))
         elif channels['method']=='email':
             text+='\nFacturación: '+ticket['billing_email']
             if not can_prepare:
@@ -339,6 +343,12 @@ class TelegramBridge:
 
     async def _portal(self,owner,chat_id,identifier):
         current=self.billing.resolve_ticket(owner,identifier)
+        try:
+            self.billing.portal_permissions.require(owner,current)
+        except PortalPermissionRequired:
+            permission=self.billing.portal_permissions.request(owner,current['id'],intent='details')
+            await self._portal_permission(owner,chat_id,permission['id'])
+            return
         if current.get('portal_browser'):
             await self._browser(owner,chat_id,current['id'])
             return
@@ -366,6 +376,40 @@ class TelegramBridge:
             [('rfc','RFC'),('name','Nombre'),('postal_code','CP fiscal'),('fiscal_regime','Régimen'),('cfdi_use','Uso CFDI'),('email','Correo')])
         text+='\nLa captura en este portal sigue siendo manual. No se ha solicitado la factura.'
         await self.client.send(chat_id,text)
+
+    def _permission_buttons(self,permission):
+        return [('Permitir','wa:'+permission['id']),('Cancelar','wx:'+permission['id'])]
+
+    async def _portal_permission(self,owner,chat_id,identifier):
+        permission=self.billing.store.get('portal_permission',owner,identifier)
+        text='¿Permites revisar este portal?\n'+'\n'.join(permission['origins'])
+        text+='\nSolo navegación pública; sin enviar datos fiscales ni facturar.'
+        if permission['intent']=='browse':
+            text+=' La revisión con IA consume tokens.'
+        await self.client.send(chat_id,text,self._permission_buttons(permission))
+
+    async def _run_browser(self,owner,chat_id,identifier):
+        ticket=self.billing.resolve_ticket(owner,identifier)
+        if not self.billing.browser.enabled:
+            raise AppError(503,'browser_disabled','La navegación aún no está activada por el operador.')
+        try:
+            self.billing.portal_permissions.require(owner,ticket)
+        except PortalPermissionRequired:
+            permission=self.billing.portal_permissions.request(owner,ticket['id'])
+            await self._portal_permission(owner,chat_id,permission['id'])
+            return
+        if not self.agent:
+            raise AppError(503,'telegram_agent','El agente de Telegram no está configurado.')
+        state=self._state(owner)
+        state.update(last_ticket_id=ticket['id'],browser_ticket_id=ticket['id'])
+        self._save_state(owner,state)
+        try:
+            await self.agent.reply(owner,chat_id,text='Revisa el portal público del ticket seleccionado. Observa sus controles, realiza como máximo un paso de navegación permitido y muestra el estado. No introduzcas datos ni solicites facturas.')
+        except AppError as error:
+            if error.code not in {'agent_turn_limit','tool_limit','run_timeout'}:
+                raise
+            await self.client.send(chat_id,'Revisión pausada por el límite de ejecución.')
+            await self._browser(owner,chat_id,ticket['id'])
 
     async def _browser(self,owner,chat_id,identifier):
         ticket=self.billing.resolve_ticket(owner,identifier)
@@ -396,9 +440,13 @@ class TelegramBridge:
         if snapshot['captcha']:
             text+='\nEl sitio requiere CAPTCHA; intervención humana.'
         if snapshot['blocked_origins']:
-            text+='\nDominios pendientes de autorización:\n'+'\n'.join(snapshot['blocked_origins'])
+            text+='\n¿Permites revisar estos dominios?\n'+'\n'.join(snapshot['blocked_origins'])
         text+='\nRevisar con IA consume tokens. No se enviaron datos fiscales ni se solicitó la factura.'
         buttons=[]
+        pending=[target for target in snapshot['blocked_origins'] if target not in self.billing.portal_permissions.allowed(owner,ticket)]
+        if pending:
+            permission=self.billing.portal_permissions.request(owner,ticket['id'],origins=pending)
+            buttons.extend(self._permission_buttons(permission))
         missing=browser_missing_fields(ticket)
         if missing and not ticket.get('delivery'):
             labels={'web_id':'Web ID','toll_station':'caseta','lane':'carril','purchase_time':'hora',
@@ -478,6 +526,8 @@ class TelegramBridge:
             await self.requests.show(owner,chat_id)
         elif kind=='browser':
             await self._browser(owner,chat_id,identifier)
+        elif kind=='portal_permission':
+            await self._portal_permission(owner,chat_id,identifier)
         elif kind=='document':
             document=self.billing.document(owner,identifier)
             if document['purpose']=='unclassified' or document.get('intended_purpose')=='ticket' or document.get('superseded_by'):
@@ -518,7 +568,7 @@ class TelegramBridge:
         plain=normalized(message.get('text',''))
         callback_data=callback.get('data','')
         control=(not callback and not (message.get('document') or message.get('photo'))
-            and plain in REQUEST_TEXTS|{'/tickets','/limites'}) or (isinstance(callback_data,str) and callback_data.startswith('ts:'))
+            and plain in REQUEST_TEXTS|{'/tickets','/limites'}) or (isinstance(callback_data,str) and callback_data.startswith(('ts:','wx:')))
         kind='channel_control' if control else 'channel_update'
         today=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
         with self.billing.database.connection() as conn:
@@ -636,19 +686,16 @@ class TelegramBridge:
         elif prefix=='bp':
             await self._portal(owner,chat_id,identifier)
         elif prefix=='bn':
-            ticket=self.billing.resolve_ticket(owner,identifier)
-            if not self.billing.browser.enabled:
-                raise AppError(503,'browser_disabled','La navegación aún no está activada por el operador.')
-            state=self._state(owner)
-            state.update(last_ticket_id=ticket['id'],browser_ticket_id=ticket['id'])
-            self._save_state(owner,state)
-            try:
-                await self.agent.reply(owner,chat_id,text='Revisa el portal público del ticket seleccionado. Observa sus controles, realiza como máximo un paso de navegación permitido y muestra el estado. No introduzcas datos ni solicites facturas.')
-            except AppError as error:
-                if error.code not in {'agent_turn_limit','tool_limit','run_timeout'}:
-                    raise
-                await self.client.send(chat_id,'Revisión pausada por el límite de ejecución.')
-                await self._browser(owner,chat_id,ticket['id'])
+            await self._run_browser(owner,chat_id,identifier)
+        elif prefix in {'wa','wx'}:
+            permission=self.billing.portal_permissions.decide(owner,identifier,approve=prefix=='wa')
+            await self.billing.sync_portal_permissions(owner,permission['ticket_id'],cancel=prefix=='wx')
+            if prefix=='wx':
+                await self.client.send(chat_id,'Revisión cancelada. Tu perfil y ticket se conservan.')
+            elif permission['intent']=='details':
+                await self._portal(owner,chat_id,permission['ticket_id'])
+            else:
+                await self._run_browser(owner,chat_id,permission['ticket_id'])
         elif prefix=='pf':
             await self.profiles.confirm(owner,chat_id,identifier)
         elif prefix=='pd':

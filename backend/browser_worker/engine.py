@@ -3,6 +3,7 @@ import os
 import secrets
 import time
 import uuid
+from html import escape
 from dataclasses import dataclass, field
 from urllib.parse import urljoin
 
@@ -47,6 +48,7 @@ class Session:
     size:int=0
     blocked:set=field(default_factory=set)
     network_blocked:bool=False
+    unsafe_blocked:bool=False
 
 
 class BrowserManager:
@@ -93,14 +95,14 @@ class BrowserManager:
                 return
             url=https_url(request.url)
             target=origin(url)
-            if target not in session.allowed:
-                session.blocked.add(target)
-                raise ValueError()
             if request.method!='GET' or request.resource_type not in {'document','script','stylesheet','xhr','fetch'}:
                 raise ValueError()
             session.requests+=1
             if session.requests>60:
                 raise ValueError()
+            if target not in session.allowed:
+                await self._permission_block(session,route,url)
+                return
             status,headers,body=await self.fetcher.fetch(url,await request.all_headers())
             session.size+=len(body)
             if session.size>6_291_456:
@@ -108,13 +110,33 @@ class BrowserManager:
             if 'location' in headers:
                 target_url=secure_link(urljoin(url,headers['location']))
                 if origin(target_url) not in session.allowed:
-                    session.blocked.add(origin(target_url))
-                    raise ValueError()
-                headers['location']=target_url
+                    await self._permission_block(session,route,target_url)
+                    return
+                # Chromium no enruta todos los saltos 30x por Playwright. Convertirlos
+                # en una referencia observada garantiza que cada GET use el filtro.
+                if request.resource_type=='document':
+                    await self._redirect_page(route,target_url)
+                    return
+                raise ValueError()  # Recurso redirigido: intervención, sin salida directa.
             await route.fulfill(status=status,headers=headers,body=body)
         except Exception:
             session.network_blocked=True
+            session.unsafe_blocked=True
             await route.abort('blockedbyclient')
+
+    async def _permission_block(self,session,route,url):
+        session.blocked.add(origin(url))
+        session.network_blocked=True
+        if route.request.resource_type=='document':
+            await self._redirect_page(route,url)
+        else:
+            await route.abort('blockedbyclient')
+
+    async def _redirect_page(self,route,url):
+        # Sin meta-refresh ni JS: el siguiente paso requiere una referencia nueva.
+        await route.fulfill(status=200,content_type='text/html',body=
+            '<!doctype html><title>Continuar navegación</title><a href="'+escape(url,quote=True)+
+            '">Continuar al portal de facturación</a>')
 
     async def open(self,owner,url,allowed):
         if self.open_lock.locked():
@@ -182,18 +204,19 @@ class BrowserManager:
                 captcha=captcha or result['captcha']
                 fields.extend(result['fields'])
                 for item in result['actions']:
+                    permission_origin=None
                     if item['kind']=='link':
                         try:
                             url=secure_link(item['url'])
                             if origin(url) not in session.allowed:
-                                session.blocked.add(origin(url))
-                                continue
+                                permission_origin=origin(url)
                             item['url']=url
                         except BrowserError:
                             continue
                     reference=secrets.token_hex(4)
                     session.actions[reference]=(frame,item)
-                    actions.append({'reference':reference,'label':item['label'],'kind':item['kind']})
+                    actions.append({'reference':reference,'label':item['label'],'kind':item['kind'],
+                        **({'permission_origin':permission_origin} if permission_origin else {})})
         return {'session_id':identifier,'observation_id':session.observation,'page':public_page(session.page.url),
             'title':title,'fields':fields[:24],'actions':actions[:24],'captcha':captcha,
             'blocked_origins':sorted(session.blocked)[:12],'network_blocked':session.network_blocked,
@@ -209,7 +232,10 @@ class BrowserManager:
                 raise BrowserError('browser_intervention','Se bloqueó una solicitud de la página. Requiere intervención.')
             if session.steps>=self.max_steps:
                 raise BrowserError('browser_steps','La revisión alcanzó su límite de navegación. Requiere revisión humana.')
-            frame,item=session.actions.pop(reference)
+            frame,item=session.actions[reference]
+            if item['kind']=='link' and origin(item['url']) not in session.allowed:
+                raise BrowserError('browser_origin','Autoriza el nuevo dominio antes de abrirlo.',403)
+            session.actions.pop(reference)
             session.observation=''
             session.steps+=1  # Consumir ANTES del clic: no se reintenta por fallos.
             if item['kind']=='link':
@@ -220,3 +246,24 @@ class BrowserManager:
                     raise BrowserError('browser_stale','El control cambió. Revisa la página nuevamente.')
                 await locator.click(timeout=4000)
             return await self._observe(identifier,session)
+
+    async def allow(self,owner,identifier,allowed):
+        session=await self.get(owner,identifier)
+        async with session.lock:
+            allowed={origin(value) for value in allowed}
+            if not allowed or len(allowed)>12 or not session.allowed<=allowed:
+                raise BrowserError('browser_origin','Permisos de revisión no válidos.',403)
+            session.allowed=allowed
+            if session.blocked and session.blocked<=allowed and not session.unsafe_blocked:
+                session.blocked.clear()
+                session.network_blocked=False
+                # Recargar solo la página ya autorizada; nunca enviar formularios.
+                await session.page.reload(wait_until='domcontentloaded',timeout=8000)
+            return await self._observe(identifier,session)
+
+    async def close_session(self,owner,identifier):
+        session=await self.get(owner,identifier)
+        async with session.lock:
+            self.sessions.pop(identifier,None)
+            await session.context.close()
+        return {'closed':True}

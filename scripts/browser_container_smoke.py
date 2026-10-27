@@ -17,18 +17,24 @@ CHECK=r'''
 import asyncio,os
 from pathlib import Path
 from backend.browser_worker.engine import BrowserManager
+from backend.browser_worker.policy import BrowserError
 assert os.getuid()==10001
 assert not any(os.environ.get(key) for key in ('AI_API_KEY','OPENAI_API_KEY','BILLING_ENCRYPTION_KEY','APP_LOGIN_PASSWORD'))
 assert not Path('/app/.env').exists() and not Path('/data/agent.sqlite3').exists()
 class Pages:
  async def fetch(self,url,headers):
-  content='<a href="https://fixture.example/form">Facturación</a>' if url.endswith('/') else '<label>Cuenta<input></label>'
+  content='<a href="https://provider.example/form">Facturación</a>' if url.endswith('/') else '<label>Cuenta<input></label>'
   return 200,{'content-type':'text/html; charset=utf-8'},content.encode()
  async def close(self):pass
 async def run():
  manager=BrowserManager(fetcher=Pages())
  try:
   first=await manager.open('test-owner','https://fixture.example/',['https://fixture.example'])
+  assert first['actions'][0]['permission_origin']=='https://provider.example'
+  try:await manager.act('test-owner',first['session_id'],first['observation_id'],first['actions'][0]['reference'])
+  except BrowserError as error:assert error.code=='browser_origin'
+  else:raise AssertionError('Navegó sin consentimiento del nuevo dominio.')
+  first=await manager.allow('test-owner',first['session_id'],['https://fixture.example','https://provider.example'])
   second=await manager.act('test-owner',first['session_id'],first['observation_id'],first['actions'][0]['reference'])
   assert second['fields'][0]['label']=='Cuenta'
   assert not second['submitted'] and not second['purchase_validated']
@@ -41,7 +47,7 @@ print('PASS: Chromium sin privilegios, páginas simuladas y ningún dato fiscal 
 def main():
     root=Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix='browser-compose-') as directory:
-        Path(directory,'.env.hostinger').write_text('APP_LOGIN_PASSWORD=fake-test-only-password\nBILLING_BROWSER_ORIGINS=https://fixture.example\n')
+        Path(directory,'.env.hostinger').write_text('APP_LOGIN_PASSWORD=fake-test-only-password\n')
         config=json.loads(docker('compose','--project-directory',directory,
             '-f',str(root/'compose.hostinger.yaml'),'-f',str(root/'compose.browser.yaml'),'config','--format','json'))
         worker=config['services']['browser']

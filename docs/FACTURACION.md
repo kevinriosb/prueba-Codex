@@ -123,7 +123,9 @@ Reemplaza `ORIGEN_HTTPS_REAL` por la dirección real, sin rutas. Desde el iPad p
   facturación, **Confirmar correo + revisar con CSF** prepara ticket, datos y CSF
   por elección expresa del usuario. La confirmación final envía una sola vez,
   siempre que Gmail y el envío estén activados; de otro modo solo muestra borrador.
-- Antes de mostrar datos del portal, intenta leer el formulario público aprobado
+- Antes de abrir un portal pide **Permitir / Cancelar** en Telegram. El permiso es
+  individual y por ticket; un dominio nuevo necesita otro botón de aprobación.
+  No hay que registrar cada establecimiento en Termius. Tras autorizar, intenta leer el formulario público
   y distingue **Cuenta**, **Folio**, **Referencia** y **Código**. Si la consulta no
   es concluyente, las alternativas se identifican como no validadas. La consulta
   no busca la cuenta en el comercio ni emite la factura. El formulario de Al Bat

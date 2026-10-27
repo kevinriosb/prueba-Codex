@@ -70,6 +70,8 @@ def test_portal_ticket_shows_url_and_owned_fiscal_data_without_claiming_invoice(
     chat(data=action,user=456)
     assert FISCAL['rfc'] not in telegram.messages[-1][1]
     chat(data=action)
+    assert '¿Permites revisar este portal?' in telegram.messages[-1][1]
+    chat(data=button(telegram,'wa'))
     assert all(value in telegram.messages[-1][1] for value in (FISCAL['rfc'],FISCAL['name'],'G03',TICKET['folio']))
     assert 'No se ha solicitado la factura' in telegram.messages[-1][1]
     assert mail.sent==sat.calls==[]

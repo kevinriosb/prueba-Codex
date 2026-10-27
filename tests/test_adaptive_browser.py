@@ -27,7 +27,7 @@ class FakeBrowser:
     enabled=True
     def __init__(self):
         self.calls=[]
-    async def open(self,owner,url):
+    async def open(self,owner,url,*,allowed=None):
         self.calls.append(('open',owner,url))
         return snapshot(actions=[{'reference':'bbbbbbbb','label':'Facturación','kind':'link'}])
     async def act(self,owner,session,observed,reference):
@@ -37,7 +37,19 @@ class FakeBrowser:
     async def observe(self,owner,session):
         self.calls.append(('observe',owner,session))
         return snapshot(actions=[{'reference':'eeeeeeee','label':'Facturación','kind':'link'}],observed='dddddddd')
+    async def allow(self,owner,session,allowed):
+        self.calls.append(("allow",owner,session,allowed))
+        return snapshot(actions=[{"reference":"eeeeeeee","label":"Facturación","kind":"link"}],observed="dddddddd")
+    async def close_session(self,owner,session):
+        self.calls.append(("close",owner,session))
     async def close(self): pass
+
+
+def grant(client,identifier,*,origins=None,intent='browse'):
+    response=client.post('/api/billing/tickets/'+identifier+'/portal-permissions',json={'origins':origins,'intent':intent})
+    assert response.status_code==200,response.json()
+    result=client.post('/api/billing/portal-permissions/'+response.json()['id']+'/decision',json={'approve':True})
+    assert result.status_code==200,result.json()
 
 
 def test_real_agents_sdk_observes_and_chooses_public_link_without_fiscal_values(billing_client):
@@ -51,7 +63,7 @@ def test_real_agents_sdk_observes_and_chooses_public_link_without_fiscal_values(
     telegram.files['receipt']=image('red')
     chat(document='receipt');chat(data=button(telegram,'an'))
     before=len(telegram.messages)
-    chat(data=button(telegram,'bn'))
+    chat(data=button(telegram,'wa'))
     assert [item[0] for item in browser.calls]==['open','act']
     assert len(telegram.messages)==before+1  # Solo la observación más reciente.
     assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
@@ -67,6 +79,8 @@ def test_browser_api_is_owned_csrf_protected_and_does_not_take_arbitrary_operati
     item=ticket(client)
     path='/api/billing/tickets/'+item['id']+'/browser'
     assert client.post(path,headers={'X-CSRF-Token':'wrong'}).status_code==403
+    assert client.post(path).status_code==403 and browser.calls==[]
+    grant(client,item['id'])
     result=client.post(path)
     assert result.status_code==200 and len(browser.calls)==1
     stale=client.post(path+'/actions',json={'observation_id':'aaaaaaaa','reference':'dddddddd'})
@@ -83,7 +97,7 @@ def test_browser_controls_cannot_open_another_telegram_users_ticket(billing_clie
     confirm_profile(telegram,chat)
     extractor.ticket['billing_url']='https://merchant.example/'
     telegram.files['receipt']=image('red');chat(document='receipt');chat(data=button(telegram,'an'))
-    chat(data=button(telegram,'bn'),user=456)
+    chat(data=button(telegram,'wa'),user=456)
     assert browser.calls==[] and 'no encontrado' in telegram.messages[-1][1]
 
 
@@ -101,14 +115,14 @@ def test_navigation_disabled_by_default_without_spawning_browser_or_charging_ai(
 
 def test_browser_domain_failure_is_shown_without_an_expensive_retry_loop(billing_client):
     class Denied(FakeBrowser):
-        async def open(self,owner,url):
+        async def open(self,owner,url,*,allowed=None):
             raise AppError(403,'browser_origin','Ese dominio requiere autorización del operador.')
     model=ScriptedModel([[call('portal_browser_observe')],[answer('Revisa el dominio.')]])
     client,app,extractor,mail,sat,telegram,chat=create(billing_client,model,browser=Denied())
     confirm_profile(telegram,chat)
     extractor.ticket['billing_url']='https://merchant.example/'
     telegram.files['receipt']=image('red');chat(document='receipt');chat(data=button(telegram,'an'))
-    chat(data=button(telegram,'bn'))
+    chat(data=button(telegram,'wa'))
     assert 'requiere autorización' in telegram.messages[-1][1]
     assert all(not value.startswith('bn:') for _,value in telegram.messages[-1][2])
     assert len(model.inputs)==2 and len(extractor.calls)==2
@@ -130,7 +144,7 @@ def test_discovered_optional_alternative_can_be_completed_without_making_it_univ
 
 def test_public_select_options_do_not_expand_model_context_or_token_cost(billing_client):
     class VerboseBrowser(FakeBrowser):
-        async def open(self,owner,url):
+        async def open(self,owner,url,*,allowed=None):
             result=snapshot(fields=[{'key':'cfdi_use','label':'Uso CFDI '+str(index),'required':False,
                 'kind':'select','options':['option-not-for-model-'+str(option) for option in range(25)]}
                 for index in range(24)])
@@ -141,7 +155,7 @@ def test_public_select_options_do_not_expand_model_context_or_token_cost(billing
     confirm_profile(telegram,chat)
     extractor.ticket['billing_url']='https://merchant.example/'
     telegram.files['receipt']=image('red');chat(document='receipt');chat(data=button(telegram,'an'))
-    chat(data=button(telegram,'bn'))
+    chat(data=button(telegram,'wa'))
     serialized=json.dumps(model.inputs,ensure_ascii=False)
     assert 'option-not-for-model-' not in serialized
     assert 'receipt-path-not-for-model' not in serialized
@@ -158,18 +172,18 @@ async def test_worker_client_sends_no_purchase_or_fiscal_values_and_validates_sc
         requests.append(request)
         return httpx2.Response(200,json=snapshot(fields=[{'label':'Web ID','required':False,'kind':'input','options':[]}]))
     settings=Settings(_env_file=None,app_login_password='test-only-password-123',
-        billing_browser_enabled=True,billing_browser_origins='https://merchant.example',billing_browser_token_file=token)
+        billing_browser_enabled=True,billing_browser_token_file=token)
     browser=PortalBrowserClient(settings,client=httpx2.AsyncClient(transport=httpx2.MockTransport(transport)))
     try:
-        result=await browser.open('opaque-owner','http://merchant.example/')
+        result=await browser.open('opaque-owner','http://merchant.example/',allowed=['https://merchant.example'])
         assert result['fields'][0]['key']=='web_id'
         assert json.loads(requests[0].content)=={'owner':'opaque-owner','url':'https://merchant.example/','allowed':['https://merchant.example']}
         assert requests[0].headers['x-browser-key']==token.read_text()
         assert FISCAL['rfc'] not in requests[0].content.decode()
-        await browser.open('opaque-owner','https://merchant.example/?ticket=not-to-forward#secret-fragment')
+        await browser.open('opaque-owner','https://merchant.example/?ticket=not-to-forward#secret-fragment',allowed=['https://merchant.example'])
         assert json.loads(requests[-1].content)['url']=='https://merchant.example/'
         with pytest.raises(AppError,match='browser_origin'):
-            await browser.open('opaque-owner','https://not-approved.example/')
+            await browser.open('opaque-owner','https://not-approved.example/',allowed=['https://merchant.example'])
         assert len(requests)==2
     finally:
         await browser.close()
