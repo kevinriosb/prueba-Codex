@@ -115,6 +115,39 @@ Las pruebas locales usan Chromium real con páginas ficticias y el SDK real con
 respuestas de modelo programadas. **No se ha probado la navegación de producción
 con los portales reales ni se han realizado llamadas nuevas de OpenAI de pago.**
 
+## Si aparece «No se pudo revisar la página pública»
+
+Ese mensaje no identifica por sí solo si falló la comunicación interna, Chromium,
+DNS, TLS o el servidor del comercio. No implica que la CSF o el ticket sean ilegibles.
+Antes de repetir una ejecución de IA, usa el diagnóstico desde Termius:
+
+```bash
+(
+  set -e
+  cd /opt/lilyapp-agent
+  git pull --ff-only
+  docker compose -f compose.hostinger.yaml -f compose.browser.yaml exec -T agent python - --component connection < scripts/check_browser.py
+  read -r -p "Dirección del portal del ticket: " portal_url
+  docker compose -f compose.hostinger.yaml -f compose.browser.yaml exec -T browser python - --component portal --url "$portal_url" < scripts/check_browser.py
+)
+```
+
+No requiere reconstruir imágenes ni reiniciar servicios: el script nuevo se pasa
+por stdin a los contenedores existentes. El primer paso verifica `/health` y la
+credencial interna mediante una URL local que se rechaza **antes de abrir páginas**.
+Si este paso falla, se detiene el bloque; primero hay que restablecer la conexión
+entre servicios. El segundo paso arranca Chromium con una página ficticia, sin
+comercios, y comprueba un único GET HTTPS del portal indicado. No usa OpenAI,
+documentos, perfil fiscal ni identificadores de la compra. Elimina consultas y
+fragmentos del enlace y no sigue redirecciones; muestra solo el dominio del destino.
+Nunca desactiva TLS ni permite IPs privadas para hacer pasar la comprobación.
+
+Los resultados distinguen DNS, certificado, tiempo de espera, conexión rechazada,
+estado HTTP y arranque local de Chromium. No imprimen cuerpos de las páginas,
+excepciones, cookies ni claves. Un HTTP 200 solo confirma que respondió la dirección;
+no valida el ticket ni garantiza que el formulario sea compatible. La comprobación
+no modifica perfiles, tickets, cuotas, credenciales o configuración de la aplicación.
+
 ## API para extender la interfaz web
 
 Con autenticación, origen válido y CSRF:

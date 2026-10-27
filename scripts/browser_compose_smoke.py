@@ -52,6 +52,16 @@ def main():
             if result.returncode:
                 raise RuntimeError('Falló la comunicación privada de prueba; no se muestran credenciales.')
             print(result.stdout.strip())
+            diagnostic=(root/'scripts/check_browser.py').read_text()
+            internal=subprocess.run(command+['exec','-T','agent','python','-','--component','connection'],
+                input=diagnostic,text=True,capture_output=True)
+            if internal.returncode or 'Autenticación interna: correcta.' not in internal.stdout:
+                raise RuntimeError('El diagnóstico por stdin no confirmó la comunicación; salida privada omitida.')
+            chromium=subprocess.run(command+['exec','-T','browser','python','-','--component','portal',
+                '--url','file:///diagnostic-not-opened'],input=diagnostic,text=True,capture_output=True)
+            if chromium.returncode!=1 or 'local correctos' not in chromium.stdout or 'dirección no permitida' not in chromium.stdout:
+                raise RuntimeError('El diagnóstico por stdin de Chromium no pasó; no se muestran detalles internos.')
+            print('PASS: diagnóstico por stdin en ambas imágenes existentes, sin navegar a comercios ni llamar a IA.')
         finally:
             compose('down','--volumes','--remove-orphans')  # Solo el proyecto aleatorio de prueba.
     print('PASS: stack Compose saludable y recursos ficticios eliminados; ninguna llamada de IA.')

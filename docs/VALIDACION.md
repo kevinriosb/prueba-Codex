@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short -x`: **421 pruebas pasadas**, sin fallos ni pruebas omitidas (116,49 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
+Resultado de la última ejecución completa de `.venv/bin/python -m pytest -q --tb=short -x`: **421 pruebas pasadas**, sin fallos ni pruebas omitidas (116,49 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
 
 ### Solicitudes repetidas, perfil persistente y cuotas
 
@@ -504,3 +504,36 @@ La prueba Compose con ambas imágenes finales confirmó `/health`, autenticació
 privada entre servicios y rechazo de archivos locales. La prueba general de
 persistencia también pasó. Todos los contenedores, redes y volúmenes de estas
 pruebas eran temporales y se retiraron; el VPS del usuario no se modificó.
+
+
+## Diagnóstico de apertura del portal sin IA
+
+La captura del propietario mostró «No se pudo revisar la página pública» después
+del permiso. Esa salida es genérica y no permite atribuir la causa a DNS, TLS,
+conexión interna, arranque de Chromium o respuesta del comercio. No se afirmó
+haber identificado o corregido la causa de producción desde este entorno.
+
+Se añadió `scripts/check_browser.py`, ejecutable por stdin dentro de las imágenes
+existentes. No cambia el código del servicio en ejecución ni necesita reconstruir
+o reiniciar contenedores. Verifica la autenticación agente/navegador con una URL
+local que debe rechazarse antes de navegar; por separado prueba Chromium con una
+página ficticia y un único GET HTTPS del portal. No sigue redirecciones, envía
+datos fiscales, modifica cuotas/configuración ni llama a OpenAI. Los errores se
+clasifican con mensajes fijos sin imprimir excepciones, claves, cookies o cuerpos.
+
+Pasaron **30 pruebas específicas**: credencial interna correcta/rechazada, servicio
+inesperado, volumen ausente, fallos DNS/TLS/timeout/conexión incluso envueltos en
+excepciones, estados HTTP, redirecciones no seguidas, URLs privadas/credenciales
+rechazadas y Chromium real con una página local sin red pública. No se volvió a
+ejecutar la suite completa del servicio: esta entrega añade solo un diagnóstico
+administrativo y sus comprobaciones, sin modificar backend, frontend o despliegue.
+
+`scripts/browser_compose_smoke.py` comprobó el script nuevo por stdin dentro de
+las dos imágenes existentes, con secretos y proyecto ficticios. Confirmó conexión
+y autenticación internas, arranque de Chromium y rechazo de una URL no permitida,
+sin acceder a un comercio ni llamar a IA. Eliminó sus contenedores/redes/volúmenes.
+
+La causa del fallo real sigue pendiente de la salida del diagnóstico en el VPS.
+La resolución de nombres desde este entorno de desarrollo tampoco respondió para
+los tres dominios públicos contrastados; no se usa eso como evidencia de que el
+portal esté caído. El servidor del propietario puede tener una ruta DNS distinta.
