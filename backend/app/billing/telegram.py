@@ -415,14 +415,16 @@ class TelegramBridge:
             record=None
         choice=state.get('browser_choice') or {}
         selected=choice.get('label') if choice.get('ticket_id')==ticket['id'] and choice.get('scope')==self.billing.portal_permissions.scope(ticket) and choice.get('expires',0)>time.time() else None
-        action=matching_brand(ticket,record['snapshot'],label=selected) if record else None
+        # Solo retoma una elección explícita del usuario tras autorizar su destino.
+        # Continuar con IA debe dejar investigar al agente, no imponer un logo.
+        action=matching_brand(ticket,record['snapshot'],label=selected) if record and selected else None
         if action:
             await self._brand(owner,chat_id,ticket['id'],record['snapshot']['observation_id'],action['reference'])
             return
         if not self.agent:
             raise AppError(503,'telegram_agent','El agente de Telegram no está configurado.')
         try:
-            await self.agent.reply(owner,chat_id,text='Revisa el portal público del ticket seleccionado. Observa sus controles, realiza como máximo un paso de navegación permitido y muestra el estado. No introduzcas datos ni solicites facturas.')
+            await self.agent.reply(owner,chat_id,text='Investiga el acceso de facturación del ticket seleccionado según la página actual. Decide entre los controles observados, avanza como máximo un paso y reevalúa el resultado. No introduzcas datos ni solicites facturas.')
         except AppError as error:
             if error.code not in {'agent_turn_limit','tool_limit','run_timeout'}:
                 raise
@@ -485,7 +487,7 @@ class TelegramBridge:
         brands=brand_options(snapshot) if not has_billing_form(snapshot) and not snapshot['captcha'] and not snapshot['network_blocked'] and not awaiting_form else []
         preferred=matching_brand(ticket,snapshot)
         if brands:
-            text+='\nElige la marca del ticket.'
+            text+='\nPuedes elegir la marca o continuar la revisión con IA.'
         if snapshot['captcha']:
             text+='\nEl sitio requiere CAPTCHA; intervención humana.'
         needs_resources=bool(pending) and (awaiting_form or snapshot['network_blocked'] or not (snapshot['fields'] or snapshot['actions']))
@@ -514,7 +516,7 @@ class TelegramBridge:
                 source=None
             if source and source.get('extraction_version')!=EXTRACTION_VERSION:
                 buttons.append(('Autorizar lectura de datos faltantes','ra:'+source['id']))
-        if not choices and snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot['network_blocked']:
+        if snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot['network_blocked']:
             buttons.append(('Continuar revisión con IA','bn:'+ticket['id']))
         buttons.append(('Ver estado del ticket','ts:'+ticket['id']))
         await self.client.send(chat_id,text,buttons)

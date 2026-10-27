@@ -116,7 +116,7 @@ def build_billing_tools(billing):
 
     @function_tool(failure_error_function=browser_failure,timeout=15)
     async def portal_browser_navigate(ctx:RunContextWrapper[dict],observation_id:str,reference:str)->dict:
-        """Sigue UN enlace público o despliega UNA opción observada. Usa sus referencias exactas. Sin selectores, código, rellenado ni envío de formularios."""
+        """Sigue UN enlace público o despliega UNA opción observada. Devuelve la nueva página para reevaluarla, con referencias nuevas. Sin selectores, código, rellenado ni envío."""
         ticket=browser_ticket(ctx)
         record=await billing.browse_portal(ctx.context['user_id'],ticket['id'],
             observation_id=observation_id,reference=reference)

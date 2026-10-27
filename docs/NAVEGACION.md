@@ -6,6 +6,14 @@ No hay una secuencia fija por comercio. Los nombres de campos se relacionan con
 conceptos de los documentos: Cuenta, Folio, Referencia, Web ID, caseta, carril,
 fecha y hora. Un campo desconocido queda para revisión humana.
 
+Las instrucciones de investigación son las mismas en web y Telegram: observar
+la página actual, elegir un control útil y reevaluar el resultado de cada acción.
+Un menú, selector de marcas, enlace directo o alternativa son posibilidades, no
+una secuencia obligatoria. Un formulario ya visible se revisa directamente.
+El bot no pide elegir marca por ver un único logo, aunque se repita en el pie.
+No se mantiene una receta por dominio; guardar una liga conserva un punto de
+entrada confirmado, no los pasos ni las autorizaciones de otro ticket.
+
 Esta entrega **no rellena formularios, no busca la compra con sus identificadores,
 no envía el perfil fiscal, no inicia sesión y no solicita o emite facturas**.
 Registrar tickets, introducir los datos fiscales, aprobar la operación, enviar
@@ -100,9 +108,12 @@ ni hacer otra lectura con IA. También reconoce destinos literales observados de
 `window.open`, `location.href` y `location.assign/replace`; no ejecuta el JavaScript
 de esos manejadores. Los manejadores complejos o ambiguos quedan para intervención.
 
-Telegram muestra **Abrir marca**. Si la coincidencia con el comercio del ticket es
-única, puede elegirse con los controles nativos, sin otra llamada de IA. Si hay
-ambigüedad, el usuario elige entre las marcas observadas. Antes de abrir un dominio
+Cuando se observan varias marcas distintas, Telegram muestra **Abrir marca** y
+mantiene **Continuar revisión con IA** para investigar otros accesos. La
+coincidencia con el comercio se puede destacar, pero continuar con IA no pulsa
+ese logo por una regla fija. El usuario puede elegir el control nativo sin otra
+llamada de IA. Si hay ambigüedad, el agente pide una elección concreta.
+Antes de abrir un dominio
 nuevo sigue apareciendo **Permitir / Cancelar**. El destino siempre procede de la
 página actual; ni el usuario del modelo ni el modelo pueden inventar una URL de
 navegación mediante la herramienta. Una ventana nueva se abre en el mismo contexto

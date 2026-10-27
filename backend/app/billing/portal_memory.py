@@ -26,7 +26,7 @@ def same_brand_label(left,right):
     first,second=brand_key(left),brand_key(right)
     if first==second:
         return True
-    # Palabras completas: Dominos coincide con «Domino’s Pizza», no con «Dom».
+    # Comparar palabras completas del nombre, nunca prefijos de otra marca.
     def contains(words,expected):
         return len(expected)>=4 and any(''.join(words[start:end])==expected
             for start in range(len(words)) for end in range(start+1,len(words)+1))
@@ -38,8 +38,10 @@ def has_billing_form(snapshot):
 
 
 def brand_options(snapshot):
-    return [item for item in snapshot['actions'] if item.get('brand') and brand_key(item.get('label')) not in
+    options=[item for item in snapshot['actions'] if item.get('brand') and brand_key(item.get('label')) not in
         {'','facebook','instagram','twitter','x','youtube','linkedin','tiktok','inicio','home'}]
+    # Un logo aislado (o repetido en la cabecera/pie) no es un selector de marcas.
+    return options if len({brand_key(item['label']) for item in options})>=2 else []
 
 
 def matching_brand(ticket,snapshot,*,label=None):
@@ -48,7 +50,7 @@ def matching_brand(ticket,snapshot,*,label=None):
     expected=brand_key(label or ticket.get('merchant'))
     if len(expected)<3:
         return None
-    if not label and len({brand_key(item['label']) for item in brand_options(snapshot)})<2:
+    if not label and not brand_options(snapshot):
         return None
     candidates=[item for item in snapshot['actions'] if item.get('label') and brand_key(item['label'])==expected]
     if not candidates:

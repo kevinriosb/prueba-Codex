@@ -621,3 +621,27 @@ del formulario con su parámetro público de marca. El stack Compose pasó salud
 autenticación interna y el diagnóstico por stdin con ambas imágenes finales.
 Todos sus contenedores, redes y volúmenes de prueba se eliminaron. No se modificó
 el VPS ni se desplegó desde este entorno.
+
+## Investigación del portal sin una secuencia obligatoria
+
+Las instrucciones de navegación se comparten ahora entre web y Telegram. El
+agente debe observar el estado actual y reevaluar el resultado de cada acción;
+enlace, menú, marca, alternativa y formulario son posibilidades, no etapas fijas.
+Se conserva el límite de un paso público por mensaje. Guardar un enlace recuerda
+un punto de entrada confirmado, sin reutilizar permisos ni asumir el diseño.
+
+Se corrigió la presentación de marcas: un logo aislado, incluso duplicado, no
+obliga a elegir marca. Los accesos por marca mantienen la opción de investigar
+con IA; continuar no pulsa automáticamente un logo. Una elección explícita del
+usuario puede retomarse tras autorizar su destino, como antes.
+
+Las regresiones usan el SDK real con respuestas programadas y páginas simuladas:
+portal sin logos, logo único, logo repetido, varios logos con un acceso fiscal
+alternativo y formulario directo desde web. Comprueban referencias actualizadas,
+política compartida, reutilización del perfil y ausencia de envíos fiscales.
+No prueban el razonamiento de un modelo remoto ni la compatibilidad de todos los
+portales reales. Esta revisión no realizó llamadas de IA de pago ni despliegues.
+
+Pasaron **515 pruebas de la suite completa** (132,21 segundos), sin fallos ni
+omisiones, y la comprobación de sintaxis y espacios del cambio. No se modificaron
+el worker, las dependencias ni los archivos Docker/Compose en esta revisión.
