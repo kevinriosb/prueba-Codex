@@ -88,7 +88,8 @@ def build_billing_tools(billing):
         result={key:snapshot[key] for key in ('observation_id','steps_remaining','captcha','network_blocked',
             'public_only','purchase_validated','submitted')}
         result['site']=urlsplit(snapshot['page']).hostname
-        result['blocked_domains']=bool(snapshot['blocked_origins'])
+        result['blocked_domains']=bool(snapshot['blocked_origins']) and snapshot['network_blocked']
+        result['optional_resources_pending']=bool(snapshot['blocked_origins']) and not snapshot['network_blocked']
         result['fields']=[{'label':item['label'][:60],'key':item.get('key'),'required':item['required']}
             for item in snapshot['fields'][:12]]
         result['actions']=[{'reference':item['reference'],'label':item['label'][:60],'kind':item['kind']}

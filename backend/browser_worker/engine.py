@@ -9,7 +9,7 @@ from urllib.parse import urljoin
 
 from playwright.async_api import async_playwright
 
-from .policy import BrowserError, PublicFetcher, https_url, origin, public_page, secure_link
+from .policy import BrowserError, PublicFetcher, https_url, origin, public_page, secure_link, tracking_url
 
 
 # Código fijo del servidor. El modelo solo elige referencias observadas, nunca JS.
@@ -18,16 +18,25 @@ SNAPSHOT = r'''() => {
  const labelText=e=>{const c=e.cloneNode(true);c.querySelectorAll('input,select,textarea,script,style').forEach(x=>x.remove());return c.textContent;};
  const label=e=>((e.labels&&Array.from(e.labels).map(labelText).join(' '))||e.getAttribute('aria-label')||e.innerText||e.getAttribute('placeholder')||e.getAttribute('name')||e.id||'').replace(/\s+/g,' ').trim().slice(0,100);
  const fields=Array.from(document.querySelectorAll('input,select,textarea')).filter(e=>visible(e)&&!e.disabled&&!['hidden','password','file','submit','button','reset'].includes(e.type)).slice(0,24).map(e=>({label:label(e),kind:e.tagName.toLowerCase(),required:!!e.required,options:e.tagName==='SELECT'?Array.from(e.options).slice(0,25).map(o=>o.text.slice(0,70)):[]}));
- const actions=[];
+ const candidates=[];
+ let scanned=0;
  for(const e of document.querySelectorAll('a[href],summary,[aria-expanded],[role="tab"],[data-bs-toggle="collapse"],[data-toggle="collapse"]')) {
-  if(!visible(e)||e.disabled||actions.length>=16) continue;
+  if(++scanned>800) break;
+  if(!visible(e)||e.disabled) continue;
   const href=e.tagName==='A'?e.getAttribute('href'):null;
   const expand=e.tagName==='SUMMARY'||e.hasAttribute('aria-expanded')||e.getAttribute('role')==='tab'||e.getAttribute('data-bs-toggle')==='collapse'||e.getAttribute('data-toggle')==='collapse';
   if(e.closest('form')&&!expand) continue;
   if(!expand&&(!href||href.startsWith('#'))) continue;
+  const text=label(e);
+  const priority=/factur|invoic|billing|cfdi/i.test(text+' '+(href||''))?1:0;
+  candidates.push({e,label:text,kind:expand?'expand':'link',url:expand?null:e.href,priority});
+ }
+ const actions=[];
+ for(const item of candidates.sort((a,b)=>b.priority-a.priority).slice(0,24)) {
   const id='nav-'+Math.random().toString(36).slice(2,12);
+  const e=item.e;
   e.setAttribute('data-public-nav-ref',id);
-  actions.push({selector:id,label:label(e),kind:expand?'expand':'link',url:expand?null:e.href});
+  actions.push({selector:id,label:item.label,kind:item.kind,url:item.url});
  }
  return {title:document.title.slice(0,120),fields,actions,captcha:!!document.querySelector('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],[class*="g-recaptcha"],[class*="h-captcha"]')};
 }'''
@@ -89,7 +98,12 @@ class BrowserManager:
 
     async def _route(self,session,route):
         request=route.request
+        main_document=False
         try:
+            main_document=request.resource_type=='document' and request.frame==session.page.main_frame
+            if not main_document and tracking_url(request.url):
+                await route.abort('blockedbyclient')
+                return
             if request.method=='GET' and request.resource_type in {'image','font','media','other'}:
                 await route.abort('blockedbyclient')
                 return
@@ -99,18 +113,23 @@ class BrowserManager:
                 raise ValueError()
             session.requests+=1
             if session.requests>60:
+                session.unsafe_blocked=True
                 raise ValueError()
             if target not in session.allowed:
-                await self._permission_block(session,route,url)
+                await self._permission_block(session,route,url,main_document=main_document)
                 return
             status,headers,body=await self.fetcher.fetch(url,await request.all_headers())
             session.size+=len(body)
             if session.size>6_291_456:
+                session.unsafe_blocked=True
                 raise ValueError()
             if 'location' in headers:
                 target_url=secure_link(urljoin(url,headers['location']))
                 if origin(target_url) not in session.allowed:
-                    await self._permission_block(session,route,target_url)
+                    if not main_document and tracking_url(target_url):
+                        await route.abort('blockedbyclient')
+                    else:
+                        await self._permission_block(session,route,target_url,main_document=main_document)
                     return
                 # Chromium no enruta todos los saltos 30x por Playwright. Convertirlos
                 # en una referencia observada garantiza que cada GET use el filtro.
@@ -120,14 +139,17 @@ class BrowserManager:
                 raise ValueError()  # Recurso redirigido: intervención, sin salida directa.
             await route.fulfill(status=status,headers=headers,body=body)
         except Exception:
-            session.network_blocked=True
-            session.unsafe_blocked=True
+            # Un script/estilo auxiliar puede fallar sin impedir enlaces visibles.
+            # La navegación principal, métodos de escritura y límites sí detienen.
+            if main_document or request.method!='GET' or session.unsafe_blocked:
+                session.network_blocked=True
+                session.unsafe_blocked=True
             await route.abort('blockedbyclient')
 
-    async def _permission_block(self,session,route,url):
+    async def _permission_block(self,session,route,url,*,main_document):
         session.blocked.add(origin(url))
-        session.network_blocked=True
-        if route.request.resource_type=='document':
+        if main_document:
+            session.network_blocked=True
             await self._redirect_page(route,url)
         else:
             await route.abort('blockedbyclient')
@@ -208,6 +230,8 @@ class BrowserManager:
                     if item['kind']=='link':
                         try:
                             url=secure_link(item['url'])
+                            if tracking_url(url):
+                                continue
                             if origin(url) not in session.allowed:
                                 permission_origin=origin(url)
                             item['url']=url

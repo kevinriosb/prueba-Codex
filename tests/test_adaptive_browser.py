@@ -203,3 +203,61 @@ def test_operator_domain_configuration_is_explicit_and_private_destinations_reje
 
 def test_operator_domain_configuration_normalizes_without_secret_changes():
     assert domains('https://Merchant.example/, https://billing.example')=='https://merchant.example,https://billing.example'
+
+
+def test_pending_auxiliary_resource_does_not_block_sdk_navigation_or_trigger_unneeded_permission(billing_client):
+    class OptionalResource(FakeBrowser):
+        async def open(self,owner,url,*,allowed=None):
+            result=await super().open(owner,url,allowed=allowed)
+            result['blocked_origins']=['https://cdn.example']
+            return result
+    browser=OptionalResource()
+    model=ScriptedModel([[call('portal_browser_observe')],
+        [call('portal_browser_navigate',observation_id='aaaaaaaa',reference='bbbbbbbb')],
+        [answer('Cuenta disponible.')]])
+    client,app,extractor,mail,sat,telegram,chat=create(billing_client,model,browser=browser)
+    confirm_profile(telegram,chat)
+    extractor.ticket['billing_url']='https://merchant.example/'
+    telegram.files['receipt']=image('red');chat(document='receipt');chat(data=button(telegram,'an'))
+    start=len(telegram.messages)
+    chat(data=button(telegram,'wa'))
+    assert [item[0] for item in browser.calls]==['open','act']
+    assert len(telegram.messages)==start+1 and 'Cuenta: Pendiente' in telegram.messages[-1][1]
+    assert all('cdn.example' not in message[1] for message in telegram.messages[start:])
+    assert not any(value.startswith('wa:') for _,value in telegram.messages[-1][2])
+    assert mail.sent==sat.calls==[] and len(extractor.calls)==2
+
+
+def test_optional_resource_permission_is_offered_only_when_no_useful_controls_were_found(billing_client):
+    class EmptyPage(FakeBrowser):
+        async def open(self,owner,url,*,allowed=None):
+            result=snapshot()
+            result['blocked_origins']=['https://cdn.example']
+            return result
+    model=ScriptedModel([[call('portal_browser_observe')],[answer('Revisa el recurso pendiente.')]])
+    client,app,extractor,mail,sat,telegram,chat=create(billing_client,model,browser=EmptyPage())
+    confirm_profile(telegram,chat)
+    extractor.ticket['billing_url']='https://merchant.example/'
+    telegram.files['receipt']=image('red');chat(document='receipt');chat(data=button(telegram,'an'))
+    chat(data=button(telegram,'wa'))
+    assert '¿Permites cargar estos recursos del sitio?' in telegram.messages[-1][1]
+    assert 'https://cdn.example' in telegram.messages[-1][1] and button(telegram,'wa')
+    assert mail.sent==sat.calls==[]
+
+
+def test_saved_review_resumes_after_worker_restart_under_existing_human_permission(billing_client):
+    class Restarted(FakeBrowser):
+        async def observe(self,owner,session):
+            self.calls.append(('observe',owner,session))
+            raise AppError(404,'browser_session','La revisión venció.')
+    browser=Restarted()
+    client,app,extractor,*_=billing_client(browser=browser)
+    extractor.ticket['billing_url']='https://merchant.example/'
+    item=ticket(client)
+    grant(client,item['id'])
+    path='/api/billing/tickets/'+item['id']+'/browser'
+    assert client.post(path).status_code==200
+    resumed=client.post(path)
+    assert resumed.status_code==200 and [item[0] for item in browser.calls]==['open','observe','open']
+    assert app.state.database.usage('owner')['runs']==0
+    assert len(app.state.billing.store.list('profile','owner'))==1

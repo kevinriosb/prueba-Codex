@@ -7,6 +7,19 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx2
 
 
+# Recursos de medición/publicidad, no portales ni bibliotecas de formularios.
+# Comparar límites del hostname evita incluir dominios que solo imitan el nombre.
+TRACKING_HOSTS=frozenset({'googletagmanager.com','google-analytics.com','doubleclick.net'})
+
+
+def tracking_url(value):
+    try:
+        host=(urlsplit(value).hostname or '').lower().rstrip('.')
+    except (TypeError,ValueError):
+        return False
+    return any(host==root or host.endswith('.'+root) for root in TRACKING_HOSTS)
+
+
 class BrowserError(Exception):
     def __init__(self, code, message, status=409):
         self.code,self.message,self.status=code,message,status

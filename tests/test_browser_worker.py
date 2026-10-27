@@ -279,3 +279,79 @@ async def test_close_session_is_owner_bound_and_releases_public_context(browser)
         await manager.close_session('owner-b',first['session_id'])
     assert await manager.close_session('owner-a',first['session_id'])=={'closed':True}
     assert manager.sessions=={} and len(pages.calls)==1
+
+
+@pytest.mark.parametrize('url,expected',[
+    ('https://www.googletagmanager.com/gtm.js?id=FAKE',True),
+    ('https://region1.google-analytics.com/g/collect',True),
+    ('https://stats.g.doubleclick.net/collect',True),
+    ('https://googletagmanager.com.evil.example/script.js',False),
+    ('https://notgoogletagmanager.com/script.js',False),
+    ('https://ajax.googleapis.com/jquery.js',False),
+    ('https://www.google.com/recaptcha/api.js',False),
+    ('https://billing.example/form',False),
+])
+def test_tracking_host_filter_uses_hostname_boundaries_without_blocking_functional_providers(url,expected):
+    from backend.browser_worker.policy import tracking_url
+    assert tracking_url(url) is expected
+
+
+async def test_tracking_scripts_never_fetch_or_request_permission_and_billing_footer_is_prioritized(browser):
+    manager,pages=browser
+    pages.pages[HOME]='''<script src="https://www.googletagmanager.com/gtm.js?id=FAKE"></script>
+      <script>fetch('https://region1.google-analytics.com/g/collect',{method:'POST',body:'fake'}).catch(()=>{})</script>'''
+    pages.pages[HOME]+=''.join('<a href="https://merchant.example/page/'+str(index)+'">Información '+str(index)+'</a>' for index in range(40))
+    pages.pages[HOME]+='<footer><a href="https://billing.example/form">Facturación electrónica</a></footer>'
+    first=await manager.open('owner-a',HOME,[ALLOWED[0]])
+    assert [url for url,_ in pages.calls]==[HOME]
+    assert first['blocked_origins']==[] and not first['network_blocked']
+    assert not manager.sessions[first['session_id']].unsafe_blocked
+    assert first['actions'][0]['label']=='Facturación electrónica'
+    assert first['actions'][0]['permission_origin']==ALLOWED[1]
+    current=await manager.allow('owner-a',first['session_id'],ALLOWED)
+    after=await manager.act('owner-a',current['session_id'],current['observation_id'],current['actions'][0]['reference'])
+    assert after['page']==FORM and after['fields'][0]['label']=='Cuenta'
+    assert [url for url,_ in pages.calls]==[HOME,FORM]
+
+
+async def test_even_previously_approved_tracking_resources_are_omitted_without_blocking_navigation(browser):
+    manager,pages=browser
+    pages.pages[HOME]='<script src="https://www.googletagmanager.com/gtm.js"></script><a href="/form">Facturar</a>'
+    first=await manager.open('owner-a',HOME,[*ALLOWED,'https://www.googletagmanager.com'])
+    assert not first['network_blocked'] and first['blocked_origins']==[]
+    assert [url for url,_ in pages.calls]==[HOME]
+
+
+async def test_ancillary_unapproved_resource_does_not_block_an_observed_link_on_approved_domain(browser):
+    manager,pages=browser
+    pages.pages[HOME]='<script src="https://cdn.example/ui.js"></script><a href="/form">Facturación</a>'
+    pages.pages['https://merchant.example/form']='<label>Folio<input></label>'
+    first=await manager.open('owner-a',HOME,[ALLOWED[0]])
+    assert first['blocked_origins']==['https://cdn.example']
+    assert not first['network_blocked'] and [url for url,_ in pages.calls]==[HOME]
+    after=await manager.act('owner-a',first['session_id'],first['observation_id'],first['actions'][0]['reference'])
+    assert after['fields'][0]['label']=='Folio' and not after['network_blocked']
+    assert all('cdn.example' not in url for url,_ in pages.calls)
+
+
+async def test_failed_auxiliary_stylesheet_does_not_force_human_intervention(browser):
+    manager,_=browser
+    class FailedStyle(Pages):
+        async def fetch(self,url,headers):
+            if url.endswith('.css'):
+                raise httpx2.ConnectTimeout('not-to-print')
+            return await super().fetch(url,headers)
+    manager.fetcher=pages=FailedStyle({HOME:'<link rel="stylesheet" href="/optional.css"><a href="/form">Facturación</a>',
+        'https://merchant.example/form':'<label>Cuenta<input></label>'})
+    first=await manager.open('owner-a',HOME,ALLOWED)
+    assert not first['network_blocked']
+    after=await manager.act('owner-a',first['session_id'],first['observation_id'],first['actions'][0]['reference'])
+    assert after['fields'][0]['label']=='Cuenta'
+
+
+async def test_missing_public_frame_resource_does_not_stop_main_page_but_requires_own_permission(browser):
+    manager,pages=browser
+    pages.pages[HOME]='<iframe src="https://cdn.example/embed"></iframe><a href="/form">Facturar</a>'
+    first=await manager.open('owner-a',HOME,[ALLOWED[0]])
+    assert first['blocked_origins']==['https://cdn.example'] and not first['network_blocked']
+    assert all('cdn.example' not in url for url,_ in pages.calls)

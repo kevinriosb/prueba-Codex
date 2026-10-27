@@ -62,7 +62,7 @@ Las consultas y fragmentos de la URL inicial no se transmiten en esta fase públ
 Si un portal depende de esos parámetros, puede requerir una adaptación posterior.
 Las redirecciones se presentan como referencias observadas para un paso posterior;
 no se dejan a Chromium fuera del filtro de red. Un recurso script/estilo redirigido
-requiere intervención en esta fase.
+se omite en esta fase; la revisión puede seguir si hay controles compatibles.
 
 Las configuraciones antiguas de `BILLING_BROWSER_ORIGINS` ya no se usan y no
 sustituyen el consentimiento. `scripts/configure_browser.py` informa del cambio
@@ -107,8 +107,18 @@ obligatorios reconocidos usando los botones **Completar dato** y `/dato_ticket`.
   servidor; la salida directa del navegador usa un proxy local que no da servicio.
   El contenedor usa UID 10001, raíz de solo lectura, límites de memoria/procesos y
   ninguna capacidad adicional. No se afirma que Chromium use su sandbox interno.
+- Los recursos de Google Tag Manager, Google Analytics y DoubleClick se omiten
+  como medición/publicidad; no piden permisos ni frenan la navegación. Se compara
+  el hostname exacto o un subdominio de esas familias, sin bloquear otros servicios
+  de Google ni proveedores de bibliotecas de formularios por semejanza de nombre.
+  Los recursos funcionales de otro dominio siguen bloqueados hasta autorizarse,
+  pero no impiden seguir un enlace disponible. Si faltan controles, el bot puede
+  ofrecer cargarlos con permiso. Los enlaces nuevos del portal conservan su
+  confirmación independiente antes de abrir el destino.
+- Se priorizan enlaces observados que mencionen facturación, billing, invoice o
+  CFDI, incluso si están al final de la página. No hay una receta fija por comercio.
 - Imágenes y medios se omiten en esta fase basada en DOM. CAPTCHA, login, páginas
-  solo gráficas, controles incompatibles, recursos no autorizados o ambigüedad
+  solo gráficas, controles incompatibles o ambigüedad
   requieren intervención humana. No hay garantía de compatibilidad universal.
 
 Las pruebas locales usan Chromium real con páginas ficticias y el SDK real con

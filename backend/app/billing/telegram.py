@@ -439,12 +439,13 @@ class TelegramBridge:
             text+='\nAún no se encontró el formulario.'
         if snapshot['captcha']:
             text+='\nEl sitio requiere CAPTCHA; intervención humana.'
-        if snapshot['blocked_origins']:
-            text+='\n¿Permites revisar estos dominios?\n'+'\n'.join(snapshot['blocked_origins'])
+        pending=[target for target in snapshot['blocked_origins'] if target not in self.billing.portal_permissions.allowed(owner,ticket)]
+        needs_resources=bool(pending) and (snapshot['network_blocked'] or not (snapshot['fields'] or snapshot['actions']))
+        if needs_resources:
+            text+='\n¿Permites cargar estos recursos del sitio?\n'+'\n'.join(pending)
         text+='\nRevisar con IA consume tokens. No se enviaron datos fiscales ni se solicitó la factura.'
         buttons=[]
-        pending=[target for target in snapshot['blocked_origins'] if target not in self.billing.portal_permissions.allowed(owner,ticket)]
-        if pending:
+        if needs_resources:
             permission=self.billing.portal_permissions.request(owner,ticket['id'],origins=pending)
             buttons.extend(self._permission_buttons(permission))
         missing=browser_missing_fields(ticket)

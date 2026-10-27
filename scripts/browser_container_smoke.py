@@ -23,13 +23,17 @@ assert not any(os.environ.get(key) for key in ('AI_API_KEY','OPENAI_API_KEY','BI
 assert not Path('/app/.env').exists() and not Path('/data/agent.sqlite3').exists()
 class Pages:
  async def fetch(self,url,headers):
-  content='<a href="https://provider.example/form">Facturación</a>' if url.endswith('/') else '<label>Cuenta<input></label>'
+  content=('<script src="https://www.googletagmanager.com/gtm.js"></script>'
+   +''.join('<a href="/info/'+str(index)+'">Información</a>' for index in range(32))
+   +'<footer><a href="https://provider.example/form">Facturación</a></footer>') if url.endswith('/') else '<label>Cuenta<input></label>'
   return 200,{'content-type':'text/html; charset=utf-8'},content.encode()
  async def close(self):pass
 async def run():
  manager=BrowserManager(fetcher=Pages())
  try:
   first=await manager.open('test-owner','https://fixture.example/',['https://fixture.example'])
+  assert not first['network_blocked'] and first['blocked_origins']==[]
+  assert first['actions'][0]['label']=='Facturación'
   assert first['actions'][0]['permission_origin']=='https://provider.example'
   try:await manager.act('test-owner',first['session_id'],first['observation_id'],first['actions'][0]['reference'])
   except BrowserError as error:assert error.code=='browser_origin'

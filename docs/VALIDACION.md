@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado de la última ejecución completa de `.venv/bin/python -m pytest -q --tb=short -x`: **421 pruebas pasadas**, sin fallos ni pruebas omitidas (116,49 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
+Resultado de la última ejecución completa de `.venv/bin/python -m pytest -q --tb=short -x`: **467 pruebas pasadas**, sin fallos ni pruebas omitidas (126,81 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
 
 ### Solicitudes repetidas, perfil persistente y cuotas
 
@@ -537,3 +537,42 @@ La causa del fallo real sigue pendiente de la salida del diagnóstico en el VPS.
 La resolución de nombres desde este entorno de desarrollo tampoco respondió para
 los tres dominios públicos contrastados; no se usa eso como evidencia de que el
 portal esté caído. El servidor del propietario puede tener una ruta DNS distinta.
+
+
+## Recursos de medición y enlaces de facturación
+
+La segunda prueba del propietario cargó la página de Alsea y mostró un permiso
+para `www.googletagmanager.com`, seguido de intervención humana. La revisión del
+código confirmó que un recurso auxiliar pendiente detenía cualquier enlace.
+Se corrigió ese criterio de forma general, sin recetas por establecimiento.
+
+Los scripts/recursos de Google Tag Manager, Google Analytics y DoubleClick se
+omiten antes de descargarlos, también si existía un permiso anterior. No provocan
+permisos ni intervención humana. Los fallos GET de scripts, estilos o marcos
+auxiliares no congelan los enlaces disponibles. Los recursos funcionales de otros
+dominios siguen sin descargarse antes del permiso: se ofrece cargarlos cuando no
+hay controles utilizables. La navegación principal, los POST no permitidos, los
+límites de sesión, CAPTCHA, DNS público y TLS mantienen sus controles.
+
+Se priorizan referencias observadas de Facturación/billing/invoice/CFDI entre
+hasta 800 candidatos del DOM, con hasta 24 acciones devueltas. Esto permite ver un
+enlace al final de la página sin transmitir el HTML completo ni listas ilimitadas
+al modelo. Al reiniciar el worker, una revisión perdida se abre de nuevo solo
+bajo el permiso vigente del mismo usuario/ticket. No se reintenta una acción de
+formulario ni se reinician perfiles, extracciones o contadores.
+
+Pasaron **467 pruebas en la suite completa**, sin omisiones (126,81 segundos). Las
+16 regresiones nuevas cubren familias de tracking y nombres engañosos, scripts
+GET y POST de medición omitidos, tracking previamente permitido, enlace fiscal
+al final de una página con 40 enlaces, recursos auxiliares sin permiso, estilo
+con timeout, iframe auxiliar, decisiones del SDK sin permisos innecesarios, carga
+opcional cuando no hay controles y recuperación tras reinicio del worker.
+El tráfico de las pruebas y las respuestas del modelo son simulados, con Chromium
+real. No se visitó Alsea desde este entorno ni se hicieron llamadas de IA de pago.
+
+Las dos imágenes finales se construyeron y pasaron las comprobaciones Docker.
+Chromium en el contenedor omitió Google Tag Manager, priorizó el enlace de
+facturación al final de 32 enlaces y conservó el permiso para el dominio del
+proveedor. El stack Compose confirmó salud y autenticación privadas, además del
+diagnóstico por stdin. Sus contenedores, redes y volúmenes temporales se retiraron.
+La repetición de la prueba real de Alsea en el VPS queda pendiente del propietario.

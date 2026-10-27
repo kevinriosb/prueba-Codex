@@ -386,14 +386,20 @@ class BillingService:
                 action=next(item for item in previous['snapshot']['actions'] if item['reference']==reference)
                 if action.get('permission_origin'):
                     self.portal_permissions.require(owner,ticket,action['permission_origin'])
-                pending=[target for target in previous['snapshot']['blocked_origins'] if target not in self.portal_permissions.allowed(owner,ticket)]
-                if pending:
-                    raise PortalPermissionRequired(pending)
                 if previous['snapshot']['captcha'] or previous['snapshot']['network_blocked']:
                     raise AppError(409,'browser_intervention','La página requiere intervención humana antes de continuar.')
                 snapshot=await self.browser.act(owner,previous['snapshot']['session_id'],observation_id,reference)
             elif previous:
-                snapshot=await self.browser.observe(owner,previous['snapshot']['session_id'])
+                try:
+                    snapshot=await self.browser.observe(owner,previous['snapshot']['session_id'])
+                except AppError as error:
+                    if error.code!='browser_session':
+                        raise
+                    # El reinicio pierde contextos efímeros. La apertura pública
+                    # sigue exigiendo el permiso vigente del mismo usuario/ticket.
+                    self.store.delete('browser_review',owner,previous['id'])
+                    previous=None
+                    snapshot=await self.browser.open(owner,ticket['billing_url'],allowed=self.portal_permissions.allowed(owner,ticket))
             else:
                 snapshot=await self.browser.open(owner,ticket['billing_url'],allowed=self.portal_permissions.allowed(owner,ticket))
         except AppError as error:
