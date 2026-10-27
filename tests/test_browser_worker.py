@@ -125,6 +125,27 @@ async def test_browser_contexts_have_no_shared_cookies(browser):
     assert await manager.sessions[b['session_id']].context.cookies()==[]
 
 
+async def test_only_the_current_contexts_http_only_cookie_is_forwarded(browser):
+    manager,_=browser
+    class CookiePages(Pages):
+        async def fetch(self,url,headers):
+            self.calls.append((url,headers))
+            response={'content-type':'text/html; charset=utf-8'}
+            if url==HOME:
+                self.visitors=getattr(self,'visitors',0)+1
+                response['set-cookie']=f'public-session=visitor-{self.visitors}; HttpOnly; Secure; Path=/'
+                body='<a href="https://merchant.example/form">Facturación</a>'
+            else: body='<label>Folio<input></label>'
+            return 200,response,body.encode()
+    manager.fetcher=pages=CookiePages({})
+    a=await manager.open('owner-a',HOME,ALLOWED)
+    b=await manager.open('owner-b',HOME,ALLOWED)
+    await manager.act('owner-a',a['session_id'],a['observation_id'],a['actions'][0]['reference'])
+    assert pages.calls[-1][1]['cookie']=='public-session=visitor-1'
+    await manager.act('owner-b',b['session_id'],b['observation_id'],b['actions'][0]['reference'])
+    assert pages.calls[-1][1]['cookie']=='public-session=visitor-2'
+
+
 @pytest.mark.parametrize('url',['http://public.example','file:///etc/passwd','https://127.0.0.1/',
     'https://user:pass@public.example/','https://public.example:8443/','https://host.local/'])
 def test_forbidden_browser_urls(url):
@@ -158,6 +179,24 @@ async def test_mixed_private_public_dns_is_rejected_without_http():
     try:
         with pytest.raises(BrowserError,match='browser_address'):
             await fetcher.fetch(HOME,{})
+    finally:
+        await fetcher.close()
+
+
+async def test_shared_transport_never_retains_or_injects_another_contexts_cookie():
+    requests=[]
+    def transport(request):
+        requests.append(request)
+        return httpx2.Response(200,text='Public',headers={'set-cookie':'public-session=owner-a; Path=/'})
+    async def resolver(host): return ['93.184.216.34']
+    fetcher=PublicFetcher(resolver=resolver,client=httpx2.AsyncClient(transport=httpx2.MockTransport(transport)))
+    try:
+        await fetcher.fetch(HOME,{})
+        await fetcher.fetch(HOME,{})
+        await fetcher.fetch(HOME,{'cookie':'public-session=owner-b'})
+        assert requests[1].headers['cookie']==''
+        assert requests[2].headers['cookie']=='public-session=owner-b'
+        assert len(fetcher.client.cookies)==0
     finally:
         await fetcher.close()
 

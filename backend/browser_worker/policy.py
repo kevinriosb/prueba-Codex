@@ -1,6 +1,7 @@
 import asyncio
 import ipaddress
 import socket
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx2
@@ -61,6 +62,8 @@ class PublicFetcher:
     def __init__(self, *, resolver=resolve, client=None):
         self.resolver=resolver
         self.client=client or httpx2.AsyncClient(trust_env=False,timeout=5,follow_redirects=False)
+        # Las cookies pertenecen al contexto Chromium, nunca al transporte compartido.
+        self.client.cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[]))
 
     async def close(self):
         await self.client.aclose()
@@ -74,9 +77,7 @@ class PublicFetcher:
         authority='['+address+']' if ':' in address else address
         pinned=urlunsplit(('https',authority,uri.path,uri.query,''))
         forwarded={'Host':uri.hostname,'Accept':headers.get('accept','text/html'),
-            'User-Agent':'PublicBillingNavigator/1.0'}
-        if headers.get('cookie'):
-            forwarded['Cookie']=headers['cookie']
+            'User-Agent':'PublicBillingNavigator/1.0','Cookie':headers.get('cookie','')}
         async with self.client.stream('GET',pinned,headers=forwarded,
                 extensions={'sni_hostname':uri.hostname},follow_redirects=False) as response:
             chunks,size=[],0

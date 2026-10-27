@@ -101,7 +101,7 @@ class BrowserManager:
             session.requests+=1
             if session.requests>60:
                 raise ValueError()
-            status,headers,body=await self.fetcher.fetch(url,request.headers)
+            status,headers,body=await self.fetcher.fetch(url,await request.all_headers())
             session.size+=len(body)
             if session.size>6_291_456:
                 raise ValueError()
