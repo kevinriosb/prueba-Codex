@@ -97,7 +97,7 @@ class PortalBrowserClient:
         except Exception:
             raise AppError(502,'browser_unavailable','No se pudo revisar la página pública. No se envió información fiscal.') from None
 
-    async def open(self,owner,url,*,allowed):
+    async def open(self,owner,url,*,allowed,public_route=False):
         # Solo mejora HTTP a HTTPS en el mismo hostname; TLS debe ser válido.
         uri=urlsplit(url)
         if uri.scheme=='http' and uri.port in {None,80} and not uri.username and not uri.password:
@@ -113,11 +113,12 @@ class PortalBrowserClient:
                 raise BrowserError('browser_origin','Dominio no autorizado.')
         except BrowserError:
             raise AppError(403,'browser_origin','Autoriza ese dominio con el botón Permitir en Telegram.') from None
-        return await self._call('/v1/sessions',{'owner':owner,'url':url,'allowed':allowed})
+        return await self._call('/v1/sessions',{'owner':owner,'url':url,'allowed':allowed,
+            **({'public_route':True} if public_route else {})})
 
-    async def allow(self,owner,session_id,allowed):
+    async def allow(self,owner,session_id,allowed,*,public_route=False):
         return await self._call('/v1/sessions/'+str(UUID(session_id))+'/origins',
-            {'owner':owner,'allowed':allowed})
+            {'owner':owner,'allowed':allowed,**({'public_route':True} if public_route else {})})
 
     async def close_session(self,owner,session_id):
         return await self._call('/v1/sessions/'+str(UUID(session_id)),{'owner':owner},

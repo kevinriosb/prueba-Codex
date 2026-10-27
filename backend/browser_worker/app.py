@@ -19,6 +19,7 @@ class Open(BaseModel):
     owner:str=Field(min_length=1,max_length=100)
     url:str=Field(max_length=2048)
     allowed:list[str]=Field(min_length=1,max_length=12)
+    public_route:bool=Field(default=False,strict=True)
 
 
 class Action(BaseModel):
@@ -32,6 +33,7 @@ class Permission(BaseModel):
     model_config=ConfigDict(extra='forbid',hide_input_in_errors=True)
     owner:str=Field(min_length=1,max_length=100)
     allowed:list[str]=Field(min_length=1,max_length=12)
+    public_route:bool=Field(default=False,strict=True)
 
 
 class Close(BaseModel):
@@ -81,7 +83,8 @@ def create_worker(manager=None,token_file=None):
         return {'status':'ok','public_only':True}
     @app.post('/v1/sessions')
     async def open_session(payload:Open):
-        return await manager.open(payload.owner,payload.url,payload.allowed)
+        return await manager.open(payload.owner,payload.url,payload.allowed,
+            **({'public_route':True} if payload.public_route else {}))
     @app.get('/v1/sessions/{identifier}')
     async def observe(identifier:str,owner:str):
         return await manager.observe(owner,identifier)
@@ -90,7 +93,8 @@ def create_worker(manager=None,token_file=None):
         return await manager.act(payload.owner,identifier,payload.observation_id,payload.reference)
     @app.post('/v1/sessions/{identifier}/origins')
     async def allow(identifier:str,payload:Permission):
-        return await manager.allow(payload.owner,identifier,payload.allowed)
+        return await manager.allow(payload.owner,identifier,payload.allowed,
+            **({'public_route':True} if payload.public_route else {}))
     @app.delete('/v1/sessions/{identifier}')
     async def close(identifier:str,payload:Close):
         return await manager.close_session(payload.owner,identifier)

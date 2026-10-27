@@ -66,6 +66,7 @@ class Session:
     context:object
     page:object
     allowed:set
+    public_route:bool=False
     created:float=field(default_factory=time.monotonic)
     observation:str=''
     actions:dict=field(default_factory=dict)
@@ -127,36 +128,46 @@ class BrowserManager:
                 await route.abort('blockedbyclient')
                 return
             url=https_url(request.url)
-            target=origin(url)
             if request.method!='GET' or request.resource_type not in {'document','script','stylesheet','xhr','fetch'}:
                 raise ValueError()
-            session.requests+=1
-            if session.requests>60:
-                session.unsafe_blocked=True
-                raise ValueError()
-            if target not in session.allowed:
-                await self._permission_block(session,route,url,main_document=main_document)
-                return
-            status,headers,body=await self.fetcher.fetch(url,await request.all_headers())
-            session.size+=len(body)
-            if session.size>6_291_456:
-                session.unsafe_blocked=True
-                raise ValueError()
-            if 'location' in headers:
-                target_url=secure_link(urljoin(url,headers['location']))
-                if origin(target_url) not in session.allowed:
-                    if not main_document and tracking_url(target_url):
-                        await route.abort('blockedbyclient')
-                    else:
-                        await self._permission_block(session,route,target_url,main_document=main_document)
+            forwarded=await request.all_headers()
+            for redirect in range(4):
+                if not main_document and tracking_url(url):
+                    await route.abort('blockedbyclient')
                     return
-                # Chromium no enruta todos los saltos 30x por Playwright. Convertirlos
-                # en una referencia observada garantiza que cada GET use el filtro.
+                target=origin(url)
+                session.requests+=1
+                if session.requests>60:
+                    session.unsafe_blocked=True
+                    raise ValueError()
+                if target not in session.allowed and not self._route_origin(session,target):
+                    await self._permission_block(session,route,url,main_document=main_document)
+                    return
+                status,headers,body=await self.fetcher.fetch(url,forwarded)
+                session.size+=len(body)
+                if session.size>6_291_456:
+                    session.unsafe_blocked=True
+                    raise ValueError()
+                if 'location' not in headers:
+                    await route.fulfill(status=status,headers=headers,body=body)
+                    return
+                target_url=secure_link(urljoin(url,headers['location']))
+                if not main_document and tracking_url(target_url):
+                    await route.abort('blockedbyclient')
+                    return
+                if origin(target_url) not in session.allowed and not self._route_origin(session,origin(target_url)):
+                    await self._permission_block(session,route,target_url,main_document=main_document)
+                    return
+                # Los documentos pasan por una referencia observada. Los recursos
+                # del recorrido pasan por el mismo fetch con DNS/TLS en cada salto.
                 if request.resource_type=='document':
                     await self._redirect_page(route,target_url)
                     return
-                raise ValueError()  # Recurso redirigido: intervención, sin salida directa.
-            await route.fulfill(status=status,headers=headers,body=body)
+                if not session.public_route or redirect==3:
+                    raise ValueError()
+                url=target_url
+                # Jamás reenviar la cookie del origen anterior a otro proveedor.
+                forwarded={key:value for key,value in forwarded.items() if key.lower()!='cookie'}
         except Exception:
             # Un script/estilo auxiliar puede fallar sin impedir enlaces visibles.
             # La navegación principal, métodos de escritura y límites sí detienen.
@@ -164,6 +175,18 @@ class BrowserManager:
                 session.network_blocked=True
                 session.unsafe_blocked=True
             await route.abort('blockedbyclient')
+
+    def _route_origin(self,session,target):
+        # Solo una sesión autorizada como recorrido admite los destinos que la
+        # página pide. El fetch conserva DNS público/IP fijada/TLS y todos los
+        # límites; no habilita métodos de escritura ni navegación arbitraria.
+        if not session.public_route:
+            return False
+        if len(session.allowed)>=12:
+            session.unsafe_blocked=True
+            raise BrowserError('browser_origin','Se alcanzó el límite de destinos del recorrido público.')
+        session.allowed.add(target)
+        return True
 
     async def _permission_block(self,session,route,url,*,main_document):
         session.blocked.add(origin(url))
@@ -180,13 +203,13 @@ class BrowserManager:
             '<!doctype html><title>Continuar navegación</title><a href="'+escape(url,quote=True)+
             '">Continuar al portal de facturación</a>')
 
-    async def open(self,owner,url,allowed):
+    async def open(self,owner,url,allowed,*,public_route=False):
         if self.open_lock.locked():
             raise BrowserError('browser_busy','El navegador está abriendo otra página.',429)
         async with self.open_lock:
-            return await self._open(owner,url,allowed)
+            return await self._open(owner,url,allowed,public_route=public_route)
 
-    async def _open(self,owner,url,allowed):
+    async def _open(self,owner,url,allowed,*,public_route=False):
         url=https_url(url)
         allowed={origin(item) for item in allowed}
         if not allowed or len(allowed)>12 or origin(url) not in allowed:
@@ -201,7 +224,7 @@ class BrowserManager:
         await context.route_web_socket('**/*',lambda socket:socket.close())
         page=await context.new_page()
         context.on('page',lambda popup:popup.close())
-        session=Session(owner,context,page,allowed)
+        session=Session(owner,context,page,allowed,public_route=public_route)
         await context.route('**/*',lambda route:self._route(session,route))
         page.on('dialog',lambda dialog:dialog.dismiss())
         identifier=str(uuid.uuid4())
@@ -259,7 +282,7 @@ class BrowserManager:
                                 continue
                             if url==secure_link(frame.url):
                                 continue
-                            if origin(url) not in session.allowed:
+                            if origin(url) not in session.allowed and not session.public_route:
                                 permission_origin=origin(url)
                             item['url']=url
                         except BrowserError:
@@ -285,7 +308,7 @@ class BrowserManager:
             if session.steps>=self.max_steps:
                 raise BrowserError('browser_steps','La revisión alcanzó su límite de navegación. Requiere revisión humana.')
             frame,item=session.actions[reference]
-            if item['kind']=='link' and origin(item['url']) not in session.allowed:
+            if item['kind']=='link' and origin(item['url']) not in session.allowed and not self._route_origin(session,origin(item['url'])):
                 raise BrowserError('browser_origin','Autoriza el nuevo dominio antes de abrirlo.',403)
             session.actions.pop(reference)
             session.observation=''
@@ -299,13 +322,22 @@ class BrowserManager:
                 await locator.click(timeout=4000)
             return await self._observe(identifier,session)
 
-    async def allow(self,owner,identifier,allowed):
+    async def allow(self,owner,identifier,allowed,*,public_route=False):
         session=await self.get(owner,identifier)
         async with session.lock:
             allowed={origin(value) for value in allowed}
+            if public_route:
+                allowed|=session.allowed
             if not allowed or len(allowed)>12 or not session.allowed<=allowed:
                 raise BrowserError('browser_origin','Permisos de revisión no válidos.',403)
             session.allowed=allowed
+            session.public_route=session.public_route or public_route
+            if public_route:
+                for target in sorted(session.blocked):
+                    if len(session.allowed)>=12:
+                        break
+                    session.allowed.add(target)
+                allowed=session.allowed
             newly_allowed=session.blocked & allowed
             session.blocked.difference_update(allowed)
             main_allowed=not session.main_permission_origin or session.main_permission_origin in allowed

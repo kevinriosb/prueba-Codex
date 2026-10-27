@@ -70,18 +70,18 @@ def test_explicit_permission_is_owned_single_use_and_does_not_expose_fiscal_valu
     chat(data=allow,user=456)
     assert 'no encontrado' in telegram.messages[-1][1] and browser.calls==[]
     chat(data=allow)
-    assert [item[0] for item in browser.calls]==['open']
+    assert [item[0] for item in browser.calls]==['open','act']
     count=len(model.inputs)
     chat(data=allow)
-    assert len(model.inputs)==count and len(browser.calls)==1
+    assert len(model.inputs)==count and len(browser.calls)==2
     assert 'ya fue utilizada' in telegram.messages[-1][1]
     assert mail.sent==sat.calls==[]
 
 
-def test_unknown_observed_domain_gets_native_permission_before_click_and_can_be_cancelled(billing_client):
+def test_observed_provider_is_covered_by_native_public_route_permission(billing_client):
     class CrossDomain(FakeBrowser):
-        async def open(self,owner,url,*,allowed=None):
-            result=await super().open(owner,url,allowed=allowed)
+        async def open(self,owner,url,*,allowed=None,public_route=False):
+            result=await super().open(owner,url,allowed=allowed,public_route=public_route)
             assert allowed==['https://merchant.example']
             result['actions'][0]['permission_origin']='https://billing.example'
             return result
@@ -94,14 +94,8 @@ def test_unknown_observed_domain_gets_native_permission_before_click_and_can_be_
     browser=CrossDomain()
     client,app,extractor,mail,sat,telegram,chat=received(billing_client,model,browser)
     chat(data=button(telegram,'wa'))
-    assert [item[0] for item in browser.calls]==['open']
-    assert 'https://billing.example' in telegram.messages[-1][1]
-    assert '¿Permites revisar este portal?' in telegram.messages[-1][1]
-    approve=button(telegram,'wa')
-    assert len(telegram.messages[-1][2])==2
-    chat(data=approve)
-    assert [item[0] for item in browser.calls]==['open','allow','observe','act']
-    assert browser.calls[1][-1]==['https://billing.example','https://merchant.example']
+    assert [item[0] for item in browser.calls]==['open','act']
+    assert not any(data.startswith('wa:') for _,data in telegram.messages[-1][2])
     assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
     assert mail.sent==sat.calls==[]
 

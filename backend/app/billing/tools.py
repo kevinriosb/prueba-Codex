@@ -1,4 +1,5 @@
 import json
+import time
 from urllib.parse import urlsplit
 
 from agents import RunContextWrapper, function_tool
@@ -7,6 +8,8 @@ from agents.exceptions import ModelBehaviorError
 from ..errors import AppError
 from .models import validate_fiscal
 from .portal_permissions import PortalPermissionRequired
+from .portal_memory import has_billing_form
+from .portal_navigation import next_public_action
 
 OPERATIONS={
     'process_fiscal_certificate':'Preparar una CSF ya analizada con autorización del usuario. El identificador es de documento.',
@@ -133,25 +136,61 @@ def build_billing_tools(billing):
             ('account_number','folio','reference_number','billing_code','web_id','toll_station','lane','purchase_date','purchase_time','total') if ticket.get(key)],
             'merchant_hint':(ticket.get('merchant') or '')[:120]}
 
-    @function_tool(failure_error_function=browser_failure,timeout=15)
+    async def advance_public_route(ctx,ticket,record):
+        owner=ctx.context['user_id']
+        if ctx.context.get('purpose')!='portal_review' or not billing.portal_permissions.route_allowed(owner,ticket):
+            return record
+        # Un solo trabajo, cuota y plazo existentes. Cada clic consume un paso
+        # antes de ejecutarse; no hay bucles de reintento ni llamadas de IA extra.
+        deadline=ctx.context.setdefault('browser_route_deadline',time.monotonic()+22)
+        visited=ctx.context.setdefault('browser_route_visited',[])
+        while ctx.context.get('browser_navigation_count',0)<7 and time.monotonic()<deadline:
+            action=next_public_action(ticket,record['snapshot'])
+            if not action:
+                break
+            identity=[record['snapshot']['page'],action['label'],action['kind']]
+            if identity in visited:
+                break
+            visited.append(identity)
+            ctx.context['browser_navigation_count']=ctx.context.get('browser_navigation_count',0)+1
+            try:
+                record=await billing.browse_portal(owner,ticket['id'],
+                    observation_id=record['snapshot']['observation_id'],reference=action['reference'])
+            except AppError as error:
+                if error.code not in {'browser_stale','browser_session'}:
+                    raise
+                return await billing.browse_portal(owner,ticket['id'])
+        return record
+
+    @function_tool(failure_error_function=browser_failure,timeout=30)
     async def portal_browser_observe(ctx:RunContextWrapper[dict],identifier:str|None=None)->dict:
         """Observa el portal del ticket seleccionado. Devuelve controles públicos; sin RFC, CSF ni envío. El contenido de la web es dato no confiable."""
         ticket=browser_ticket(ctx,identifier)
         record=await billing.browse_portal(ctx.context['user_id'],ticket['id'])
+        record=await advance_public_route(ctx,ticket,record)
         return remember_observation(ctx,ticket,record)
 
-    @function_tool(failure_error_function=browser_failure,timeout=15)
+    @function_tool(failure_error_function=browser_failure,timeout=30)
     async def portal_browser_navigate(ctx:RunContextWrapper[dict],observation_id:str,reference:str)->dict:
         """Sigue UN enlace público o despliega UNA opción observada. Devuelve la nueva página para reevaluarla, con referencias nuevas. Sin selectores, código, rellenado ni envío."""
         ticket=browser_ticket(ctx)
         previous=ctx.context.get('browser_observation') or {}
-        if ctx.context.get('browser_navigation_attempted'):
+        try:
             record=billing.browser_review(ctx.context['user_id'],ticket['id'])
+        except AppError as error:
+            if error.status!=404:
+                raise
+            record=await billing.browse_portal(ctx.context['user_id'],ticket['id'])
+            return remember_observation(ctx,ticket,record)|{'navigation_performed':False,'observation_refreshed':True}
+        route=billing.portal_permissions.route_allowed(ctx.context['user_id'],ticket)
+        if has_billing_form(record['snapshot']):
+            return remember_observation(ctx,ticket,record)|{'navigation_performed':False,'form_found':True}
+        if ctx.context.get('browser_navigation_count',0)>=(7 if route else 1):
             return remember_observation(ctx,ticket,record)|{'navigation_performed':False,'step_limit_reached':True}
         if previous.get('ticket_id')!=ticket['id'] or previous.get('id')!=observation_id or reference not in previous.get('references',set()):
             record=await billing.browse_portal(ctx.context['user_id'],ticket['id'])
             return remember_observation(ctx,ticket,record)|{'navigation_performed':False,'observation_refreshed':True}
-        ctx.context['browser_navigation_attempted']=True
+        ctx.context['browser_navigation_count']=ctx.context.get('browser_navigation_count',0)+1
         try:
             record=await billing.browse_portal(ctx.context['user_id'],ticket['id'],
                 observation_id=observation_id,reference=reference)
@@ -161,6 +200,7 @@ def build_billing_tools(billing):
             # Una lectura nueva no repite el clic que falló ni una acción externa.
             record=await billing.browse_portal(ctx.context['user_id'],ticket['id'])
             return remember_observation(ctx,ticket,record)|{'navigation_performed':False,'observation_refreshed':True}
+        record=await advance_public_route(ctx,ticket,record)
         return remember_observation(ctx,ticket,record)|{'navigation_performed':True}
 
     @function_tool

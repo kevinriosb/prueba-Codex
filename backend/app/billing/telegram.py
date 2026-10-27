@@ -304,9 +304,9 @@ class TelegramBridge:
             text+='\n'+('Revisión pública disponible; solicitud aún manual.' if self.billing.browser.enabled else 'Portal pendiente de automatizar.')
             buttons.append(('Ver datos para el portal','bp:'+identifier))
             if self.billing.browser.enabled:
-                if not self.billing.portal_permissions.allowed(owner,ticket):
-                    permission=self.billing.portal_permissions.request(owner,identifier)
-                    text+='\n¿Permites revisar este portal con IA? Consume tokens. Sin enviar datos fiscales.'
+                if not self.billing.portal_permissions.route_allowed(owner,ticket):
+                    permission=self.billing.portal_permissions.request(owner,identifier,route=True)
+                    text+='\n¿Permites revisar este portal y seguir su ruta pública de facturación, incluidos proveedores y recursos? Usa IA; sin enviar datos fiscales ni facturar.'
                     buttons.extend(self._permission_buttons(permission))
                 else:
                     buttons.append(('Revisar portal con IA','bn:'+identifier))
@@ -389,6 +389,8 @@ class TelegramBridge:
     async def _portal_permission(self,owner,chat_id,identifier):
         permission=self.billing.store.get('portal_permission',owner,identifier)
         text='¿Permites revisar este portal?\n'+'\n'.join(permission['origins'])
+        if permission.get('route_version')==1:
+            text+='\nIncluye seguir la ruta pública de facturación, elegir la marca del ticket y cargar proveedores y recursos necesarios.'
         text+='\nSolo navegación pública; sin enviar datos fiscales ni facturar.'
         if permission['intent']=='browse':
             text+=' La revisión con IA consume tokens.'
@@ -398,10 +400,8 @@ class TelegramBridge:
         ticket=self.billing.resolve_ticket(owner,identifier)
         if not self.billing.browser.enabled:
             raise AppError(503,'browser_disabled','La navegación aún no está activada por el operador.')
-        try:
-            self.billing.portal_permissions.require(owner,ticket)
-        except PortalPermissionRequired:
-            permission=self.billing.portal_permissions.request(owner,ticket['id'])
+        if not self.billing.portal_permissions.route_allowed(owner,ticket):
+            permission=self.billing.portal_permissions.request(owner,ticket['id'],route=True)
             await self._portal_permission(owner,chat_id,permission['id'])
             return
         state=self._state(owner)
@@ -424,7 +424,7 @@ class TelegramBridge:
         if not self.agent:
             raise AppError(503,'telegram_agent','El agente de Telegram no está configurado.')
         try:
-            await self.agent.reply(owner,chat_id,portal_review=True,text='Investiga el acceso de facturación del ticket seleccionado según la página actual. Observa primero, avanza como máximo un paso y reevalúa el resultado. No introduzcas datos ni solicites facturas.')
+            await self.agent.reply(owner,chat_id,portal_review=True,text='Investiga el acceso de facturación del ticket seleccionado. Observa y sigue los controles útiles hasta el formulario o una ambigüedad real, dentro del presupuesto disponible. La ruta pública y sus recursos ya están autorizados; elige la marca coincidente. No introduzcas datos ni solicites facturas.')
         except AppError as error:
             if error.code not in {'agent_turn_limit','tool_limit','run_timeout','context_limit'}:
                 raise
@@ -511,7 +511,9 @@ class TelegramBridge:
             text+='\nPuedes elegir la marca o continuar la revisión con IA.'
         if snapshot['captcha']:
             text+='\nEl sitio requiere CAPTCHA; intervención humana.'
-        needs_resources=bool(pending) and (awaiting_form or snapshot['network_blocked'] or not (snapshot['fields'] or snapshot['actions']))
+        needs_resources=bool(pending) and not self.billing.portal_permissions.route_allowed(owner,ticket) and (awaiting_form or snapshot['network_blocked'] or not (snapshot['fields'] or snapshot['actions']))
+        if snapshot['network_blocked']:
+            text+='\nLa carga se bloqueó o alcanzó un límite. Requiere revisión.'
         if needs_resources:
             text+='\n¿Permites cargar estos recursos del sitio?\n'+'\n'.join(pending)
         text+='\nRevisar con IA consume tokens. No se enviaron datos fiscales ni se solicitó la factura.'

@@ -27,7 +27,7 @@ class FakeBrowser:
     enabled=True
     def __init__(self):
         self.calls=[]
-    async def open(self,owner,url,*,allowed=None):
+    async def open(self,owner,url,*,allowed=None,public_route=False):
         self.calls.append(('open',owner,url))
         return snapshot(actions=[{'reference':'bbbbbbbb','label':'Facturación','kind':'link'}])
     async def act(self,owner,session,observed,reference):
@@ -37,7 +37,7 @@ class FakeBrowser:
     async def observe(self,owner,session):
         self.calls.append(('observe',owner,session))
         return snapshot(actions=[{'reference':'eeeeeeee','label':'Facturación','kind':'link'}],observed='dddddddd')
-    async def allow(self,owner,session,allowed):
+    async def allow(self,owner,session,allowed,*,public_route=False):
         self.calls.append(("allow",owner,session,allowed))
         return snapshot(actions=[{"reference":"eeeeeeee","label":"Facturación","kind":"link"}],observed="dddddddd")
     async def close_session(self,owner,session):
@@ -115,7 +115,7 @@ def test_navigation_disabled_by_default_without_spawning_browser_or_charging_ai(
 
 def test_browser_domain_failure_is_shown_without_an_expensive_retry_loop(billing_client):
     class Denied(FakeBrowser):
-        async def open(self,owner,url,*,allowed=None):
+        async def open(self,owner,url,*,allowed=None,public_route=False):
             raise AppError(403,'browser_origin','Ese dominio requiere autorización del operador.')
     model=ScriptedModel([[call('portal_browser_observe')],[answer('Revisa el dominio.')]])
     client,app,extractor,mail,sat,telegram,chat=create(billing_client,model,browser=Denied())
@@ -144,7 +144,7 @@ def test_discovered_optional_alternative_can_be_completed_without_making_it_univ
 
 def test_public_select_options_do_not_expand_model_context_or_token_cost(billing_client):
     class VerboseBrowser(FakeBrowser):
-        async def open(self,owner,url,*,allowed=None):
+        async def open(self,owner,url,*,allowed=None,public_route=False):
             result=snapshot(fields=[{'key':'cfdi_use','label':'Uso CFDI '+str(index),'required':False,
                 'kind':'select','options':['option-not-for-model-'+str(option) for option in range(25)]}
                 for index in range(24)])
@@ -164,7 +164,8 @@ def test_public_select_options_do_not_expand_model_context_or_token_cost(billing
     assert mail.sent==[]
 
 
-async def test_worker_client_sends_no_purchase_or_fiscal_values_and_validates_schema(tmp_path):
+@pytest.mark.parametrize('public_route',[False,True])
+async def test_worker_client_sends_no_purchase_or_fiscal_values_and_validates_schema(tmp_path,public_route):
     from backend.app.config import Settings
     token=tmp_path/'token';token.write_text('fake-private-browser-key-'+'x'*40)
     requests=[]
@@ -175,9 +176,10 @@ async def test_worker_client_sends_no_purchase_or_fiscal_values_and_validates_sc
         billing_browser_enabled=True,billing_browser_token_file=token)
     browser=PortalBrowserClient(settings,client=httpx2.AsyncClient(transport=httpx2.MockTransport(transport)))
     try:
-        result=await browser.open('opaque-owner','http://merchant.example/',allowed=['https://merchant.example'])
+        result=await browser.open('opaque-owner','http://merchant.example/',allowed=['https://merchant.example'],public_route=public_route)
         assert result['fields'][0]['key']=='web_id'
-        assert json.loads(requests[0].content)=={'owner':'opaque-owner','url':'https://merchant.example/','allowed':['https://merchant.example']}
+        assert json.loads(requests[0].content)=={'owner':'opaque-owner','url':'https://merchant.example/',
+            'allowed':['https://merchant.example'],**({'public_route':True} if public_route else {})}
         assert requests[0].headers['x-browser-key']==token.read_text()
         assert FISCAL['rfc'] not in requests[0].content.decode()
         await browser.open('opaque-owner','https://merchant.example/?ticket=not-to-forward#secret-fragment',allowed=['https://merchant.example'])
@@ -207,8 +209,8 @@ def test_operator_domain_configuration_normalizes_without_secret_changes():
 
 def test_pending_auxiliary_resource_does_not_block_sdk_navigation_or_trigger_unneeded_permission(billing_client):
     class OptionalResource(FakeBrowser):
-        async def open(self,owner,url,*,allowed=None):
-            result=await super().open(owner,url,allowed=allowed)
+        async def open(self,owner,url,*,allowed=None,public_route=False):
+            result=await super().open(owner,url,allowed=allowed,public_route=public_route)
             result['blocked_origins']=['https://cdn.example']
             return result
     browser=OptionalResource()
@@ -228,9 +230,9 @@ def test_pending_auxiliary_resource_does_not_block_sdk_navigation_or_trigger_unn
     assert mail.sent==sat.calls==[] and len(extractor.calls)==2
 
 
-def test_optional_resource_permission_is_offered_only_when_no_useful_controls_were_found(billing_client):
+def test_empty_page_does_not_ask_again_for_resources_covered_by_route_permission(billing_client):
     class EmptyPage(FakeBrowser):
-        async def open(self,owner,url,*,allowed=None):
+        async def open(self,owner,url,*,allowed=None,public_route=False):
             result=snapshot()
             result['blocked_origins']=['https://cdn.example']
             return result
@@ -240,8 +242,9 @@ def test_optional_resource_permission_is_offered_only_when_no_useful_controls_we
     extractor.ticket['billing_url']='https://merchant.example/'
     telegram.files['receipt']=image('red');chat(document='receipt');chat(data=button(telegram,'an'))
     chat(data=button(telegram,'wa'))
-    assert '¿Permites cargar estos recursos del sitio?' in telegram.messages[-1][1]
-    assert 'https://cdn.example' in telegram.messages[-1][1] and button(telegram,'wa')
+    assert 'Aún no se encontró el formulario.' in telegram.messages[-1][1]
+    assert '¿Permites cargar estos recursos del sitio?' not in telegram.messages[-1][1]
+    assert not any(data.startswith('wa:') for _,data in telegram.messages[-1][2])
     assert mail.sent==sat.calls==[]
 
 

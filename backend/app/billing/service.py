@@ -376,6 +376,7 @@ class BillingService:
         if not ticket.get('billing_url'):
             raise AppError(409,'billing_portal','Primero se necesita una página de facturación identificada.')
         self.portal_permissions.require(owner,ticket)
+        route_options={'public_route':True} if self.portal_permissions.route_allowed(owner,ticket) else {}
         lookup=self.store.digest('browser:'+ticket_id)
         previous=self.store.find('browser_review',owner,lookup)
         brand_label=(previous or {}).get('brand_label')
@@ -408,9 +409,9 @@ class BillingService:
                     self.store.delete('browser_review',owner,previous['id'])
                     previous=None
                     brand_label=None
-                    snapshot=await self.browser.open(owner,self.portal_memory.entry_url(owner,ticket),allowed=self.portal_permissions.allowed(owner,ticket))
+                    snapshot=await self.browser.open(owner,self.portal_memory.entry_url(owner,ticket),allowed=self.portal_permissions.allowed(owner,ticket),**route_options)
             else:
-                snapshot=await self.browser.open(owner,self.portal_memory.entry_url(owner,ticket),allowed=self.portal_permissions.allowed(owner,ticket))
+                snapshot=await self.browser.open(owner,self.portal_memory.entry_url(owner,ticket),allowed=self.portal_permissions.allowed(owner,ticket),**route_options)
         except AppError as error:
             ticket['portal_browser_error']={'code':error.code,'message':error.message}
             self.store.update('ticket',owner,ticket_id,ticket)
@@ -446,7 +447,8 @@ class BillingService:
             self.store.delete('browser_review',owner,record['id'])
             return
         try:
-            snapshot=await self.browser.allow(owner,record['snapshot']['session_id'],self.portal_permissions.allowed(owner,ticket))
+            route_options={'public_route':True} if self.portal_permissions.route_allowed(owner,ticket) else {}
+            snapshot=await self.browser.allow(owner,record['snapshot']['session_id'],self.portal_permissions.allowed(owner,ticket),**route_options)
         except AppError as error:
             if error.code=='browser_session':
                 self.store.delete('browser_review',owner,record['id'])

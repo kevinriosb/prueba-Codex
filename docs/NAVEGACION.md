@@ -57,9 +57,11 @@ solo conserva su comportamiento; actualizar GitHub no inicia este servicio.
 ```
 
 No se configura una lista fija de establecimientos. El bot muestra el dominio del
-ticket y pide **Permitir / Cancelar** antes de abrirlo. Si un enlace o redirección
-lleva a otro dominio, o falta un recurso de otro sitio, pide otro permiso en el
-mismo chat. No se descarga ese destino antes de la aprobación.
+ticket y pide **Permitir / Cancelar** antes de abrirlo. En Telegram este permiso
+cubre el recorrido público de facturación: enlaces observados, marca coincidente,
+proveedores y recursos funcionales. No se pide otro permiso por cada dominio o
+CDN. Los permisos antiguos por dominio requieren esta nueva autorización antes
+de ampliarse. La API web conserva el consentimiento por dominio.
 
 El permiso es individual, para ese ticket y su URL de origen exacta, y dura
 30 minutos. La confirmación pendiente dura como máximo 15 minutos; para un dominio
@@ -74,8 +76,9 @@ aunque el ticket imprima HTTP. No se continúa por HTTP ni hacia redes privadas.
 Las consultas y fragmentos de la URL inicial no se transmiten en esta fase pública.
 Si un portal depende de esos parámetros, puede requerir una adaptación posterior.
 Las redirecciones se presentan como referencias observadas para un paso posterior;
-no se dejan a Chromium fuera del filtro de red. Un recurso script/estilo redirigido
-se omite en esta fase; la revisión puede seguir si hay controles compatibles.
+no se dejan a Chromium fuera del filtro de red. En el recorrido autorizado, los
+recursos admiten hasta tres redirecciones adicionales, todas con DNS/IP/TLS
+validados; las cookies del origen anterior no se reenvían en esos saltos.
 
 Las configuraciones antiguas de `BILLING_BROWSER_ORIGINS` ya no se usan y no
 sustituyen el consentimiento. `scripts/configure_browser.py` informa del cambio
@@ -93,9 +96,10 @@ usarse juntos en las siguientes actualizaciones para conservar esta activación.
 2. Revisa el dominio mostrado y pulsa **Permitir**. Antes de ese botón no se abre
    el portal; consultar `/estado` o cancelar no usa IA.
 3. La revisión autorizada usa una ejecución de chat con sus límites. El agente
-   observa la página y puede ejecutar un paso público por mensaje.
-4. Un dominio nuevo pide permiso aquí mismo. **Continuar revisión con IA** permite
-   otro paso dentro de la autorización vigente; no se reanuda solo.
+   observa la página y sigue opciones inequívocas hasta el formulario.
+4. La marca coincidente y los recursos no requieren otro botón. Ante ambigüedad,
+   CAPTCHA o límite, se muestra el estado. **Continuar revisión con IA** inicia
+   otra ejecución dentro de las cuotas existentes.
 5. Revisa los campos descubiertos y sus alternativas. **Cuenta**, **Folio** y
    **Web ID** se mantienen separados; no se completan entre sí por suposición.
 
@@ -113,13 +117,11 @@ ni hacer otra lectura con IA. También reconoce destinos literales observados de
 `window.open`, `location.href` y `location.assign/replace`; no ejecuta el JavaScript
 de esos manejadores. Los manejadores complejos o ambiguos quedan para intervención.
 
-Cuando se observan varias marcas distintas, Telegram muestra **Abrir marca** y
-mantiene **Continuar revisión con IA** para investigar otros accesos. La
-coincidencia con el comercio se puede destacar, pero continuar con IA no pulsa
-ese logo por una regla fija. El usuario puede elegir el control nativo sin otra
-llamada de IA. Si hay ambigüedad, el agente pide una elección concreta.
-Antes de abrir un dominio
-nuevo sigue apareciendo **Permitir / Cancelar**. El destino siempre procede de la
+Cuando se observan varias marcas distintas y hay una coincidencia única con el
+ticket, se sigue ese control automáticamente. No se prueban otras marcas. Ante
+ambigüedad aparecen **Abrir marca** y **Continuar revisión con IA**. Un enlace
+claro de facturación tiene prioridad sobre un logo de cabecera. El permiso inicial
+del recorrido cubre también el proveedor externo. El destino siempre procede de la
 página actual; ni el usuario del modelo ni el modelo pueden inventar una URL de
 navegación mediante la herramienta. Una ventana nueva se abre en el mismo contexto
 aislado, sin propagar ventanas emergentes.
@@ -156,8 +158,8 @@ sigue requiriendo comprobación. Esta entrega no rellena ni envía formularios.
 - Cada ejecución conserva los límites existentes de chat: pasos del SDK, tokens,
   tiempo y cuota diaria. No se elevan automáticamente ni se ocultan llamadas extra.
 - Referencias observadas de un solo uso; una página cambiada exige nueva revisión.
-- Solo peticiones HTTPS GET a dominios autorizados. IPs privadas, redirecciones no
-  autorizadas, métodos POST, WebSockets, descargas y service workers se bloquean.
+- Solo peticiones HTTPS GET dentro del recorrido autorizado (máximo 12 orígenes).
+  IPs privadas, métodos POST, WebSockets, descargas y service workers se bloquean.
   Las conexiones HTTP verifican DNS público y fijan IP, Host y SNI para TLS.
 - El navegador no recibe secretos fiscales. Su tráfico pasa por el filtro del
   servidor; la salida directa del navegador usa un proxy local que no da servicio.
@@ -167,10 +169,9 @@ sigue requiriendo comprobación. Esta entrega no rellena ni envía formularios.
   como medición/publicidad; no piden permisos ni frenan la navegación. Se compara
   el hostname exacto o un subdominio de esas familias, sin bloquear otros servicios
   de Google ni proveedores de bibliotecas de formularios por semejanza de nombre.
-  Los recursos funcionales de otro dominio siguen bloqueados hasta autorizarse,
-  pero no impiden seguir un enlace disponible. Si faltan controles, el bot puede
-  ofrecer cargarlos con permiso. Los enlaces nuevos del portal conservan su
-  confirmación independiente antes de abrir el destino.
+  Los recursos funcionales de otro dominio quedan cubiertos por el permiso del
+  recorrido. Los permisos antiguos por dominio y la API web mantienen su alcance
+  original hasta una autorización nueva y explícita.
 - Se priorizan enlaces observados que mencionen facturación, billing, invoice o
   CFDI, incluso si están al final de la página. No hay una receta fija por comercio.
 - Imágenes y medios se omiten en esta fase basada en DOM. CAPTCHA, login, páginas

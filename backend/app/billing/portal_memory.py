@@ -113,7 +113,7 @@ class PortalMemory:
         if not candidates or not all(candidates) or len(urls)!=1 or not ticket.get('merchant'):
             raise AppError(409,'portal_memory_url','No se encontró un enlace público estable para guardar.')
         url=urls[0]
-        if origin(url) not in self.billing.portal_permissions.allowed(owner,ticket):
+        if origin(url) not in self.billing.portal_permissions.allowed(owner,ticket) and not self.billing.portal_permissions.route_allowed(owner,ticket):
             raise AppError(403,'portal_memory_permission','Autoriza el dominio del formulario antes de guardarlo.')
         # Los valores de la compra no se convierten en una liga reutilizable.
         decoded=unquote(url).casefold()

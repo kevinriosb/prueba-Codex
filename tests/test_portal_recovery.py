@@ -15,7 +15,17 @@ from .test_telegram_documents import confirm_profile
 
 
 def receive(factory,model,**settings):
-    browser=FakeBrowser()
+    class UnclearRoute(FakeBrowser):
+        # La recuperación usa un control sin atajo inequívoco: lo elige el SDK.
+        async def open(self,*args,**kwargs):
+            result=await super().open(*args,**kwargs)
+            result['actions'][0]['label']='Explorar opciones'
+            return result
+        async def observe(self,*args,**kwargs):
+            result=await super().observe(*args,**kwargs)
+            result['actions'][0]['label']='Explorar opciones'
+            return result
+    browser=UnclearRoute()
     values=create(factory,model,browser=browser,**settings)
     client,app,extractor,mail,sat,telegram,chat=values
     confirm_profile(telegram,chat)
@@ -115,7 +125,7 @@ def test_public_review_cannot_call_private_or_fiscal_tools(billing_client):
     assert mail.sent==sat.calls==[]
 
 
-def test_only_one_public_navigation_is_executed_per_review_even_if_model_asks_more(billing_client):
+def test_public_navigation_stops_at_form_even_if_model_asks_to_click_more(billing_client):
     model=ScriptedModel([[call('portal_browser_observe')],
         [call('portal_browser_navigate',observation_id='aaaaaaaa',reference='bbbbbbbb')],
         [call('portal_browser_navigate',observation_id='cccccccc',reference='bbbbbbbb')],
@@ -124,7 +134,7 @@ def test_only_one_public_navigation_is_executed_per_review_even_if_model_asks_mo
     client,app,extractor,mail,sat,telegram,chat=values
     chat(data=button(telegram,'wa'))
     assert [item[0] for item in browser.calls]==['open','act']
-    assert 'step_limit_reached' in str(model.inputs[-1])
+    assert 'form_found' in str(model.inputs[-1])
     assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
     assert app.state.database.usage(owner(app))['runs']==1
 

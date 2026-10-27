@@ -28,33 +28,27 @@ def test_non_brand_portals_continue_from_current_controls_without_forcing_a_bran
                     if logos==3 else 'Comercio Independiente'),
                   'kind':'link','brand':True} for index in range(logos)],observed=observed)
             return result
-        async def open(self,owner,url,*,allowed=None):
+        async def open(self,owner,url,*,allowed=None,public_route=False):
             self.calls.append(('open',owner,url))
             return self.page()
         async def observe(self,owner,session):
             self.calls.append(('observe',owner,session))
             return self.page('dddddddd','eeeeeeee')
         async def act(self,owner,session,observed,reference):
-            assert (observed,reference)==('dddddddd','eeeeeeee')
+            assert (observed,reference)==('aaaaaaaa','bbbbbbbb')
             self.calls.append(('act',owner,session,observed,reference))
             return snapshot(fields=[{'key':field,'label':'Dato solicitado por este sitio','required':True,
                 'kind':'input','options':[]}],observed='ffffffff')
 
     browser=DifferentLayout()
-    model=InstructionsModel([[call('portal_browser_observe')],[answer('Acceso observado.')],
-        [call('portal_browser_observe')],
-        [call('portal_browser_navigate',observation_id='dddddddd',reference='eeeeeeee')],
-        [answer('Formulario observado.')]])
+    model=InstructionsModel([[call('portal_browser_observe')],[answer('Formulario observado.')]])
     client,app,extractor,mail,sat,telegram,chat=create(billing_client,model,browser=browser)
     confirm_profile(telegram,chat)
     extractor.ticket.update(merchant='Comercio Independiente',billing_url='https://merchant.example/')
     telegram.files['receipt']=image('red')
     chat(document='receipt');chat(data=button(telegram,'an'));chat(data=button(telegram,'wa'))
-    if logos<3:
-        assert not any(data.startswith('ba:') for _,data in telegram.messages[-1][2])
-    assert any(label=='Continuar revisión con IA' for label,_ in telegram.messages[-1][2])
-    chat(data=button(telegram,'bn'))
-    assert [item[0] for item in browser.calls]==['open','observe','act']
+    assert not any(data.startswith('ba:') for _,data in telegram.messages[-1][2])
+    assert [item[0] for item in browser.calls]==['open','act']
     assert 'Dato solicitado por este sitio' in telegram.messages[-1][1]
     assert BROWSER_INSTRUCTIONS in model.instructions
     assert all(value not in json.dumps(model.inputs) for value in (FISCAL['rfc'],FISCAL['name']))
@@ -64,7 +58,7 @@ def test_non_brand_portals_continue_from_current_controls_without_forcing_a_bran
 
 def test_web_sdk_receives_same_generic_policy_and_can_inspect_a_direct_form(billing_client):
     class DirectForm(FakeBrowser):
-        async def open(self,owner,url,*,allowed=None):
+        async def open(self,owner,url,*,allowed=None,public_route=False):
             self.calls.append(('open',owner,url))
             return snapshot(fields=[{'key':'reference_number','label':'Referencia de compra',
                 'required':True,'kind':'input','options':[]}])

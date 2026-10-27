@@ -31,17 +31,19 @@ class BrandBrowser(FakeBrowser):
         result=snapshot(fields=[{'label':'RFC','key':'rfc','required':True,'kind':'input','options':[],'source_url':FORM}],observed='dddddddd')
         result.update(page='https://provider.example/form',bookmark_url=FORM)
         return result
-    async def open(self,owner,url,*,allowed=None):
+    async def open(self,owner,url,*,allowed=None,public_route=False):
         self.calls.append(('open',owner,url))
         self.allowed=allowed or []
+        self.public_route=public_route
         return self.form() if url==FORM else self.brands()
     async def act(self,owner,session,observed,reference):
-        assert 'https://provider.example' in self.allowed
+        assert self.public_route or 'https://provider.example' in self.allowed
         self.calls.append(('act',owner,reference))
         return self.form()
-    async def allow(self,owner,session,allowed):
+    async def allow(self,owner,session,allowed,*,public_route=False):
         self.calls.append(('allow',owner,allowed))
         self.allowed=allowed
+        self.public_route=public_route
         return self.brands('eeeeeeee')
 
 
@@ -60,20 +62,19 @@ def receive(billing_client,*,merchant="Dominos"):
 def arrive_and_save(billing_client,**options):
     values,browser,model=receive(billing_client,**options)
     client,app,extractor,mail,sat,telegram,chat=values
-    choice=button(telegram,'ba')
-    assert len(choice.encode())<=64
-    chat(data=choice)
-    assert 'https://provider.example' in telegram.messages[-1][1]
-    assert [item[0] for item in browser.calls]==['open']
-    chat(data=button(telegram,'wa'))
-    assert [item[0] for item in browser.calls]==['open','allow','act']
+    if options.get('merchant')=='Operadora Ejemplo':
+        # Emisor de varias marcas: hace falta una elección humana concreta.
+        choice=button(telegram,'ba')
+        assert len(choice.encode())<=64
+        chat(data=choice)
+    assert [item[0] for item in browser.calls]==['open','act']
     assert 'Guardar portal' in str(telegram.messages[-1][2])
     chat(data=button(telegram,'bs'))
     saved=app.state.billing.store.list('portal_memory',owner(app))[0]
     return values,browser,model,saved
 
 
-def test_native_brand_choice_uses_observed_control_and_requires_destination_permission_without_extra_ai(billing_client):
+def test_matching_brand_uses_observed_control_within_route_permission_without_extra_ai(billing_client):
     values,browser,model,saved=arrive_and_save(billing_client)
     client,app,extractor,mail,sat,telegram,chat=values
     assert len(model.inputs)==2 and app.state.database.usage(owner(app))['runs']==1
@@ -222,13 +223,12 @@ def test_company_with_several_brands_does_not_teach_one_portal_for_the_whole_iss
 
 
 def test_another_user_cannot_use_brand_or_bookmark_buttons_from_this_ticket(billing_client):
-    values,browser,model=receive(billing_client)
+    values,browser,model=receive(billing_client,merchant='Operadora Ejemplo')
     client,app,extractor,mail,sat,telegram,chat=values
     before=len(browser.calls)
     chat(data=button(telegram,'ba'),user=456)
     assert len(browser.calls)==before and 'no encontrado' in telegram.messages[-1][1]
     chat(data=button(telegram,'ba'))
-    chat(data=button(telegram,'wa'))
     chat(data=button(telegram,'bs'),user=456)
     assert app.state.billing.store.list('portal_memory',owner(app))==[]
     assert 'no encontrado' in telegram.messages[-1][1]

@@ -23,8 +23,8 @@ confirmación privada pendiente impedía revisar el portal.
 - Un botón nativo desactualizado o una revisión vencida se refresca sin llamar a
   IA. Si venció también el permiso, vuelve a mostrar la autorización necesaria.
 - Si el navegador rechaza un clic por una página o sesión desactualizada, se hace
-  una lectura nueva, sin repetir la acción. Sigue permitiéndose un solo intento
-  de navegación por ejecución.
+  una lectura nueva, sin repetir la acción. El clic fallido no se repite; el recorrido
+  nuevo puede seguir varias opciones inequívocas dentro del límite de pasos.
 - Se conservan los límites diarios de ejecuciones/tokens, tiempos de espera,
   dominios autorizados y límites del navegador. No se reintentan envíos ni
   acciones privadas. Un límite diario real sigue mostrándose.
@@ -44,7 +44,7 @@ el historial técnico del contexto público antes de otra revisión.
 Se incorporaron casos de regresión con el SDK real y servicios simulados: chat general
 lleno/bloqueado/largo o con autorización pendiente; referencia antigua del modelo;
 botón nativo antiguo; cuota diaria agotada; herramientas públicas restringidas;
-un único intento de navegación; caducidad de página y permiso; migración de una
+detención al encontrar el formulario; caducidad de página y permiso; migración de una
 base existente, recuperación tras rechazo de una referencia por el navegador y
 pausa de una página extensa sin pedir `/nuevo`, identificadores incorrectos o de
 otro ticket y errores nuevos que no reutilizan un aviso de página antiguo.
@@ -59,16 +59,17 @@ del código dentro de la imagen devolvió `Ticket vinculado: True`.
 
 ## Actualizar desde Termius
 
-Este cambio necesita recrear solamente `agent`; conserva el navegador que ya
-está funcionando y sus variables/volúmenes existentes.
+La actualización del recorrido público necesita reconstruir `agent` y `browser`.
+Conserva las variables, claves, perfil fiscal y volúmenes existentes. Véase
+[recorrido público](RECORRIDO_PUBLICO.md).
 
 ```bash
 (
   set -e
   cd /opt/lilyapp-agent
   git pull --ff-only
-  docker compose -f compose.hostinger.yaml -f compose.browser.yaml build agent
-  docker compose -f compose.hostinger.yaml -f compose.browser.yaml up -d --no-deps --force-recreate --wait --wait-timeout 180 agent
+  docker compose -f compose.hostinger.yaml -f compose.browser.yaml build agent browser
+  docker compose -f compose.hostinger.yaml -f compose.browser.yaml up -d --wait --wait-timeout 180
   docker compose -f compose.hostinger.yaml -f compose.browser.yaml exec -T agent python -c "from pathlib import Path; print('Ticket vinculado:', 'browser_selection' in Path('/app/backend/app/billing/tools.py').read_text())"
   curl --fail --silent --show-error --max-time 20 https://agente.lilyapp.mx/health
 )
