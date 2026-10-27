@@ -22,7 +22,7 @@ from .fake_model import ScriptedModel, answer, call
 def billing_client(tmp_path):
     stack=ExitStack()
     counter=0
-    def make(*,path=None,model=None,portals=(),extractor=None,extras=(),**overrides):
+    def make(*,path=None,model=None,portals=(),extractor=None,extras=(),browser=None,**overrides):
         nonlocal counter
         counter+=1
         values=dict(ai_api_key='',app_login_password=TEST_PASSWORD,
@@ -33,7 +33,7 @@ def billing_client(tmp_path):
         extractor=extractor or FakeExtractor()
         mail,sat,telegram=FakeMail(),FakeSat(),FakeTelegram()
         app=create_app(settings,model=model or ScriptedModel(),billing_extractor=extractor,
-            mail_provider=mail,sat_verifier=sat,telegram_client=telegram,portal_adapters=portals,extra_tools=extras)
+            mail_provider=mail,sat_verifier=sat,telegram_client=telegram,portal_adapters=portals,extra_tools=extras,portal_browser=browser)
         client=stack.enter_context(TestClient(app))
         login(client)
         return client,app,extractor,mail,sat,telegram

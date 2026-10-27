@@ -25,7 +25,7 @@ persisten al actualizar o recrear el contenedor usando el mismo volumen y clave.
 | Vigencia SAT | Adaptador SOAP con destino HTTPS fijo, desactivado por defecto; autorización expresa para compartir RFC, UUID e importe | Transporte simulado. No se hizo una consulta fiscal real. Consulta de vigencia y verificación criptográfica son comprobaciones distintas |
 | Seguimiento | Consulta manual y seguimiento periódico opcional por ticket, con política revisada y autorizada, límite total y parada tras tres errores consecutivos | Sin recordatorios automáticos ni nuevos correos de seguimiento. Avisos en Telegram para su propio usuario y estados disponibles en la web |
 | Telegram | Conversación libre con el mismo agente, historial por persona, webhook con secreto, lista de invitados, PDF/foto y botones de consentimiento y aprobación | Runner real, servicios simulados y aislamiento probados. La conexión real de un bot nuevo sigue requiriendo configuración |
-| Portales de comercios | Registro de adaptadores del servidor y prioridad sobre correo cuando hay un adaptador compatible autorizado | No hay adaptadores de portales comerciales instalados. No se automatiza un portal arbitrario encontrado en un ticket |
+| Portales de comercios | Inspección HTML y navegador público opcional: el mismo agente observa enlaces, opciones y campos de dominios autorizados | No hay adaptadores que emitan facturas en portales. Esta fase no rellena ni envía formularios; consulta [Navegación adaptable](NAVEGACION.md) |
 | WhatsApp | La lógica fiscal está separada del canal y puede reutilizarse | Adaptador de WhatsApp pendiente; no hay un número o integración de WhatsApp activados |
 
 ## 1. Necesitas una dirección web del servidor

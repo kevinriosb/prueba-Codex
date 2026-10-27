@@ -49,7 +49,7 @@ class DeleteConfirmation(Payload):
 
 
 def create_app(settings=None, *, model=None, extra_tools=(), billing_extractor=None,
-               mail_provider=None, portal_adapters=(), sat_verifier=None, telegram_client=None):
+               mail_provider=None, portal_adapters=(), sat_verifier=None, telegram_client=None,portal_browser=None):
     settings = settings or Settings()
 
     @asynccontextmanager
@@ -59,7 +59,7 @@ def create_app(settings=None, *, model=None, extra_tools=(), billing_extractor=N
         service = AgentService(settings, database, model=model, extra_tools=extra_tools)
         app.state.database, app.state.auth, app.state.service = database, auth, service
         billing=BillingService(settings,database,service,extractor=billing_extractor,mail=mail_provider,
-            portals=portal_adapters,sat=sat_verifier)
+            portals=portal_adapters,sat=sat_verifier,browser=portal_browser)
         app.state.billing=billing
         app.state.telegram=TelegramBridge(settings,billing,agent_service=service,client=telegram_client)
         billing.notifier=app.state.telegram.notify

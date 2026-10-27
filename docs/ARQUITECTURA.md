@@ -9,6 +9,8 @@ flowchart LR
     D --> F[Herramientas permitidas]
     F --> G[Cálculo con Decimal y AST limitado]
     F --> H[Fecha y hora con zona explícita]
+    F --> N[Cliente de navegación pública autorizado]
+    N --> O[Contenedor Playwright sin claves ni documentos]
     C --> I[(SQLite: conversaciones, sesiones y presupuesto)]
     D --> J[Interrupción por aprobación]
     J --> I
@@ -17,6 +19,18 @@ flowchart LR
 ```
 
 ## Límites de confianza
+
+La navegación pública opcional usa el **mismo agente**, con un contenedor de
+Playwright separado. El backend selecciona un ticket propio y entrega solo URL,
+dominios permitidos y propietario opaco al navegador; RFC, CSF y credenciales no se
+montan en ese contenedor. Los campos visibles se relacionan en el backend con el
+perfil propio y la compra; al modelo se devuelven etiquetas y disponibilidad de
+datos. Las páginas son entradas no confiables, nunca permisos ni instrucciones.
+El modelo elige referencias efímeras de enlaces o desplegables realmente
+observados. El servidor rechaza código, selectores arbitrarios, escritura de
+inputs, POST y destinos no autorizados. Consultas y fragmentos del enlace inicial
+no se reenvían. Los campos públicos se observan sin completar ni solicitar una
+factura. [Alcance, pruebas y activación](NAVEGACION.md).
 
 El navegador no decide la identidad, los permisos, el presupuesto ni qué herramientas existen. Solo envía texto o una decisión booleana para una aprobación ya guardada. El servidor obtiene al propietario de una sesión válida y comprueba la pertenencia de cada conversación. No se reciben snapshots del SDK ni credenciales de OpenAI por los endpoints del chat.
 

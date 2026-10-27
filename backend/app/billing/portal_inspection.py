@@ -14,7 +14,8 @@ import httpx2
 
 LABELS = {'account_number':'Cuenta', 'folio':'Folio', 'reference_number':'Referencia',
     'billing_code':'Código de facturación', 'purchase_date':'Fecha', 'total':'Importe',
-    'rfc':'RFC', 'postal_code':'CP fiscal', 'email':'Correo', 'fiscal_regime':'Régimen', 'cfdi_use':'Uso CFDI'}
+    'rfc':'RFC', 'postal_code':'CP fiscal', 'email':'Correo', 'fiscal_regime':'Régimen', 'cfdi_use':'Uso CFDI',
+    'web_id':'Web ID','toll_station':'Caseta','lane':'Carril','purchase_time':'Hora'}
 IDENTIFIERS = ('account_number', 'folio', 'reference_number', 'billing_code')
 
 
@@ -22,7 +23,9 @@ def field_key(text):
     text = ''.join(char for char in unicodedata.normalize('NFD', text.casefold())
         if unicodedata.category(char) != 'Mn')
     text = re.sub(r'[^a-z0-9]+', ' ', text)
-    patterns = {'account_number':r'\b(cuenta|account|accountnumber|consumptionaccount)\b',
+    patterns = {'web_id':r'\b(web\s*id|webid)\b', 'toll_station':r'\b(caseta|plaza de cobro)\b',
+        'lane':r'\b(carril|lane)\b','purchase_time':r'\b(hora|time)\b',
+        'account_number':r'\b(cuenta|account|accountnumber|consumptionaccount)\b',
         'billing_code':r'\b(billing code|codigo de facturacion|codigofacturacion)\b',
         'folio':r'\b(folio|ticket|ticketnumber)\b', 'reference_number':r'\b(referencia|reference)\b',
         'rfc':r'\brfc\b', 'postal_code':r'\b(cp|codigo postal|postal code|zip)\b',

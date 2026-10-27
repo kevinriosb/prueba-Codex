@@ -1,0 +1,222 @@
+import asyncio
+import os
+import secrets
+import time
+import uuid
+from dataclasses import dataclass, field
+from urllib.parse import urljoin
+
+from playwright.async_api import async_playwright
+
+from .policy import BrowserError, PublicFetcher, https_url, origin, public_page, secure_link
+
+
+# Código fijo del servidor. El modelo solo elige referencias observadas, nunca JS.
+SNAPSHOT = r'''() => {
+ const visible=e=>!!(e.getClientRects().length)&&getComputedStyle(e).visibility!=='hidden';
+ const labelText=e=>{const c=e.cloneNode(true);c.querySelectorAll('input,select,textarea,script,style').forEach(x=>x.remove());return c.textContent;};
+ const label=e=>((e.labels&&Array.from(e.labels).map(labelText).join(' '))||e.getAttribute('aria-label')||e.innerText||e.getAttribute('placeholder')||e.getAttribute('name')||e.id||'').replace(/\s+/g,' ').trim().slice(0,100);
+ const fields=Array.from(document.querySelectorAll('input,select,textarea')).filter(e=>visible(e)&&!e.disabled&&!['hidden','password','file','submit','button','reset'].includes(e.type)).slice(0,24).map(e=>({label:label(e),kind:e.tagName.toLowerCase(),required:!!e.required,options:e.tagName==='SELECT'?Array.from(e.options).slice(0,25).map(o=>o.text.slice(0,70)):[]}));
+ const actions=[];
+ for(const e of document.querySelectorAll('a[href],summary,[aria-expanded],[role="tab"],[data-bs-toggle="collapse"],[data-toggle="collapse"]')) {
+  if(!visible(e)||e.disabled||actions.length>=16) continue;
+  const href=e.tagName==='A'?e.getAttribute('href'):null;
+  const expand=e.tagName==='SUMMARY'||e.hasAttribute('aria-expanded')||e.getAttribute('role')==='tab'||e.getAttribute('data-bs-toggle')==='collapse'||e.getAttribute('data-toggle')==='collapse';
+  if(e.closest('form')&&!expand) continue;
+  if(!expand&&(!href||href.startsWith('#'))) continue;
+  const id='nav-'+Math.random().toString(36).slice(2,12);
+  e.setAttribute('data-public-nav-ref',id);
+  actions.push({selector:id,label:label(e),kind:expand?'expand':'link',url:expand?null:e.href});
+ }
+ return {title:document.title.slice(0,120),fields,actions,captcha:!!document.querySelector('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],[class*="g-recaptcha"],[class*="h-captcha"]')};
+}'''
+
+
+@dataclass
+class Session:
+    owner:str
+    context:object
+    page:object
+    allowed:set
+    created:float=field(default_factory=time.monotonic)
+    observation:str=''
+    actions:dict=field(default_factory=dict)
+    lock:object=field(default_factory=asyncio.Lock)
+    steps:int=1
+    requests:int=0
+    size:int=0
+    blocked:set=field(default_factory=set)
+    network_blocked:bool=False
+
+
+class BrowserManager:
+    def __init__(self, *, fetcher=None, executable='/usr/bin/chromium', ttl=180, max_steps=8):
+        self.fetcher=fetcher or PublicFetcher()
+        self.executable,self.ttl,self.max_steps=executable,ttl,max_steps
+        self.sessions={}
+        self.playwright=self.browser=None
+        self.start_lock=asyncio.Lock()
+        self.open_lock=asyncio.Lock()
+
+    async def _start(self):
+        async with self.start_lock:
+            if self.browser:
+                return
+            self.playwright=await async_playwright().start()
+            self.browser=await self.playwright.chromium.launch(executable_path=self.executable,headless=True,
+                env={name:os.environ[name] for name in ('PATH','LANG') if name in os.environ}|{'HOME':'/tmp','TMPDIR':'/tmp'},
+                args=['--proxy-server=http://127.0.0.1:9','--proxy-bypass-list=<-loopback>','--disable-dev-shm-usage',
+                    '--disable-background-networking','--disable-quic','--disable-extensions',
+                    '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'])
+
+    async def purge(self):
+        for identifier,session in list(self.sessions.items()):
+            if time.monotonic()-session.created>self.ttl:
+                self.sessions.pop(identifier,None)
+                await session.context.close()
+
+    async def close(self):
+        for session in list(self.sessions.values()):
+            await session.context.close()
+        self.sessions.clear()
+        if self.browser:
+            await self.browser.close()
+        if self.playwright:
+            await self.playwright.stop()
+        await self.fetcher.close()
+
+    async def _route(self,session,route):
+        request=route.request
+        try:
+            if request.method=='GET' and request.resource_type in {'image','font','media','other'}:
+                await route.abort('blockedbyclient')
+                return
+            url=https_url(request.url)
+            target=origin(url)
+            if target not in session.allowed:
+                session.blocked.add(target)
+                raise ValueError()
+            if request.method!='GET' or request.resource_type not in {'document','script','stylesheet','xhr','fetch'}:
+                raise ValueError()
+            session.requests+=1
+            if session.requests>60:
+                raise ValueError()
+            status,headers,body=await self.fetcher.fetch(url,request.headers)
+            session.size+=len(body)
+            if session.size>6_291_456:
+                raise ValueError()
+            if 'location' in headers:
+                target_url=secure_link(urljoin(url,headers['location']))
+                if origin(target_url) not in session.allowed:
+                    session.blocked.add(origin(target_url))
+                    raise ValueError()
+                headers['location']=target_url
+            await route.fulfill(status=status,headers=headers,body=body)
+        except Exception:
+            session.network_blocked=True
+            await route.abort('blockedbyclient')
+
+    async def open(self,owner,url,allowed):
+        if self.open_lock.locked():
+            raise BrowserError('browser_busy','El navegador está abriendo otra página.',429)
+        async with self.open_lock:
+            return await self._open(owner,url,allowed)
+
+    async def _open(self,owner,url,allowed):
+        url=https_url(url)
+        allowed={origin(item) for item in allowed}
+        if not allowed or len(allowed)>12 or origin(url) not in allowed:
+            raise BrowserError('browser_origin','El operador debe autorizar este dominio antes de navegar.',403)
+        await self.purge()
+        if len(self.sessions)>=2:
+            raise BrowserError('browser_busy','El navegador está ocupado. Intenta más tarde.',429)
+        await self._start()
+        context=await self.browser.new_context(service_workers='block',accept_downloads=False,
+            java_script_enabled=True,ignore_https_errors=False)
+        context.set_default_timeout(4000)
+        await context.route_web_socket('**/*',lambda socket:socket.close())
+        page=await context.new_page()
+        context.on('page',lambda popup:popup.close())
+        session=Session(owner,context,page,allowed)
+        await context.route('**/*',lambda route:self._route(session,route))
+        page.on('dialog',lambda dialog:dialog.dismiss())
+        identifier=str(uuid.uuid4())
+        self.sessions[identifier]=session
+        try:
+            async with asyncio.timeout(10):
+                await page.goto(url,wait_until='domcontentloaded',timeout=8000)
+                return await self._observe(identifier,session)
+        except Exception:
+            self.sessions.pop(identifier,None)
+            await context.close()
+            raise BrowserError('browser_navigation','No se pudo abrir la página pública autorizada.',502) from None
+
+    async def get(self,owner,identifier):
+        await self.purge()
+        session=self.sessions.get(identifier)
+        if not session or session.owner!=owner:
+            raise BrowserError('browser_session','La revisión no existe o venció. Abre otra revisión.',404)
+        return session
+
+    async def observe(self,owner,identifier):
+        session=await self.get(owner,identifier)
+        async with session.lock:
+            return await self._observe(identifier,session)
+
+    async def _observe(self,identifier,session):
+        session.observation=secrets.token_hex(4)
+        session.actions={}
+        fields,actions=[],[]
+        title=''
+        captcha=False
+        async with asyncio.timeout(6):
+            for frame in session.page.frames[:4]:
+                try:
+                    approved=origin(frame.url) in session.allowed
+                except BrowserError:
+                    approved=False
+                if not approved:
+                    continue
+                result=await frame.evaluate(SNAPSHOT)
+                title=title or result['title']
+                captcha=captcha or result['captcha']
+                fields.extend(result['fields'])
+                for item in result['actions']:
+                    if item['kind']=='link':
+                        try:
+                            url=secure_link(item['url'])
+                            if origin(url) not in session.allowed:
+                                session.blocked.add(origin(url))
+                                continue
+                            item['url']=url
+                        except BrowserError:
+                            continue
+                    reference=secrets.token_hex(4)
+                    session.actions[reference]=(frame,item)
+                    actions.append({'reference':reference,'label':item['label'],'kind':item['kind']})
+        return {'session_id':identifier,'observation_id':session.observation,'page':public_page(session.page.url),
+            'title':title,'fields':fields[:24],'actions':actions[:24],'captcha':captcha,
+            'blocked_origins':sorted(session.blocked)[:12],'network_blocked':session.network_blocked,
+            'steps_remaining':max(0,self.max_steps-session.steps),
+            'public_only':True,'purchase_validated':False,'submitted':False}
+
+    async def act(self,owner,identifier,observation_id,reference):
+        session=await self.get(owner,identifier)
+        async with session.lock:
+            if observation_id!=session.observation or reference not in session.actions:
+                raise BrowserError('browser_stale','La página cambió. Revisa el estado antes de continuar.')
+            if session.network_blocked:
+                raise BrowserError('browser_intervention','Se bloqueó una solicitud de la página. Requiere intervención.')
+            if session.steps>=self.max_steps:
+                raise BrowserError('browser_steps','La revisión alcanzó su límite de navegación. Requiere revisión humana.')
+            frame,item=session.actions.pop(reference)
+            session.observation=''
+            session.steps+=1  # Consumir ANTES del clic: no se reintenta por fallos.
+            if item['kind']=='link':
+                await session.page.goto(https_url(item['url']),wait_until='domcontentloaded',timeout=8000)
+            else:
+                locator=frame.locator('[data-public-nav-ref="'+item['selector']+'"]')
+                if await locator.count()!=1:
+                    raise BrowserError('browser_stale','El control cambió. Revisa la página nuevamente.')
+                await locator.click(timeout=4000)
+            return await self._observe(identifier,session)

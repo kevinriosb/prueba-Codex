@@ -67,6 +67,10 @@ class TelegramAgent:
             approval_id=approval_id, approve=approve, channel='telegram',channel_context=self.bridge.agent_context(owner))
         message = result['messages'][-1]
         reviews = [event['review'] for event in message['events'] if isinstance(event.get('review'), dict)]
+        # Una observación seguida de un clic reemplaza la vista anterior del portal.
+        browser_reviews=[review for review in reviews if review.get('kind')=='browser']
+        if browser_reviews:
+            reviews=[review for review in reviews if review.get('kind')!='browser']+[browser_reviews[-1]]
         if not reviews and not result['approval']:
             await self.send_text(chat_id, message['content'])
         # Solo eventos creados por herramientas del servidor; nunca JSON del modelo.

@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short -x`: **366 pruebas pasadas**, sin fallos ni pruebas omitidas (100,87 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short -x`: **405 pruebas pasadas**, sin fallos ni pruebas omitidas (109,35 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
 
 ### Solicitudes repetidas, perfil persistente y cuotas
 
@@ -423,3 +423,41 @@ de generación, consultas de cuentas de consumo ni envíos reales. La imagen se
 construyó, pasó el smoke de salud/login/persistencia y el JavaScript modificado
 pasó la comprobación de sintaxis. Falta probar la consulta pública desde el VPS
 y verificar la Cuenta extraída del ticket real.
+
+
+## Navegación pública adaptable con Playwright
+
+Se añadieron 39 regresiones. Chromium real navegó sobre páginas ficticias con
+estructuras diferentes: enlace a otro dominio permitido, desplegable sin Web ID
+que descubre folio/caseta/carril/fecha/hora y formulario directo con referencia.
+El SDK real, con respuestas programadas, eligió referencias observadas y el bot
+mostró solo la observación final. Se verificaron aislamiento por propietario,
+cookies separadas, caducidad, máximo de pasos, referencias consumidas, bloqueo de
+POST y DNS privado/mixto, IP fijada con Host/SNI, ausencia de valores de inputs en
+las observaciones y ausencia de datos fiscales en los cuerpos enviados al navegador.
+El cliente elimina consultas/fragmentos iniciales y sigue enlaces HTTP únicamente por HTTPS. Al modelo se proporcionan solo dominios, etiquetas y referencias compactas, sin rutas, listas largas de opciones o valores privados. Las APIs exigen autenticación y
+CSRF, el navegador está desactivado por defecto y un dominio no autorizado muestra
+un diagnóstico sin ofrecer reintentos de IA inútiles. Los campos alternativos no
+se convierten en requisitos universales.
+
+`Dockerfile.browser` se construyó con Chromium del sistema y paquetes Python
+verificados por hashes. La CA pública del entorno se montó solo durante el build
+con permisos de lectura para APT; no se desactivó TLS. La configuración Compose
+combinada mantuvo el volumen fiscal del agente y no publicó puertos ni compartió
+claves con el servicio de navegador.
+
+`scripts/browser_container_smoke.py` pasó con raíz de solo lectura, UID 10001,
+límites de recursos y sin capacidades adicionales: servicio autenticado, /health,
+rechazo de archivos locales y navegación Chromium con contenido simulado. Sus
+contenedores y volumen temporales se eliminaron. No se usó un portal real, no se
+realizó una llamada nueva de IA de pago y no se rellenó o envió ningún formulario.
+La activación en el VPS y su prueba real quedan pendientes del propietario.
+
+
+`scripts/browser_compose_smoke.py` también pasó con el stack completo del agente y
+navegador. Comprobó `/health` del agente, el volumen separado de credencial interna,
+la autenticación entre servicios por red privada y el rechazo de una URL local
+antes de navegar. El proyecto Compose usó nombre aleatorio, contraseñas y clave de
+cifrado ficticias; sus contenedores, redes y volúmenes se eliminaron al terminar.
+La prueba del contenedor general conservó historial y documento fiscal cifrado al
+recrearlo, con UID 10001 y sin incorporar `.env` ni pruebas en la imagen.

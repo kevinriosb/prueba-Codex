@@ -17,8 +17,9 @@ from .documents import inspect_document
 from .extraction import DocumentExtractor, EXTRACTION_VERSION
 from .models import CFDI_USES, REGIMES, FiscalExtraction, Status, TicketExtraction, missing_fiscal_fields, regime_code, validate_fiscal
 from .providers import GmailProvider, normalized_email
-from .receipt import missing_receipt_fields, pending_receipt_fields, purchase_date, purchase_reference, purchase_total, receipt_qr_urls
+from .receipt import browser_missing_fields, missing_receipt_fields, pending_receipt_fields, purchase_date, purchase_reference, purchase_total, receipt_qr_urls
 from .portal_inspection import PortalInspector, portal_plan
+from .browser import PortalBrowserClient
 from .store import BillingStore
 
 
@@ -27,7 +28,7 @@ def public(record):
 
 
 class BillingService:
-    def __init__(self,settings,database,agent_service,*,extractor=None,mail=None,portals=(),sat=None):
+    def __init__(self,settings,database,agent_service,*,extractor=None,mail=None,portals=(),sat=None,browser=None):
         self.settings,self.database=settings,database
         self.enabled=bool(settings.billing_encryption_key.get_secret_value())
         self.store=None
@@ -41,12 +42,13 @@ class BillingService:
             self.sat=sat or SatVerifier(settings.billing_sat_enabled)
             self.portals=tuple(portals)
             self.portal_inspector=PortalInspector(settings)
+            self.browser=browser or PortalBrowserClient(settings)
             self.contacts=official_contacts(settings.billing_verified_contacts_json)
             self.store.purge()
 
     async def close(self):
         if self.enabled:
-            for component in (self.mail,self.sat,self.portal_inspector):
+            for component in (self.mail,self.sat,self.portal_inspector,self.browser):
                 close=getattr(component,'close',None)
                 if close:
                     await close()
@@ -355,6 +357,54 @@ class BillingService:
         self.store.audit(owner,ticket_id,'portal_public_form_inspected')
         return ticket
 
+    def browser_review(self,owner,ticket_id):
+        self.resolve_ticket(owner,ticket_id)
+        record=self.store.find('browser_review',owner,self.store.digest('browser:'+ticket_id))
+        if not record:
+            raise AppError(404,'browser_session','La revisión venció. Inicia otra revisión.')
+        return record
+
+    async def browse_portal(self,owner,ticket_id,*,observation_id=None,reference=None):
+        self.require_enabled()
+        ticket=self.resolve_ticket(owner,ticket_id)
+        ticket_id=ticket['id']
+        if not ticket.get('billing_url'):
+            raise AppError(409,'billing_portal','Primero se necesita una página de facturación identificada.')
+        lookup=self.store.digest('browser:'+ticket_id)
+        previous=self.store.find('browser_review',owner,lookup)
+        try:
+            if reference:
+                if not previous or previous['snapshot']['observation_id']!=observation_id or reference not in {item['reference'] for item in previous['snapshot']['actions']}:
+                    raise AppError(409,'browser_stale','La página cambió. Actualiza la revisión.')
+                if previous['snapshot']['captcha'] or previous['snapshot']['network_blocked']:
+                    raise AppError(409,'browser_intervention','La página requiere intervención humana antes de continuar.')
+                snapshot=await self.browser.act(owner,previous['snapshot']['session_id'],observation_id,reference)
+            elif previous:
+                snapshot=await self.browser.observe(owner,previous['snapshot']['session_id'])
+            else:
+                snapshot=await self.browser.open(owner,ticket['billing_url'])
+        except AppError as error:
+            ticket['portal_browser_error']={'code':error.code,'message':error.message}
+            self.store.update('ticket',owner,ticket_id,ticket)
+            if error.code=='browser_session' and previous:
+                self.store.delete('browser_review',owner,previous['id'])
+            raise
+        fields=[]
+        for item in snapshot['fields']:
+            fields.append({'key':item.get('key'),'label':item['label'],'required':item['required'],
+                'matched':bool(ticket.get(item.get('key'))),'options':item['options']})
+        ticket['portal_browser']={'page':snapshot['page'],'fields':fields,'checked_at':time.time(),
+            'purchase_validated':False,'submitted':False}
+        ticket['portal_browser_error']=None
+        self.store.update('ticket',owner,ticket_id,ticket)
+        payload={'ticket_id':ticket_id,'snapshot':snapshot}
+        if previous:
+            record=self.store.update('browser_review',owner,previous['id'],payload)
+        else:
+            record=self.store.add('browser_review',owner,payload,lookup=lookup,expires=time.time()+150)
+        self.store.audit(owner,ticket_id,'public_browser_observed')
+        return record
+
     def _status(self,owner,ticket,status,note=''):
         ticket['status']=status
         ticket['note']=note
@@ -366,7 +416,7 @@ class BillingService:
     def retry_ticket_after_update(self,owner,document_id):
         source=self.document(owner,document_id)
         ticket=self.store.get('ticket',owner,source.get('ticket_id',''))
-        needs_reference=bool(set(pending_receipt_fields(ticket)) & {'account_number','reference_number','billing_code'})
+        needs_reference=bool(set(pending_receipt_fields(ticket)) & {'account_number','reference_number','billing_code','web_id','toll_station','lane','purchase_time'}) or bool(browser_missing_fields(ticket))
         if source['purpose']!='ticket' or source.get('superseded_by') or ticket.get('delivery') or (ticket['status'] not in {Status.ERROR,Status.REQUIERE_INTERVENCION} and not needs_reference):
             raise AppError(409,'analysis_retry','Este archivo ya se procesó. Consulta /tickets.')
         if any(item['ticket_id']==ticket['id'] and item['_state'] in {'pending','claimed','unknown'} for item in self.store.list('email_approval',owner)):
@@ -384,7 +434,7 @@ class BillingService:
     def complete_ticket_field(self,owner,ticket_id,field,value):
         ticket=self.store.get('ticket',owner,ticket_id)
         document=self.document(owner,ticket['document_id'])
-        if ticket.get('delivery') or not (document.get('extracted') or {}).get('is_ticket') or field not in pending_receipt_fields(ticket):
+        if ticket.get('delivery') or not (document.get('extracted') or {}).get('is_ticket') or field not in set(pending_receipt_fields(ticket))|set(browser_missing_fields(ticket)):
             raise AppError(409,'ticket_field','Ese dato no está pendiente. Consulta /tickets.')
         value=value.strip()
         if not value or len(value)>160 or any(ord(char)<32 for char in value):
@@ -394,6 +444,8 @@ class BillingService:
         elif field=='total':
             value=purchase_total(value)
         elif field in {'folio','account_number'} and len(value)>100:
+            value=None
+        elif field=='lane' and len(value)>40 or field=='purchase_time' and len(value)>20:
             value=None
         if not value:
             raise AppError(422,'ticket_field','El dato no tiene un formato válido.')
@@ -518,7 +570,8 @@ Saludos.'''
         return public(approval)|{'expires':approval['_expires']}
 
     def _purchase_fingerprint(self,ticket):
-        keys=('merchant','purchase_date','account_number','folio','reference_number','billing_code','total','currency')
+        keys=('merchant','purchase_date','account_number','folio','reference_number','billing_code','total','currency',
+            'web_id','toll_station','lane','purchase_time')
         return self.store.digest(json.dumps({key:ticket.get(key) for key in keys},sort_keys=True,ensure_ascii=False))
 
     async def send_invoice_request_email(self,owner,approval_id,*,confirmed=False):

@@ -1,0 +1,63 @@
+# Complemento opcional: usar junto a compose.hostinger.yaml.
+name: lilyapp-agent
+services:
+  browser-token:
+    image: lilyapp-agent:local
+    user: "10001:10001"
+    entrypoint: ["python", "-m", "backend.browser_worker.initialize"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - browser_auth:/run/browser-auth
+  browser:
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
+    image: lilyapp-browser:local
+    init: true
+    restart: unless-stopped
+    depends_on:
+      browser-token:
+        condition: service_completed_successfully
+    environment:
+      BROWSER_TOKEN_FILE: /run/browser-auth/token
+    volumes:
+      - browser_auth:/run/browser-auth:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=536870912,uid=10001,gid=10001,mode=1770
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: "1.0"
+    mem_limit: 768m
+    pids_limit: 256
+    networks: [browser_private, browser_egress]
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+  agent:
+    environment:
+      BILLING_BROWSER_ENABLED: "true"
+      BILLING_BROWSER_WORKER_URL: http://browser:8001
+      BILLING_BROWSER_TOKEN_FILE: /run/browser-auth/token
+    depends_on:
+      browser:
+        condition: service_healthy
+    volumes:
+      - browser_auth:/run/browser-auth:ro
+    networks: [default, browser_private]
+volumes:
+  browser_auth:
+networks:
+  browser_private:
+    internal: true
+  browser_egress: {}

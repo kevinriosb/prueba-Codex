@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     billing_verified_contacts_json: str = Field(default='[]',max_length=20_000)
     billing_portal_inspection_urls: str = Field(default='https://f.zetus.mx/albat',max_length=4000)
     billing_portal_inspection_timeout_seconds: int = Field(default=7,ge=1,le=15)
+    billing_browser_enabled: bool = False
+    billing_browser_origins: str = Field(default='',max_length=2000)
+    billing_browser_worker_url: str = 'http://browser:8001'
+    billing_browser_token_file: Path = Path('/run/browser-auth/token')
     billing_background_tracking_enabled: bool = False
     billing_tracking_interval_seconds: int = Field(default=3600,ge=300,le=86400)
     billing_tracking_max_checks: int = Field(default=72,ge=1,le=100)

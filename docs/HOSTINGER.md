@@ -1,5 +1,10 @@
 # VPS Hostinger con AlmaLinux y CyberPanel
 
+La navegación pública adaptable es opcional y añade un contenedor sin acceso a
+claves ni documentos. Su activación y las actualizaciones posteriores usan también
+`compose.browser.yaml`: consulta [Navegación adaptable](NAVEGACION.md). El despliegue
+de esta guía con un solo Compose conserva su comportamiento anterior.
+
 Preparación para una instancia privada del agente. No instala otro servidor web
 ni se conecta automáticamente a ningún VPS. Los cambios del proxy requieren
 ejecutar explícitamente el asistente con `--apply`. Crear archivos de despliegue

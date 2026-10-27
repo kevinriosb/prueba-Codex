@@ -36,6 +36,10 @@ def create_billing_router(payload_base):
     class Tracking(Confirm):
         enabled: bool = Field(strict=True)
 
+    class BrowserAction(payload_base):
+        observation_id:str=Field(pattern=r'^[a-f0-9]{8}$')
+        reference:str=Field(pattern=r'^[a-f0-9]{8}$')
+
     class CertificateRequired(Confirm):
         evidence: str = Field(min_length=10,max_length=1000)
 
@@ -95,6 +99,14 @@ def create_billing_router(payload_base):
         billing=service(request)
         return public(billing.store.get('ticket',user['id'],str(identifier)))|{'channels':billing.detect_billing_channels(user['id'],str(identifier)),
             'responses':[public(value) for value in billing.store.list('mail_reply',user['id']) if value['ticket_id']==str(identifier)]}
+
+    @router.post('/tickets/{identifier}/browser',dependencies=[Depends(check_csrf)])
+    async def open_browser(identifier:uuid.UUID,request:Request,user=Depends(authenticated)):
+        return public(await service(request).browse_portal(user['id'],str(identifier)))
+
+    @router.post('/tickets/{identifier}/browser/actions',dependencies=[Depends(check_csrf)])
+    async def browser_action(identifier:uuid.UUID,payload:BrowserAction,request:Request,user=Depends(authenticated)):
+        return public(await service(request).browse_portal(user['id'],str(identifier),**payload.model_dump()))
 
     @router.delete('/tickets/{identifier}',dependencies=[Depends(check_csrf)])
     async def delete_ticket(identifier:uuid.UUID,payload:Confirm,request:Request,user=Depends(authenticated)):

@@ -1,0 +1,17 @@
+FROM python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /app
+COPY requirements.txt requirements-browser.txt ./
+RUN --mount=type=secret,id=build_ca,mode=0444 \
+    if [ -f /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
+    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && if [ -f /run/secrets/build_ca ]; then apt-get -o Acquire::https::CaInfo=/run/secrets/build_ca update; else apt-get update; fi \
+    && if [ -f /run/secrets/build_ca ]; then apt-get -o Acquire::https::CaInfo=/run/secrets/build_ca install -y --no-install-recommends chromium; else apt-get install -y --no-install-recommends chromium; fi \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --no-cache-dir --require-hashes -r requirements.txt -r requirements-browser.txt \
+    && useradd --uid 10001 --create-home agent \
+    && mkdir -p /run/browser-auth && chown agent:agent /run/browser-auth
+COPY --chown=agent:agent backend ./backend
+USER agent
+EXPOSE 8001
+CMD ["python","-m","uvicorn","backend.browser_worker.app:app","--host","0.0.0.0","--port","8001","--no-access-log"]

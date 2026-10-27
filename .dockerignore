@@ -1,5 +1,6 @@
 **
 !requirements.txt
+!requirements-browser.txt
 !backend/
 !backend/**
 !frontend/

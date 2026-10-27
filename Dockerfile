@@ -15,7 +15,7 @@ RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
     python -m pip install --no-cache-dir --require-hashes -r requirements.txt \
     && useradd --uid 10001 --create-home agent \
-    && mkdir -p /data && chown agent:agent /data
+    && mkdir -p /data /run/browser-auth && chown agent:agent /data /run/browser-auth
 
 COPY --chown=agent:agent backend ./backend
 COPY --chown=agent:agent frontend ./frontend
