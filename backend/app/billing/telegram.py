@@ -424,19 +424,35 @@ class TelegramBridge:
         if not self.agent:
             raise AppError(503,'telegram_agent','El agente de Telegram no está configurado.')
         try:
-            await self.agent.reply(owner,chat_id,text='Investiga el acceso de facturación del ticket seleccionado según la página actual. Decide entre los controles observados, avanza como máximo un paso y reevalúa el resultado. No introduzcas datos ni solicites facturas.')
+            await self.agent.reply(owner,chat_id,portal_review=True,text='Investiga el acceso de facturación del ticket seleccionado según la página actual. Observa primero, avanza como máximo un paso y reevalúa el resultado. No introduzcas datos ni solicites facturas.')
         except AppError as error:
-            if error.code not in {'agent_turn_limit','tool_limit','run_timeout'}:
+            if error.code not in {'agent_turn_limit','tool_limit','run_timeout','context_limit'}:
                 raise
             await self.client.send(chat_id,'Revisión pausada por el límite de ejecución.')
             await self._browser(owner,chat_id,ticket['id'])
 
+    async def _refresh_browser(self,owner,chat_id,identifier):
+        try:
+            await self.billing.browse_portal(owner,identifier)
+        except PortalPermissionRequired as error:
+            permission=self.billing.portal_permissions.request(owner,identifier,origins=error.origins)
+            await self._portal_permission(owner,chat_id,permission['id'])
+            return
+        await self._browser(owner,chat_id,identifier)
+
     async def _brand(self,owner,chat_id,identifier,observed,reference):
         ticket=self.billing.resolve_ticket(owner,identifier)
-        record=self.billing.browser_review(owner,ticket['id'])
+        try:
+            record=self.billing.browser_review(owner,ticket['id'])
+        except AppError as error:
+            if error.status!=404:
+                raise
+            await self._refresh_browser(owner,chat_id,ticket['id'])
+            return
         action=next((item for item in record['snapshot']['actions'] if item['reference']==reference),None)
         if observed!=record['snapshot']['observation_id'] or not action:
-            raise AppError(409,'browser_stale','La página cambió. Vuelve a revisar el portal.')
+            await self._refresh_browser(owner,chat_id,ticket['id'])
+            return
         try:
             await self.billing.browse_portal(owner,ticket['id'],observation_id=observed,reference=reference)
         except PortalPermissionRequired as error:
@@ -446,6 +462,11 @@ class TelegramBridge:
             self._save_state(owner,state)
             permission=self.billing.portal_permissions.request(owner,ticket['id'],origins=error.origins)
             await self._portal_permission(owner,chat_id,permission['id'])
+            return
+        except AppError as error:
+            if error.code not in {'browser_stale','browser_session'}:
+                raise
+            await self._refresh_browser(owner,chat_id,ticket['id'])
             return
         state=self._state(owner)
         state.pop('browser_choice',None)

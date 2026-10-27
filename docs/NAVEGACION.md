@@ -14,6 +14,11 @@ El bot no pide elegir marca por ver un único logo, aunque se repita en el pie.
 No se mantiene una receta por dominio; guardar una liga conserva un punto de
 entrada confirmado, no los pasos ni las autorizaciones de otro ticket.
 
+Los botones de revisión usan un contexto público limpio, independiente del
+historial y límite de turnos del chat general. Las cuotas diarias se comparten.
+Una referencia antigua se actualiza sin repetir el clic; los permisos vencidos
+se solicitan de nuevo. Véase [recuperación del portal](RECUPERACION_PORTAL.md).
+
 Esta entrega **no rellena formularios, no busca la compra con sus identificadores,
 no envía el perfil fiscal, no inicia sesión y no solicita o emite facturas**.
 Registrar tickets, introducir los datos fiscales, aprobar la operación, enviar

@@ -37,6 +37,11 @@ class Database:
                 CREATE INDEX IF NOT EXISTS runs_owner_day ON runs(user_id, day);
                 CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id, id);
             """)
+            # Las conversaciones existentes conservan su propósito e historial.
+            columns={item['name'] for item in conn.execute('PRAGMA table_info(conversations)')}
+            if 'purpose' not in columns:
+                conn.execute("ALTER TABLE conversations ADD COLUMN purpose TEXT NOT NULL DEFAULT 'chat'")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_portal_review_per_owner ON conversations(user_id) WHERE purpose='portal_review'")
             # Una ejecución interrumpida no se reanuda automáticamente: puede haber efectos externos.
             conn.execute("UPDATE conversations SET blocked=1 WHERE id IN (SELECT conversation_id FROM runs WHERE status='running')")
             conn.execute("UPDATE runs SET status='interrupted' WHERE status='running'")
@@ -101,14 +106,31 @@ class Database:
         now = time.time()
         identifier = str(uuid.uuid4())
         with self.connection(True) as conn:
-            if conn.execute("SELECT COUNT(*) FROM conversations WHERE user_id=?", (owner,)).fetchone()[0] >= maximum:
+            if conn.execute("SELECT COUNT(*) FROM conversations WHERE user_id=? AND purpose='chat'", (owner,)).fetchone()[0] >= maximum:
                 raise AppError(429, "conversation_limit", "Alcanzaste el límite de conversaciones. Elimina alguna para crear otra.")
             conn.execute("INSERT INTO conversations(id,user_id,title,created,updated) VALUES(?,?,?,?,?)", (identifier, owner, "Nueva conversación", now, now))
         return self.get_conversation(identifier, owner)
 
+    def prepare_portal_review(self, owner):
+        """Un contexto público por usuario, limpio por ejecución; no reinicia cuotas."""
+        now=time.time()
+        with self.connection(True) as conn:
+            row=conn.execute("SELECT * FROM conversations WHERE user_id=? AND purpose='portal_review'",(owner,)).fetchone()
+            if row and (row['busy'] or row['pending']):
+                raise AppError(409,'busy','Hay una revisión pública pendiente. Espera a que termine.')
+            if row:
+                identifier=row['id']
+                conn.execute('DELETE FROM messages WHERE conversation_id=?',(identifier,))
+                conn.execute("UPDATE conversations SET history='[]',turns=0,blocked=0,updated=? WHERE id=?",(now,identifier))
+            else:
+                identifier=str(uuid.uuid4())
+                conn.execute("INSERT INTO conversations(id,user_id,title,created,updated,purpose) VALUES(?,?,?,?,?,'portal_review')",
+                    (identifier,owner,'Revisión pública del portal',now,now))
+        return self.get_conversation(identifier,owner)
+
     def list_conversations(self, owner):
         with self.connection() as conn:
-            return [dict(row) for row in conn.execute("SELECT id,title,created,updated,turns FROM conversations WHERE user_id=? ORDER BY updated DESC", (owner,)).fetchall()]
+            return [dict(row) for row in conn.execute("SELECT id,title,created,updated,turns FROM conversations WHERE user_id=? AND purpose='chat' ORDER BY updated DESC", (owner,)).fetchall()]
 
     def get_conversation(self, identifier, owner):
         with self.connection() as conn:

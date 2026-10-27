@@ -61,8 +61,12 @@ class TelegramAgent:
             self.bridge._save_state(owner,state)
         await self.bridge.client.send(chat_id,'Conversación eliminada. Tus perfiles y tickets se conservan.')
 
-    async def reply(self, owner, chat_id, *, text=None, approval_id=None, approve=None):
-        conversation = self.conversation(owner)
+    async def reply(self, owner, chat_id, *, text=None, approval_id=None, approve=None,portal_review=False):
+        if portal_review:
+            self.service.database.ensure_telegram_user(owner)
+            conversation=self.service.database.prepare_portal_review(owner)
+        else:
+            conversation = self.conversation(owner)
         result = await self.service.execute(conversation['id'], owner, text=text,
             approval_id=approval_id, approve=approve, channel='telegram',channel_context=self.bridge.agent_context(owner))
         message = result['messages'][-1]
