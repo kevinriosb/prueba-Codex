@@ -135,7 +135,8 @@ def test_duplicate_normalizes_amount_and_merchant_name_when_rfc_matches(billing_
     extractor.ticket.update(merchant='Otro nombre comercial de la misma empresa',total='116')
     identifier=upload(client,'ticket',selected,image('blue'))
     result=client.post(f'/api/billing/documents/{identifier}/analyze',json={'consent_to_ai':True})
-    assert result.status_code==409 and len(app.state.billing.store.list('ticket','owner'))==1
+    assert result.status_code==200 and result.json()['ticket']['duplicate'] is True
+    assert len(app.state.billing.store.list('ticket','owner'))==1
 
 
 def test_deleted_original_blocks_previously_approved_attachment(billing_client):
@@ -256,10 +257,11 @@ def test_compatible_authorized_portal_has_priority(billing_client):
 def test_duplicate_ticket_different_picture_does_not_create_request(billing_client):
     client,app,*_=billing_client()
     selected=profile(client)['id']
-    ticket(client,selected)
+    original=ticket(client,selected)
     identifier=upload(client,'ticket',selected,image('red'))
     response=client.post(f'/api/billing/documents/{identifier}/analyze',json={'consent_to_ai':True})
-    assert response.status_code==409 and response.json()['error']['code']=='duplicate_ticket'
+    assert response.status_code==200 and response.json()['ticket']['duplicate'] is True
+    assert response.json()['ticket']['id']==original['id']
     assert len(app.state.billing.store.list('ticket','owner'))==1
 
 

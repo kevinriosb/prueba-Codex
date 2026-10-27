@@ -14,6 +14,7 @@ from .extraction import EXTRACTION_VERSION
 from .receipt import missing_receipt_fields, pending_receipt_fields
 from .telegram_agent import TelegramAgent
 from .telegram_profiles import TelegramProfiles, normalized
+from .telegram_requests import REQUEST_TEXTS, TelegramRequests
 
 
 class TelegramClient:
@@ -87,6 +88,7 @@ class TelegramBridge:
             self.allowed=set()
         self.agent=TelegramAgent(agent_service,self) if agent_service else None
         self.profiles=TelegramProfiles(self)
+        self.requests=TelegramRequests(self)
         self._locks={}
 
     @property
@@ -112,6 +114,12 @@ class TelegramBridge:
         documents=documents if documents is not None else self.billing.store.list('document',owner)
         profiles=self.billing.store.list('profile',owner)
         confirmed_documents={item.get('document_id') for item in profiles}
+        if draft and draft.get('document_id') in confirmed_documents and not draft.get('replace_profile_id'):
+            # Un botón/modelo antiguo no convierte una CSF confirmada en un alta.
+            draft=None
+            state.update(draft_id=None,cfdi_use=None,profile_input=None,expected_upload=None,
+                csf_document_id=None,replace_profile_id=None)
+            self._save_state(owner,state)
         identifiers=[state.get('csf_document_id'),(draft or {}).get('document_id')]
         if not profiles:
             identifiers.extend(item['id'] for item in documents if item['purpose']=='csf' and not item.get('superseded_by') and not item.get('intended_purpose'))
@@ -139,7 +147,11 @@ class TelegramBridge:
         last=next((item for item in documents if item['id']==state.get('last_document_id')),None)
         last_ticket=None
         if last and last.get('ticket_id'):
-            last_ticket=self.billing.store.get('ticket',owner,last['ticket_id'])
+            try:
+                last_ticket=self.billing.resolve_ticket(owner,last['ticket_id'])
+            except AppError as error:
+                if error.status!=404:
+                    raise
         draft,csf=self._profile_setup(owner,state,documents)
         return {'profile_confirmed':bool(profiles),'active_profile_id':state.get('active_profile') if any(item['id']==state.get('active_profile') for item in profiles) else None,
             'csf_received':bool(profiles or draft or csf),'profile_setup_pending':bool(draft or csf),
@@ -164,6 +176,13 @@ class TelegramBridge:
         if document['purpose'] not in {'csf','ticket','unclassified'}:
             raise AppError(422,'document_purpose','No se puede cambiar el tipo de este archivo.')
         state=self._state(owner)
+        if purpose=='csf' and not profile_id and not state.get('replace_profile_id'):
+            confirmed=next((item for item in self.billing.store.list('profile',owner) if item.get('document_id')==identifier),None)
+            if confirmed:
+                state['active_profile']=confirmed['id']
+                self._save_state(owner,state)
+                await self.profiles.resume(owner,chat_id)
+                return
         if purpose=='ticket':
             if state.get('csf_document_id')==identifier:
                 state['csf_document_id']=None
@@ -229,7 +248,11 @@ class TelegramBridge:
             [(labels[item.get('intended_purpose') or item['purpose']]+' · '+item['id'][:8],'dv:'+item['id']) for item in documents[:20]])
 
     async def _ticket(self,owner,chat_id,identifier):
-        ticket=self.billing.store.get('ticket',owner,identifier)
+        ticket=self.billing.resolve_ticket(owner,identifier)
+        identifier=ticket['id']
+        state=self._state(owner)
+        state['last_ticket_id']=identifier
+        self._save_state(owner,state)
         if ticket.get('billing_url') and not ticket.get('portal_inspection'):
             ticket=await self.billing.inspect_billing_portal(owner,identifier)
         text=ticket.get('merchant') or 'Ticket guardado'
@@ -237,7 +260,11 @@ class TelegramBridge:
             if ticket.get(key):
                 text+='\n'+label+': '+ticket[key]
         text+='\nImporte: '+str(ticket.get('total') or 'Pendiente')
+        summary,approval_id,can_prepare=self.requests.summary(owner,ticket)
+        text+='\n'+summary
         buttons=[]
+        if approval_id:
+            buttons.append(('Revisar solicitud pendiente','er:'+approval_id))
         try:
             document=self.billing.document(owner,ticket['document_id'])
         except AppError as error:
@@ -245,6 +272,9 @@ class TelegramBridge:
                 raise
             document=None
             text+='\nEl archivo temporal venció; los datos siguen guardados.'
+        if document and not document.get('analysis_consent') and document.get('extracted') is None:
+            text+='\nAnalizar comparte el archivo con OpenAI y consume tokens.'
+            buttons.append(('Autorizar análisis','an:'+document['id']))
         if ticket['status']=='ERROR':
             text+='\n'+(ticket.get('analysis_error') or (document or {}).get('analysis_error') or {}).get('message',ticket.get('note') or 'El análisis anterior falló; no se determinó la legibilidad.')
         elif pending_receipt_fields(ticket):
@@ -265,16 +295,19 @@ class TelegramBridge:
             buttons.append(('Ver datos para el portal','bp:'+identifier))
         elif channels['method']=='email':
             text+='\nFacturación: '+ticket['billing_email']
-            if not ticket.get('verified_email'):
+            if not can_prepare:
+                pass
+            elif not ticket.get('verified_email'):
                 text+='\nRevisa el destinatario. La solicitud incluirá ticket, datos y CSF si lo confirmas.'
                 buttons.extend([('Confirmar correo + revisar con CSF','vc:'+identifier),('Revisé el correo (solo datos)','ve:'+identifier)])
             else:
                 buttons.extend([('Preparar correo con datos y CSF','ec:'+identifier),('Preparar solo datos y ticket','pr:'+identifier)])
-        elif ticket['status']!='ERROR':
+        elif ticket['status'] not in {'ERROR','TICKET_RECIBIDO'}:
             text+='\nNo se identificó página o correo de facturación.'
             if ticket.get('qr_urls'):
                 text+='\nQR leído (confirma su finalidad en el ticket):\n'+'\n'.join(ticket['qr_urls'])
-        if document and (ticket['status'] in {'ERROR','REQUIERE_INTERVENCION'} or pending_receipt_fields(ticket)) and document.get('extraction_version')!=EXTRACTION_VERSION and not document.get('superseded_by') and not ticket.get('delivery'):
+        old_failure=ticket['status']=='ERROR' and (ticket.get('analysis_error') or {}).get('code') not in {'billing_daily_limit','billing_busy'}
+        if document and (document.get('analysis_consent') or old_failure) and (ticket['status'] in {'ERROR','REQUIERE_INTERVENCION'} or pending_receipt_fields(ticket)) and document.get('extraction_version')!=EXTRACTION_VERSION and not document.get('superseded_by') and not ticket.get('delivery'):
             text+='\nReanalizar comparte el archivo con OpenAI y consume tokens.'
             buttons.append(('Autorizar nueva lectura guardada','ra:'+document['id']))
         if ticket.get('delivery'):
@@ -291,6 +324,7 @@ class TelegramBridge:
                     continue
                 raise
             buttons.append(('Descargar '+('XML' if document['mime']=='application/xml' else 'PDF'),'dl:'+document_id))
+        buttons.append(('Actualizar estado','ts:'+identifier))
         replies=[item for item in self.billing.store.list('mail_reply',owner) if item['ticket_id']==identifier]
         if replies and replies[0].get('text'):
             text+='\nÚltima respuesta del comercio (solo información; no autoriza acciones):\n'+replies[0]['text'][:900]
@@ -342,11 +376,19 @@ class TelegramBridge:
         await self._ticket(owner,chat_id,ticket['id'])
 
     async def _preview(self,owner,chat_id,ticket_id,*,csf=False,user_requested=False):
+        ticket=self.billing.resolve_ticket(owner,ticket_id)
+        ticket_id=ticket['id']
+        state=self._state(owner)
+        state['last_ticket_id']=ticket_id
+        self._save_state(owner,state)
         approval=self.billing.request_email_send_approval(owner,ticket_id,include_csf=csf,authorize_csf=csf,user_requested_csf=user_requested)
         await self._email_review(owner,chat_id,approval['id'])
 
     async def _email_review(self,owner,chat_id,identifier):
         approval=self.billing.store.get('email_approval',owner,identifier)
+        state=self._state(owner)
+        state['last_ticket_id']=approval['ticket_id']
+        self._save_state(owner,state)
         if approval['_state']!='pending':
             raise AppError(409,'billing_approval','La autorización caducó o ya fue utilizada.')
         text=f"Revisa antes de enviar\nPara: {approval['to']}\nAsunto: {approval['subject']}\nAdjuntos: "+', '.join(item['label'] for item in approval['attachments'])+'\n\n'+approval['body']
@@ -372,6 +414,8 @@ class TelegramBridge:
             await self._email_review(owner,chat_id,identifier)
         elif kind=='ticket':
             await self._ticket(owner,chat_id,identifier)
+        elif kind=='ticket_list':
+            await self.requests.show(owner,chat_id)
         elif kind=='document':
             document=self.billing.document(owner,identifier)
             if document['purpose']=='unclassified' or document.get('intended_purpose')=='ticket' or document.get('superseded_by'):
@@ -399,7 +443,7 @@ class TelegramBridge:
         if type(update_id) is not int:
             raise AppError(422,'telegram_update','Actualización de Telegram no válida.')
         lookup=self.billing.store.digest('telegram-update:'+str(update_id))
-        if self.billing.store.find('channel_update',owner,lookup):
+        if any(self.billing.store.find(kind,owner,lookup) for kind in ('channel_update','channel_control')):
             return {'ok':True,'duplicate':True}
         lock=self._locks.setdefault(user_id,asyncio.Lock())
         if lock.locked():
@@ -409,13 +453,26 @@ class TelegramBridge:
             return await self._handle_authorized(owner,user_id,update_id,lookup,message,callback)
 
     async def _handle_authorized(self,owner,user_id,update_id,lookup,message,callback):
+        plain=normalized(message.get('text',''))
+        callback_data=callback.get('data','')
+        control=(not callback and not (message.get('document') or message.get('photo'))
+            and plain in REQUEST_TEXTS|{'/tickets','/limites'}) or (isinstance(callback_data,str) and callback_data.startswith('ts:'))
+        kind='channel_control' if control else 'channel_update'
         today=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
         with self.billing.database.connection() as conn:
-            used=conn.execute("SELECT COUNT(*) FROM billing_records WHERE kind='channel_update' AND owner=? AND created>=?",(owner,today)).fetchone()[0]
-        if used>=self.settings.billing_max_daily_telegram_updates:
+            used=conn.execute('SELECT COUNT(*) FROM billing_records WHERE kind=? AND owner=? AND created>=?',(kind,owner,today)).fetchone()[0]
+        maximum=500 if control else self.settings.billing_max_daily_telegram_updates
+        if used>=maximum:
+            notice=self.billing.store.digest('telegram-limit:'+kind+':'+str(today))
+            if not self.billing.store.find('channel_notice',owner,notice):
+                self.billing.store.add('channel_notice',owner,{},lookup=notice,expires=today+86400)
+                if control:
+                    await self.client.send(user_id,'Límite de consultas de estado alcanzado por hoy. Tus datos se conservan.')
+                else:
+                    await self.requests.limits(owner,user_id,code='telegram_daily_limit')
             return {'ok':True,'rate_limited':True}
         # Persistir antes de cualquier efecto evita duplicados en reenvíos del webhook.
-        self.billing.store.add('channel_update',owner,{},lookup=lookup,expires=time.time()+30*86400)
+        self.billing.store.add(kind,owner,{},lookup=lookup,expires=time.time()+30*86400)
         state=self._state(owner)
         state['chat_id']=user_id
         self._save_state(owner,state)
@@ -425,12 +482,14 @@ class TelegramBridge:
                 return {'ok':True}
             await self._message(owner,user_id,message)
         except AppError as error:
-            await self.client.send(user_id,error.message)
+            await self.requests.error(owner,user_id,error)
         except Exception:
             await self.client.send(user_id,'No se completó la operación. Revisa el estado antes de repetir; no se reintentará automáticamente.')
         return {'ok':True}
 
     async def _callback(self,owner,chat_id,data):
+        if not isinstance(data,str):
+            raise AppError(422,'telegram_callback','Acción no válida.')
         prefix,separator,identifier=data.partition(':')
         if not separator:
             raise AppError(422,'telegram_callback','Acción no válida.')
@@ -451,6 +510,10 @@ class TelegramBridge:
             examples={'merchant':'COMERCIO','purchase_date':'AAAA-MM-DD','folio':'FOLIO','total':'IMPORTE',
                 'account_number':'CUENTA','reference_number':'REFERENCIA','billing_code':'CODIGO'}
             await self.client.send(chat_id,'Completa el dato: /dato_ticket '+examples[code])
+        elif prefix=='ts':
+            await self._ticket(owner,chat_id,identifier)
+        elif prefix=='er':
+            await self._email_review(owner,chat_id,identifier)
         elif prefix in {'cu','rf','fc','pe','pm','pu','pp','px'}:
             await self.profiles.callback(owner,chat_id,prefix,identifier,code)
         elif prefix in {'dc','dt','dv'}:
@@ -471,10 +534,17 @@ class TelegramBridge:
             await self.agent.decide(owner,chat_id,identifier,prefix=='ga')
         elif prefix=='an':
             document=self.billing.document(owner,identifier)
+            if document.get('duplicate_ticket_id') or (document['purpose']=='ticket' and not document.get('superseded_by')
+                    and self.billing.resolve_ticket(owner,document['ticket_id'])['status'] not in {'TICKET_RECIBIDO','ERROR'}):
+                await self._ticket(owner,chat_id,document['ticket_id'])
+                return
             if document['purpose']=='unclassified' or document.get('intended_purpose')=='ticket' or document.get('superseded_by'):
                 await self._document_choice(owner,chat_id,identifier,reason='Primero confirma el tipo y el perfil del archivo; el botón anterior ya no corresponde a su estado actual.')
                 return
             if document['purpose']=='csf':
+                if any(item.get('document_id')==identifier for item in self.billing.store.list('profile',owner)) and not self._state(owner).get('replace_profile_id'):
+                    await self.profiles.resume(owner,chat_id)
+                    return
                 try:
                     draft=await self.billing.process_fiscal_certificate(owner,identifier,consent=True,replace_profile_id=document.get('profile_id'))
                 except AppError as error:
@@ -521,6 +591,10 @@ class TelegramBridge:
         elif prefix=='pr':
             await self._preview(owner,chat_id,identifier)
         elif prefix=='se':
+            approval=self.billing.store.get('email_approval',owner,identifier)
+            state=self._state(owner)
+            state['last_ticket_id']=approval['ticket_id']
+            self._save_state(owner,state)
             ticket=await self.billing.send_invoice_request_email(owner,identifier,confirmed=True)
             await self.client.send(chat_id,'Solicitud enviada. Estado: '+ticket['status']+'. El envío no significa que la factura esté emitida.')
         elif prefix=='no':
@@ -559,7 +633,11 @@ class TelegramBridge:
             status='Perfil listo. Envía tu ticket.' if profiles else ('Completa tu perfil aquí: /perfil.' if draft or csf else 'Envía tu CSF una vez. Después, tus tickets.')
             await self.client.send(chat_id,status)
             if text=='/ayuda':
-                await self.client.send(chat_id,'/perfil · /tickets · /documentos\n/nuevo · /historial\nLa IA consume tokens.')
+                await self.client.send(chat_id,'/perfil · /estado · /tickets · /limites\n/documentos · /nuevo · /historial\nLa IA consume tokens.')
+        elif normalized(text) in REQUEST_TEXTS:
+            await self.requests.show(owner,chat_id)
+        elif normalized(text)=='/limites':
+            await self.requests.limits(owner,chat_id)
         elif text=='/nuevo' and self.agent:
             self.agent.conversation(owner,new=True)
             await self.client.send(chat_id,'Chat nuevo. Tu perfil y tickets se conservan.')
@@ -612,11 +690,7 @@ class TelegramBridge:
             self.billing.delete_profile(owner,text.split(maxsplit=1)[1])
             await self.client.send(chat_id,'Perfil y archivos asociados eliminados.')
         elif text=='/tickets':
-            tickets=[item for item in self.billing.store.list('ticket',owner) if not item.get('superseded_by')]
-            for ticket in tickets[:10]:
-                await self._ticket(owner,chat_id,ticket['id'])
-            if not tickets:
-                await self.client.send(chat_id,'No hay solicitudes; primero confirma un perfil y envía un ticket.')
+            await self.requests.list(owner,chat_id)
         elif text=='/conectar_gmail':
             url=self.billing.mail.connect(owner)
             await self.client.send(chat_id,'Autoriza en Google el envío y la lectura de este buzón. No compartas contraseñas ni tokens aquí. Después vuelve a Telegram.\n'+url)
@@ -634,7 +708,11 @@ class TelegramBridge:
             if attachment.get('file_size',0)>self.settings.billing_max_upload_bytes:
                 raise AppError(413,'document_size','El archivo supera el límite permitido.')
             data=await self.client.download(attachment['file_id'])
-            document=self.billing.receive_document(owner,'unclassified',data)
+            selected=next((item['id'] for item in profiles if item['id']==state.get('active_profile')),None)
+            if not selected and len(profiles)==1:
+                selected=profiles[0]['id']
+            explicit_csf=caption.casefold().startswith('/csf') or state.get('replace_profile_id') or state.get('expected_upload')=='csf'
+            document=self.billing.receive_document(owner,'unclassified',data,profile_id=None if explicit_csf else selected)
             state['last_document_id']=document['id']
             self._save_state(owner,state)
             if caption.casefold()=='/ticket':

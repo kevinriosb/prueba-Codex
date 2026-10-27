@@ -9,6 +9,8 @@ Repositorio del proyecto: [kevinriosb/prueba-Codex](https://github.com/kevinrios
 El mismo agente puede conversar por **Telegram con acceso por invitación**, historial
 por persona y botones de aprobación. La [guía de Telegram para Hostinger](docs/TELEGRAM.md)
 explica cómo conectar un bot nuevo desde Termius, sin compartir su token.
+En Telegram, `/estado` o **Repetir solicitud** recuperan el ticket guardado sin
+reiniciar el perfil ni repetir envíos; `/limites` muestra los contadores propios.
 
 **GitHub permite consultar el código; para usar el agente hace falta ejecutar el backend.** El propietario comprobó su instalación web en Hostinger, un cálculo real y conversación con IA en su bot nuevo de Telegram. Los cambios posteriores requieren actualizar y recrear el contenedor; hacer push no cambia el VPS.
 

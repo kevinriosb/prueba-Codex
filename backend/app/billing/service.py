@@ -82,6 +82,17 @@ class BillingService:
         self.require_enabled()
         return self.store.get('document',owner,identifier)
 
+    def resolve_ticket(self,owner,identifier):
+        """Sigue solo sustituciones del mismo propietario, sin analizar ni reenviar."""
+        seen=set()
+        while identifier and identifier not in seen and len(seen)<10:
+            seen.add(identifier)
+            ticket=self.store.get('ticket',owner,identifier)
+            if not ticket.get('superseded_by'):
+                return ticket
+            identifier=ticket['superseded_by']
+        raise AppError(409,'ticket_reference','No se pudo resolver el ticket. Consulta /tickets.')
+
     def receive_document(self,owner,purpose,data,*,profile_id=None):
         self.require_enabled()
         if purpose not in {'csf','ticket','unclassified'}:
@@ -93,7 +104,16 @@ class BillingService:
                 raise AppError(409,'fiscal_profile_required','Primero envía tu Constancia de Situación Fiscal y confirma un perfil.')
             self.store.get('profile',owner,profile_id)
         mime,content=inspect_document(data,self.settings.billing_max_upload_bytes)
-        return self._store_document(owner,purpose,mime,base64.b64encode(content).decode(),hashlib.sha256(content).hexdigest(),profile_id)
+        sha256=hashlib.sha256(content).hexdigest()
+        # Telegram conoce el perfil antes de guardar la subida sin clasificar.
+        # Reconocer los mismos bytes evita otro archivo, consentimiento y cargo.
+        if purpose=='unclassified' and profile_id:
+            existing=next((item for item in self.store.list('document',owner)
+                if item['purpose']=='ticket' and item.get('profile_id')==profile_id and item['sha256']==sha256
+                and (not item.get('superseded_by') or item.get('duplicate_ticket_id'))),None)
+            if existing:
+                return {'id':existing['id'],'purpose':'ticket','duplicate':True,'expires':existing['_expires']}
+        return self._store_document(owner,purpose,mime,base64.b64encode(content).decode(),sha256,profile_id)
 
     def _store_document(self,owner,purpose,mime,encoded,sha256,profile_id,*,source=None,lookup_suffix=''):
         lookup=self.store.digest(f'{purpose}:{profile_id or ""}:'+sha256+lookup_suffix)
@@ -136,6 +156,8 @@ class BillingService:
             self.store.get('profile',owner,profile_id)
         result=self._store_document(owner,purpose,source['mime'],source['data'],source['sha256'],profile_id,source=source)
         target=self.document(owner,result['id'])
+        if purpose=='ticket' and target.get('duplicate_ticket_id'):
+            return result
         if target.get('superseded_by') or target.get('intended_purpose'):
             target.update(superseded_by=None,intended_purpose=None)
             self.store.update('document',owner,target['id'],target)
@@ -164,7 +186,7 @@ class BillingService:
                 try:
                     conn.execute('INSERT INTO billing_extractions VALUES(?,?,?,?)',(owner,day,identifier,'started'))
                 except sqlite3.IntegrityError:
-                    raise AppError(409,'extraction_attempted','Este documento ya se intentó analizar. No se repetirá automáticamente; envía una copia nueva si es necesario.') from None
+                    raise AppError(409,'extraction_attempted','Este documento ya tuvo un intento de análisis. Consulta su estado; no se repetirá automáticamente.') from None
             document.update(analysis_consent=True,extraction_version=EXTRACTION_VERSION,analysis_error=None)
             document=self.store.update('document',owner,identifier,document)
             try:
@@ -267,9 +289,11 @@ class BillingService:
         if document['purpose']!='ticket' or not document['profile_id']:
             raise AppError(409,'fiscal_profile_required','Selecciona primero un perfil fiscal confirmado.')
         self.store.get('profile',owner,document['profile_id'])
-        pending=self.store.get('ticket',owner,document['ticket_id'])
+        pending=self.resolve_ticket(owner,document['ticket_id'])
+        if document.get('duplicate_ticket_id') or document.get('superseded_by') or pending['document_id']!=document_id:
+            return public(pending)|{'duplicate':True,'channels':self.detect_billing_channels(owner,pending['id'])}
         if pending['status'] not in {Status.TICKET_RECIBIDO,Status.ERROR}:
-            raise AppError(409,'duplicate_ticket','Este ticket ya se analizó. Revisa su solicitud antes de repetirlo.')
+            return public(pending)|{'duplicate':True,'channels':self.detect_billing_channels(owner,pending['id'])}
         try:
             document,data=await self._extract(owner,document_id,'ticket',consent)
         except AppError as error:
@@ -294,9 +318,15 @@ class BillingService:
             if duplicate.get('superseded_by')==pending['id'] and not duplicate.get('delivery'):
                 self.store.change_lookup('ticket',owner,duplicate['id'],self.store.digest('superseded:'+duplicate['id']))
             else:
+                duplicate=self.resolve_ticket(owner,duplicate['id'])
+                # Conservar la foto recibida y dirigir sus botones a la solicitud
+                # existente; el registro vacío provisional no es otra solicitud.
+                document.update(ticket_id=duplicate['id'],duplicate_ticket_id=duplicate['id'],
+                    superseded_by=duplicate['document_id'])
+                self.store.update('document',owner,document_id,document)
                 self.store.delete('ticket',owner,pending['id'])
-                self.store.delete('document',owner,document_id)
-                raise AppError(409,'duplicate_ticket','Este ticket ya tiene una solicitud. Revisa su estado antes de repetirlo.')
+                self.store.audit(owner,document_id,'duplicate_ticket_linked')
+                return public(duplicate)|{'duplicate':True,'channels':self.detect_billing_channels(owner,duplicate['id'])}
         self.store.change_lookup('ticket',owner,pending['id'],lookup)
         contact=self.contacts.get(data.get('issuer_rfc'))
         if contact:
@@ -744,7 +774,8 @@ Saludos.'''
                     if kind=='email_approval' and record['_state']=='claimed':
                         raise AppError(409,'send_in_progress','Espera a que termine el envío antes de eliminar el ticket.')
                     self.store.delete(kind,owner,record['id'])
-        for identifier in [ticket['document_id'],*ticket['invoice_documents']]:
+        aliases=[item['id'] for item in self.store.list('document',owner) if item.get('duplicate_ticket_id')==ticket_id]
+        for identifier in dict.fromkeys([ticket['document_id'],*ticket['invoice_documents'],*aliases]):
             try:
                 self.store.delete('document',owner,identifier)
             except AppError as error:

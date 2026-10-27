@@ -32,7 +32,7 @@ def build_billing_tools(billing):
         billing.require_enabled()
         state=billing.store.find('channel_state',owner,'telegram') if ctx.context.get('channel')=='telegram' else None
         return {'profiles':[{'id':item['id']} for item in billing.store.list('profile',owner)[:10]],
-            'tickets':[{'id':item['id'],'status':item['status']} for item in billing.store.list('ticket',owner)[:10]],
+            'tickets':[{'id':item['id'],'status':item['status']} for item in billing.store.list('ticket',owner) if not item.get('superseded_by')][:10],
             'documents':[{'id':item['id'],'purpose':item.get('intended_purpose') or item['purpose'],
                 'awaiting_profile':item.get('intended_purpose')=='ticket'} for item in billing.store.list('document',owner) if not item.get('superseded_by')][:10],
             'active_profile_id':(state or {}).get('active_profile'),
@@ -47,6 +47,14 @@ def build_billing_tools(billing):
             return {'review_in':'Facturación','confirmation_required':True}
         review(ctx,'profile_setup',None)
         return {'review_in':'Telegram','next_step_shown':True,'confirmation_required':True}
+
+    @function_tool
+    async def review_billing_requests(ctx:RunContextWrapper[dict])->dict:
+        """Muestra la solicitud propia guardada y sus pasos pendientes. No repite análisis, altas ni envíos."""
+        billing.require_enabled()
+        review(ctx,'ticket_list',None)
+        return {'review_in':'Telegram' if ctx.context.get('channel')=='telegram' else 'Facturación',
+            'request_repeated':False,'profile_reused':True}
 
     @function_tool
     async def review_received_document(ctx:RunContextWrapper[dict],identifier:str)->dict:
@@ -65,6 +73,9 @@ def build_billing_tools(billing):
             location='Telegram' if ctx.context.get('channel')=='telegram' else 'Facturación'
             if name=='process_fiscal_certificate':
                 document=billing.document(owner,identifier)
+                if ctx.context.get('channel')=='telegram' and any(item.get('document_id')==identifier for item in billing.store.list('profile',owner)):
+                    review(ctx,'profile_setup',None)
+                    return {'profile_confirmed':True,'analysis_performed':False,'review_in':'Telegram'}
                 if ctx.context.get('channel')=='telegram' and (document['purpose']!='csf' or document.get('intended_purpose') or document.get('superseded_by')
                         or (document.get('extracted') is not None and not document['extracted'].get('is_fiscal_certificate'))):
                     review(ctx,'document_type',identifier)
@@ -122,8 +133,12 @@ def build_billing_tools(billing):
             return {'ticket_id':identifier,'status':ticket['status'],
                 'sat_verified':bool((ticket.get('validation') or {}).get('sat_verified')),
                 'sat_authorization_required':not bool((ticket.get('validation') or {}).get('sat_verified')),'review_in':location}
+        def failure(ctx,_error):
+            if ctx.context.get('channel')=='telegram':
+                kind='profile_setup' if name in {'process_fiscal_certificate','extract_fiscal_profile','confirm_fiscal_profile'} else 'ticket_list'
+                review(ctx,kind,None)
+                return 'No se completó la operación. Se mostrará el estado real guardado; no repitas acciones ni reinicies el perfil.'
+            return 'No se completó la operación fiscal. Revisa Facturación; no repitas envíos automáticamente.'
         return function_tool(action,name_override=name,description_override=description,
-            timeout=billing.settings.run_timeout_seconds,
-            failure_error_function=lambda ctx,_error:('No se completó la operación. Usa review_fiscal_setup para mostrar el siguiente paso aquí; no inventes el resultado.'
-                if ctx.context.get('channel')=='telegram' else 'No se completó la operación fiscal. Revisa Facturación; no repitas envíos automáticamente.'))
-    return [billing_workspace,review_received_document,review_fiscal_setup]+[build(name,description) for name,description in OPERATIONS.items()]
+            timeout=billing.settings.run_timeout_seconds,failure_error_function=failure)
+    return [billing_workspace,review_received_document,review_fiscal_setup,review_billing_requests]+[build(name,description) for name,description in OPERATIONS.items()]

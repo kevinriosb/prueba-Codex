@@ -90,6 +90,29 @@ contenedor: no necesitas instalar el SDK en el Python 3.9 del sistema.
 - `/documentos` recupera archivos propios vigentes y permite corregir el tipo.
   También puedes escribir **«Es un ticket»** para corregir el último archivo.
   Los archivos conservan su vencimiento original; clasificarlos no amplía el TTL.
+- **Repetir solicitud** y `/estado` abren el ticket guardado, su estado y el paso
+  pendiente. No repiten análisis, envíos ni el alta fiscal. `/tickets` permite
+  elegir entre varias compras; **Actualizar estado** vuelve a consultar el registro.
+  **Datos listos** no significa solicitado: el bot indica si no hubo envío,
+  falta confirmar el borrador, se espera respuesta o existe un envío incierto.
+  **Consultar respuestas** consulta Gmail únicamente al pulsarlo, si ya hubo envío.
+- Una foto idéntica de un ticket vigente y del mismo perfil reutiliza su análisis
+  sin consumo adicional de IA ni otro archivo. Otra foto de la misma compra puede
+  necesitar una lectura autorizada para reconocerla; después abre la solicitud
+  original y conserva la copia cifrada hasta su vencimiento. No duplica el envío.
+- `/limites` muestra los contadores propios y la hora de restablecimiento en la
+  zona horaria del servidor. Por defecto hay **10 análisis de archivos**, **30
+  ejecuciones de chat IA** y **100 mensajes/acciones** diarios, con presupuestos
+  separados. Los análisis de CSF y tickets comparten el primer contador; los
+  intentos fallidos también cuentan. Actualizar el contenedor no reinicia cuotas.
+  Los límites diarios se renuevan a las 00:00 UTC, mostradas en hora local.
+  La reserva de tokens, el espacio de archivos y los turnos por conversación son
+  límites distintos: el bot identifica cuál impidió la operación.
+- `/estado`, `/tickets`, `/limites`, **Actualizar estado** y las frases de consulta
+  reconocidas no generan IA ni consumen los 100 mensajes/acciones. Tienen una cota
+  independiente de 500 consultas al día por usuario. Así puedes revisar una compra
+  aunque hayas agotado el chat o los análisis. El límite del proveedor OpenAI es
+  independiente de estos contadores locales. No se elevan cuotas automáticamente.
 - La CSF se analiza con autorización; el perfil se confirma después de elegir uso
   de CFDI y correo. Mencionar esos datos en el chat no crea un perfil confirmado.
   Si la CSF ya llegó, el bot pide solo el paso pendiente, sin solicitarla otra vez.

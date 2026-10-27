@@ -4,7 +4,25 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado actual de `.venv/bin/python -m pytest -q --tb=short`: **347 pruebas pasadas**, sin fallos ni pruebas omitidas. Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis.
+Resultado actual de `.venv/bin/python -m pytest -q --tb=short -x`: **362 pruebas pasadas**, sin fallos ni pruebas omitidas (82,18 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
+
+### Solicitudes repetidas, perfil persistente y cuotas
+
+Las quince pruebas nuevas usan archivos ficticios, modelo programado y correo
+simulado. Comprueban que la misma foto no gasta otro análisis ni espacio, incluso
+con el límite de archivos lleno; otra foto de la misma compra abre el ticket
+original y conserva los bytes; sus botones antiguos no repiten la extracción.
+El perfil se conserva al reiniciar y vencer la CSF original. Un borrador o llamada
+del modelo sobre la CSF ya confirmada no reinicia el alta. Los errores de tickets
+abren su estado, no el alta fiscal. Se distingue borrador, envío confirmado y envío
+incierto, sin reenviar ni consultar Gmail automáticamente por pedir repetir.
+Se comprueban los contadores de análisis/chat/mensajes y la hora local de reinicio;
+las consultas de estado siguen disponibles con la cuota de acciones agotada y
+los botones mantienen aislamiento e idempotencia por usuario. La eliminación
+expresa de un ticket también elimina sus fotos duplicadas, conservando la CSF.
+Las expectativas HTTP de duplicados cambian de error 409 a respuesta 200 con el
+ticket original y `duplicate=true`. No se borra ni reinicia la base existente.
+Falta aplicar y comprobar esta actualización en el VPS del propietario.
 
 Se comprobaron:
 

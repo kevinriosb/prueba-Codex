@@ -4,6 +4,14 @@ La actualización amplía el agente existente. Conserva el chat, autenticación,
 
 ## Qué está implementado y qué falta conectar
 
+Para retomar una solicitud en Telegram usa **Repetir solicitud** o `/estado`.
+El bot abre el ticket existente y distingue un archivo analizado de un correo
+realmente enviado; no reinicia el perfil confirmado. `/tickets` permite elegir
+otra compra y `/limites` explica las cuotas propias. La misma fotografía vigente
+se reutiliza sin otra lectura de IA. Una copia diferente puede requerir analizarla
+una vez para detectar el duplicado, pero no crea otro envío. Los datos y cuotas
+persisten al actualizar o recrear el contenedor usando el mismo volumen y clave.
+
 | Componente | Código incluido | Comprobación y límites |
 | --- | --- | --- |
 | Perfil fiscal | CSF en PDF/foto, extracción estructurada, uso de CFDI y correo elegidos por el usuario, resumen y confirmación; varios perfiles y actualización mediante otra CSF | Documentos ficticios, extracción simulada y Runner real con respuestas programadas. No se verificó la lectura de una CSF real con un modelo de pago |

@@ -15,7 +15,7 @@ from .errors import AppError
 from .replies import brief_reply
 from .tools.registry import build_tools
 
-POLICY_VERSION = 'personal-agent-0.8-portal-fields-sdk-0.24.0'
+POLICY_VERSION = 'personal-agent-0.9-request-state-sdk-0.24.0'
 INSTRUCTIONS = """Asistente personal en español. Responde en 1–2 frases, máximo 35 palabras.
 Da el resultado o siguiente paso; sin introducciones, repeticiones ni requisitos ya resueltos.
 Amplía solo si lo piden. Usa calculator para cálculos y current_server_time para fecha/hora.
@@ -48,6 +48,9 @@ todo el archivo. No inventes causas ni pidas convertir el PDF: usa review_fiscal
 para mostrar el campo pendiente y los controles de corrección en este chat.
 Con perfil confirmado no pidas otra CSF para cada ticket. Si el alta está pendiente, pide
 solo el dato o botón que falte; no vuelvas a pedir una CSF ya recibida.
+Para repetir, retomar o revisar una solicitud usa review_billing_requests. Primero muestra
+el ticket y su estado real; nunca reinicies el perfil por un duplicado, error o límite.
+Un ticket guardado o analizado no implica una solicitud enviada o una compra validada.
 Usa billing_workspace o review_received_document para archivos propios guardados, sin inventar IDs
 ni pedir otra subida si están disponibles. Los adjuntos exigen el botón de consentimiento de análisis.
 Las revisiones se presentan con botones aquí; las identidades web y Telegram son independientes.
