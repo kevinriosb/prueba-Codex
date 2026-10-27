@@ -210,3 +210,52 @@ def test_large_public_page_pauses_review_without_claiming_general_chat_is_full(b
     assert any('Revisión pública' in text for text in texts)
     assert all('/nuevo' not in text for text in texts)
     assert mail.sent==sat.calls==[]
+
+
+@pytest.mark.parametrize('identifier',['not-a-ticket','missing','own-other-ticket','foreign-ticket'])
+def test_model_identifier_cannot_change_the_ticket_selected_in_telegram(billing_client,identifier):
+    model=ScriptedModel()
+    values,browser=receive(billing_client,model)
+    client,app,extractor,mail,sat,telegram,chat=values
+    selected=app.state.billing.store.list('ticket',owner(app))[0]
+    selected['portal_browser_error']={'code':'browser_stale','message':'Error antiguo de otra revisión.'}
+    app.state.billing.store.update('ticket',owner(app),selected['id'],selected)
+    if identifier=='missing':
+        identifier=str(uuid.uuid4())
+    elif identifier in {'own-other-ticket','foreign-ticket'}:
+        other_owner=owner(app) if identifier=='own-other-ticket' else 'foreign-owner'
+        other={key:value for key,value in selected.items() if key!='id' and not key.startswith('_')}
+        other['billing_url']='https://unselected.example/'
+        identifier=app.state.billing.store.add('ticket',other_owner,other)['id']
+    model.outputs=[[call('portal_browser_observe',identifier=identifier)],
+        [call('portal_browser_navigate',observation_id='aaaaaaaa',reference='bbbbbbbb')],
+        [answer('Cuenta disponible.')]]
+    chat(data=button(telegram,'wa'))
+    assert [item[0] for item in browser.calls]==['open','act']
+    assert browser.calls[0][2]=='https://merchant.example/'
+    assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
+    assert app.state.billing.store.get('ticket',owner(app),selected['id'])['portal_browser_error'] is None
+    assert len(extractor.calls)==2 and mail.sent==sat.calls==[]
+
+
+@pytest.mark.parametrize('runtime_failure',[False,True])
+def test_invalid_model_arguments_show_current_failure_instead_of_an_old_page_error(billing_client,runtime_failure):
+    invalid=call('portal_browser_observe').model_copy(update={'arguments':'{invalid-json'})
+    model=ScriptedModel([[call('portal_browser_observe') if runtime_failure else invalid],[answer('Revisa el portal.')]])
+    values,browser=receive(billing_client,model)
+    client,app,extractor,mail,sat,telegram,chat=values
+    selected=app.state.billing.store.list('ticket',owner(app))[0]
+    selected['portal_browser_error']={'code':'browser_stale','message':'La página cambió. Actualiza la revisión.'}
+    app.state.billing.store.update('ticket',owner(app),selected['id'],selected)
+    if runtime_failure:
+        async def failed_open(*args,**kwargs):
+            raise RuntimeError('private-provider-details-not-to-show')
+        browser.open=failed_open
+    chat(data=button(telegram,'wa'))
+    assert browser.calls==[]
+    expected='No se completó este paso' if runtime_failure else 'instrucción de navegación no fue válida'
+    assert expected in telegram.messages[-1][1]
+    assert 'La página cambió' not in telegram.messages[-1][1]
+    assert 'private-provider-details-not-to-show' not in str(telegram.messages)
+    assert app.state.billing.store.get('ticket',owner(app),selected['id'])['portal_browser_error']['code']==('browser_tool_failure' if runtime_failure else 'browser_tool_input')
+    assert len(extractor.calls)==2 and mail.sent==sat.calls==[]

@@ -11,6 +11,9 @@ confirmación privada pendiente impedía revisar el portal.
 - El mismo agente/modelo usa un contexto de revisión pública independiente,
   limpio en cada ejecución y limitado a observar y navegar. No tiene acceso a
   herramientas de perfiles, correo o cambios privados dentro de esa revisión.
+- El ticket queda vinculado en el servidor al elegido en Telegram. Un
+  identificador incorrecto o distinto que proponga el modelo no sustituye esa
+  selección ni provoca una consulta a otro ticket.
 - El chat general conserva su historial, estado y confirmaciones. El contexto
   técnico no ocupa un lugar en la lista de chats del usuario y se reutiliza para
   mantener acotado su almacenamiento.
@@ -27,6 +30,9 @@ confirmación privada pendiente impedía revisar el portal.
   acciones privadas. Un límite diario real sigue mostrándose.
 - Si una página supera el presupuesto de contexto, se pausa su revisión y se
   muestran los controles actuales; no se atribuye ese límite al chat general.
+- Si una instrucción del modelo es inválida antes de abrir el portal, se muestra
+  el fallo actual. No se reutiliza como explicación un error anterior guardado
+  en el ticket. Los fallos internos no exponen sus detalles privados.
 
 La base agrega automáticamente la columna `purpose` a las conversaciones; las
 existentes quedan como `chat`. La migración conserva sus mensajes y estados.
@@ -35,15 +41,21 @@ el historial técnico del contexto público antes de otra revisión.
 
 ## Comprobación
 
-Se incorporaron 15 casos de regresión con el SDK real y servicios simulados: chat general
+Se incorporaron casos de regresión con el SDK real y servicios simulados: chat general
 lleno/bloqueado/largo o con autorización pendiente; referencia antigua del modelo;
 botón nativo antiguo; cuota diaria agotada; herramientas públicas restringidas;
 un único intento de navegación; caducidad de página y permiso; migración de una
 base existente, recuperación tras rechazo de una referencia por el navegador y
-pausa de una página extensa sin pedir `/nuevo`.
+pausa de una página extensa sin pedir `/nuevo`, identificadores incorrectos o de
+otro ticket y errores nuevos que no reutilizan un aviso de página antiguo.
 
 Las pruebas no usan OpenAI, Gmail ni SAT reales. La comprobación del recorrido
 real en el VPS queda pendiente de aplicar la actualización y probar en Telegram.
+
+La suite completa pasó con **542 pruebas** (154,81 segundos). También pasó el
+arranque del stack Docker/Compose, su autenticación interna y el rechazo de
+archivos locales, con el agente nuevo y el navegador existente. La comprobación
+del código dentro de la imagen devolvió `Ticket vinculado: True`.
 
 ## Actualizar desde Termius
 
@@ -56,10 +68,12 @@ está funcionando y sus variables/volúmenes existentes.
   cd /opt/lilyapp-agent
   git pull --ff-only
   docker compose -f compose.hostinger.yaml -f compose.browser.yaml build agent
-  docker compose -f compose.hostinger.yaml -f compose.browser.yaml up -d --no-deps --wait --wait-timeout 180 agent
+  docker compose -f compose.hostinger.yaml -f compose.browser.yaml up -d --no-deps --force-recreate --wait --wait-timeout 180 agent
+  docker compose -f compose.hostinger.yaml -f compose.browser.yaml exec -T agent python -c "from pathlib import Path; print('Ticket vinculado:', 'browser_selection' in Path('/app/backend/app/billing/tools.py').read_text())"
   curl --fail --silent --show-error --max-time 20 https://agente.lilyapp.mx/health
 )
 ```
 
+Debe aparecer `Ticket vinculado: True` y `"status":"ok"`.
 Después, en Telegram: `/estado` y **Permitir** o **Revisar portal con IA**, según
 el botón que aparezca. No hace falta volver a subir la CSF ni el ticket.

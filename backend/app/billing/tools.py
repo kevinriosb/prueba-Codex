@@ -2,6 +2,7 @@ import json
 from urllib.parse import urlsplit
 
 from agents import RunContextWrapper, function_tool
+from agents.exceptions import ModelBehaviorError
 
 from ..errors import AppError
 from .models import validate_fiscal
@@ -62,7 +63,14 @@ def build_billing_tools(billing):
             'request_repeated':False,'profile_reused':True}
 
     def browser_ticket(ctx,identifier=None):
-        selected=identifier or ctx.context.get('browser_ticket_id')
+        if ctx.context.get('purpose')=='portal_review':
+            # La revisión nativa ya tiene un ticket elegido en el servidor.
+            # Un identificador inventado por el modelo no cambia ese recurso.
+            selected=ctx.context.get('channel_context',{}).get('browser_ticket_id')
+            if not selected:
+                raise AppError(409,'browser_selection','Abre /estado y selecciona el ticket antes de revisar el portal.')
+        else:
+            selected=identifier or ctx.context.get('browser_ticket_id')
         if selected:
             ticket=billing.resolve_ticket(ctx.context['user_id'],selected)
             ctx.context['browser_ticket_id']=ticket['id']
@@ -79,6 +87,17 @@ def build_billing_tools(billing):
                 permission=billing.portal_permissions.request(ctx.context['user_id'],ticket['id'],origins=error.origins)
                 review(ctx,'portal_permission',permission['id'])
             else:
+                if ctx.context.get('purpose')=='portal_review':
+                    # Los errores de argumentos ocurren antes de abrir el portal.
+                    # No mostrar como actual un fallo guardado en otra ejecución.
+                    if isinstance(error,AppError):
+                        failure={'code':error.code,'message':error.message}
+                    elif isinstance(error,ModelBehaviorError):
+                        failure={'code':'browser_tool_input','message':'La instrucción de navegación no fue válida. Vuelve a revisar el portal.'}
+                    else:
+                        failure={'code':'browser_tool_failure','message':'No se completó este paso del navegador. Vuelve a revisar el portal.'}
+                    ticket['portal_browser_error']=failure
+                    billing.store.update('ticket',ctx.context['user_id'],ticket['id'],ticket)
                 review(ctx,'browser',ticket['id'])
         except Exception:
             review(ctx,'ticket_list',None)
