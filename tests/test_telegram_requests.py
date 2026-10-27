@@ -258,3 +258,77 @@ def test_duplicate_photo_is_removed_with_its_ticket_only_after_explicit_deletion
     app.state.billing.delete_ticket(owner(app),identifier)
     assert app.state.billing.store.count('document',owner(app))==1  # Solo la CSF.
     assert app.state.billing.store.list('ticket',owner(app))==[]
+
+
+def quota_blocked_ticket(factory):
+    result=create(factory,billing_max_daily_extractions=1)
+    client,app,extractor,mail,sat,telegram,chat=result
+    confirm_profile(telegram,chat)
+    identifier,analyze=receipt(app,telegram,chat)
+    previous=(datetime.now(timezone.utc)-timedelta(days=1)).date().isoformat()
+    return result,identifier,analyze,previous
+
+
+def test_status_after_daily_reset_offers_saved_ticket_without_showing_stale_limit(billing_client):
+    result,identifier,analyze,previous=quota_blocked_ticket(billing_client)
+    client,app,extractor,mail,sat,telegram,chat=result
+    with app.state.database.connection() as conn:
+        conn.execute('UPDATE billing_extractions SET day=? WHERE owner=?',(previous,owner(app)))
+    chat('/limites')
+    assert 'Análisis de archivos: 0/1' in telegram.messages[-1][1]
+    chat('/estado')
+    text=telegram.messages[-1][1]
+    assert 'Estado: Pendiente de análisis' in text and 'Hay cupo disponible' in text
+    assert 'Alcanzaste el límite' not in text and button(telegram,'an')==analyze
+    assert len(extractor.calls)==1 and mail.sent==sat.calls==[]
+    # La vista no borra el bloqueo anterior del historial ni reinicia cuotas.
+    stored=app.state.billing.store.get('ticket',owner(app),identifier)
+    assert stored['analysis_error']['code']=='billing_daily_limit'
+    assert app.state.telegram.requests.usage(owner(app))['analyses']==0
+    chat(data=analyze)
+    assert 'Estado: Datos listos' in telegram.messages[-1][1]
+    assert app.state.telegram.requests.usage(owner(app))['analyses']==1 and len(extractor.calls)==2
+    chat(data=analyze)
+    assert len(extractor.calls)==2
+
+
+def test_currently_exhausted_analysis_budget_hides_analysis_button_and_shows_reset(billing_client):
+    result,identifier,analyze,previous=quota_blocked_ticket(billing_client)
+    client,app,extractor,mail,sat,telegram,chat=result
+    chat('/estado')
+    text,buttons=telegram.messages[-1][1:]
+    assert 'Estado: En espera de cupo' in text
+    assert 'Análisis: 1/1' in text and 'Se restablece' in text
+    assert all(not value.startswith(('an:','ra:')) for _,value in buttons)
+    assert button(telegram,'ts')=='ts:'+identifier and len(extractor.calls)==1
+
+
+def test_daily_reset_does_not_allow_repeating_a_previous_file_attempt(billing_client):
+    result,identifier,analyze,previous=quota_blocked_ticket(billing_client)
+    client,app,extractor,mail,sat,telegram,chat=result
+    document_id=analyze.split(':')[1]
+    with app.state.database.connection() as conn:
+        conn.execute('UPDATE billing_extractions SET day=? WHERE owner=?',(previous,owner(app)))
+        conn.execute('INSERT INTO billing_extractions VALUES(?,?,?,?)',(owner(app),previous,document_id,'failed'))
+    chat('/estado')
+    text,buttons=telegram.messages[-1][1:]
+    assert 'Estado: Análisis ya intentado' in text and 'Hay cupo disponible' not in text
+    assert all(not value.startswith(('an:','ra:')) for _,value in buttons)
+    assert len(extractor.calls)==1 and app.state.telegram.requests.usage(owner(app))['analyses']==0
+    chat(data=analyze)  # Un botón viejo tampoco elude el registro persistente.
+    assert len(extractor.calls)==1
+
+
+def test_expired_ticket_after_reset_requests_only_ticket_copy_and_preserves_profile(billing_client):
+    result,identifier,analyze,previous=quota_blocked_ticket(billing_client)
+    client,app,extractor,mail,sat,telegram,chat=result
+    profile=app.state.billing.store.list('profile',owner(app))[0]
+    with app.state.database.connection() as conn:
+        conn.execute('UPDATE billing_extractions SET day=? WHERE owner=?',(previous,owner(app)))
+        conn.execute('UPDATE billing_records SET expires=0 WHERE id=?',(analyze.split(':')[1],))
+    chat('/estado')
+    text,buttons=telegram.messages[-1][1:]
+    assert 'Envía otra copia del ticket' in text and 'Tu perfil se conserva' in text
+    assert 'Alcanzaste el límite' not in text
+    assert all(not value.startswith(('an:','ra:')) for _,value in buttons)
+    assert app.state.billing.store.list('profile',owner(app))==[profile] and len(extractor.calls)==1

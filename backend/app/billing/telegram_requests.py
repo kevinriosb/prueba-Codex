@@ -26,7 +26,7 @@ class TelegramRequests:
     def tickets(self, owner):
         return [item for item in self.billing.store.list('ticket', owner) if not item.get('superseded_by')]
 
-    def summary(self, owner, ticket):
+    def summary(self, owner, ticket, *, analysis=None):
         approvals = [item for item in self.billing.store.list('email_approval', owner)
             if item['ticket_id'] == ticket['id']]
         uncertain = any(item['_state'] in {'claimed', 'unknown'} for item in approvals)
@@ -38,8 +38,34 @@ class TelegramRequests:
             return text + '\nSolicitud enviada; consulta la respuesta abajo.', None, False
         if pending:
             return text + '\nAún no se envió. Revisa el borrador abajo.', pending['id'], False
+        if analysis:
+            text='Estado: '+analysis['label']+'.'
         text += '\nNo se ha enviado una solicitud al comercio.'
         return text, None, True
+
+    def analysis_status(self, owner, ticket, document):
+        """Un rechazo de admisión antiguo no representa la cuota actual.
+
+        Solo presenta el estado: no borra errores históricos, reservas ni intentos,
+        y nunca inicia el análisis. Un intento previo sigue bloqueado tras el reset.
+        """
+        if ticket['status']!='ERROR' or (ticket.get('analysis_error') or {}).get('code')!='billing_daily_limit' or ticket.get('delivery'):
+            return None
+        if document is None:
+            return {'label':'Archivo temporal vencido','available':False,
+                'message':'Envía otra copia del ticket. Tu perfil se conserva.'}
+        with self.billing.database.connection() as conn:
+            attempted=conn.execute('SELECT 1 FROM billing_extractions WHERE owner=? AND document_id=?',
+                (owner,document['id'])).fetchone()
+        if attempted or document.get('analysis_consent'):
+            return {'label':'Análisis ya intentado','available':False,
+                'message':'Este archivo ya tuvo un intento. No se repetirá automáticamente.'}
+        usage=self.usage(owner)
+        if usage['analyses']>=self.settings.billing_max_daily_extractions:
+            return {'label':'En espera de cupo','available':False,
+                'message':f"Análisis: {usage['analyses']}/{self.settings.billing_max_daily_extractions}. Se restablece {usage['reset']} ({self.settings.server_timezone})."}
+        return {'label':'Pendiente de análisis','available':True,
+            'message':'Hay cupo disponible. Pulsa Autorizar análisis.'}
 
     async def show(self, owner, chat_id):
         state = self.bridge._state(owner)

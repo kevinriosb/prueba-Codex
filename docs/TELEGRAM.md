@@ -106,6 +106,12 @@ contenedor: no necesitas instalar el SDK en el Python 3.9 del sistema.
   separados. Los análisis de CSF y tickets comparten el primer contador; los
   intentos fallidos también cuentan. Actualizar el contenedor no reinicia cuotas.
   Los límites diarios se renuevan a las 00:00 UTC, mostradas en hora local.
+  Un ticket bloqueado por la cuota conserva el archivo y el aviso anterior como
+  historial. `/estado` consulta la cuota vigente: con cupo muestra **Pendiente de
+  análisis** y permite autorizar el mismo archivo; sin cupo muestra **En espera de
+  cupo**, su restablecimiento y oculta el botón de análisis. Consultar el estado
+  no consume un análisis ni borra intentos anteriores. Si el archivo ya venció,
+  pide otra copia del ticket y conserva el perfil fiscal.
   La reserva de tokens, el espacio de archivos y los turnos por conversación son
   límites distintos: el bot identifica cuál impidió la operación.
 - `/estado`, `/tickets`, `/limites`, **Actualizar estado** y las frases de consulta

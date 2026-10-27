@@ -260,11 +260,6 @@ class TelegramBridge:
             if ticket.get(key):
                 text+='\n'+label+': '+ticket[key]
         text+='\nImporte: '+str(ticket.get('total') or 'Pendiente')
-        summary,approval_id,can_prepare=self.requests.summary(owner,ticket)
-        text+='\n'+summary
-        buttons=[]
-        if approval_id:
-            buttons.append(('Revisar solicitud pendiente','er:'+approval_id))
         try:
             document=self.billing.document(owner,ticket['document_id'])
         except AppError as error:
@@ -272,11 +267,18 @@ class TelegramBridge:
                 raise
             document=None
             text+='\nEl archivo temporal venció; los datos siguen guardados.'
-        if document and not document.get('analysis_consent') and document.get('extracted') is None:
+        analysis=self.requests.analysis_status(owner,ticket,document)
+        summary,approval_id,can_prepare=self.requests.summary(owner,ticket,analysis=analysis)
+        text+='\n'+summary
+        buttons=[]
+        if approval_id:
+            buttons.append(('Revisar solicitud pendiente','er:'+approval_id))
+        if document and not document.get('analysis_consent') and document.get('extracted') is None and (analysis is None or analysis['available']):
             text+='\nAnalizar comparte el archivo con OpenAI y consume tokens.'
             buttons.append(('Autorizar análisis','an:'+document['id']))
         if ticket['status']=='ERROR':
-            text+='\n'+(ticket.get('analysis_error') or (document or {}).get('analysis_error') or {}).get('message',ticket.get('note') or 'El análisis anterior falló; no se determinó la legibilidad.')
+            text+='\n'+(analysis['message'] if analysis else
+                (ticket.get('analysis_error') or (document or {}).get('analysis_error') or {}).get('message',ticket.get('note') or 'El análisis anterior falló; no se determinó la legibilidad.'))
         elif pending_receipt_fields(ticket):
             labels={'merchant':'comercio','purchase_date':'fecha','folio':'folio','total':'importe',
                 'account_number':'Cuenta','reference_number':'referencia','billing_code':'código de facturación'}
