@@ -15,7 +15,9 @@ Incluye una primera fase opcional de [navegación adaptable con Playwright](docs
 la misma IA observa páginas y elige enlaces u opciones públicas. Cada usuario
 autoriza el portal del ticket con **Permitir / Cancelar** en Telegram; un dominio
 nuevo pide otro permiso en el chat, sin listas fijas en Termius. Todavía no rellena
-ni envía formularios de facturación.
+ni envía formularios de facturación. Puede identificar marcas por sus logos
+etiquetados y guardar el portal confirmado para próximos tickets del mismo comercio.
+En Telegram, `/portales` permite consultar y olvidar esos enlaces.
 
 **GitHub permite consultar el código; para usar el agente hace falta ejecutar el backend.** El propietario comprobó su instalación web en Hostinger, un cálculo real y conversación con IA en su bot nuevo de Telegram. Los cambios posteriores requieren actualizar y recrear el contenedor; hacer push no cambia el VPS.
 

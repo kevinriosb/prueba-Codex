@@ -1,8 +1,9 @@
 import asyncio
 import ipaddress
 import socket
+import re
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode, unquote
 
 import httpx2
 
@@ -63,6 +64,31 @@ def secure_link(value):
 def public_page(value):
     uri=urlsplit(https_url(value))
     return urlunsplit((uri.scheme,uri.netloc,uri.path,'',''))
+
+
+def bookmark_url(value):
+    """Solo rutas públicas estables; nunca tokens, sesiones o referencias de compra."""
+    try:
+        uri=urlsplit(https_url(value))
+        path=unquote(uri.path)
+        if re.search(r'(?:;|/)(?:jsessionid|session|token|oauth|auth)(?:[=/;]|$)',path,re.I):
+            return None
+        if re.search(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9-]{18,}|\d{10,}',path,re.I):
+            return None
+        query=[]
+        for key,item in parse_qsl(uri.query,keep_blank_values=True,max_num_fields=12):
+            if key.lower().startswith('utm_') or key.lower() in {'gclid','fbclid'}:
+                continue
+            if key.lower() not in {'brand','brandid','marca','idmarca','cadena','idcadena','opc','opcion','lang','idioma'}:
+                return None
+            if not re.fullmatch(r'[\w .-]{1,40}',item,flags=re.ASCII):
+                return None
+            query.append((key,item))
+        if tracking_url(value):
+            return None
+        return urlunsplit((uri.scheme,uri.netloc,uri.path,urlencode(query),''))
+    except (BrowserError,ValueError,TypeError):
+        return None
 
 
 async def resolve(host):

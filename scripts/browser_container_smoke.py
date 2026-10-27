@@ -25,7 +25,8 @@ class Pages:
  async def fetch(self,url,headers):
   content=('<script src="https://www.googletagmanager.com/gtm.js"></script>'
    +''.join('<a href="/info/'+str(index)+'">Información</a>' for index in range(32))
-   +'<footer><a href="https://provider.example/form">Facturación</a></footer>') if url.endswith('/') else '<label>Cuenta<input></label>'
+   +'<footer><a href="https://provider.example/form?brand=Demo" target="_blank"><img alt="Marca Demo"></a>'
+   +'<a href="https://other.example/form"><img alt="Otra marca"></a></footer>') if url.endswith('/') else '<label>Cuenta<input></label>'
   return 200,{'content-type':'text/html; charset=utf-8'},content.encode()
  async def close(self):pass
 async def run():
@@ -33,7 +34,7 @@ async def run():
  try:
   first=await manager.open('test-owner','https://fixture.example/',['https://fixture.example'])
   assert not first['network_blocked'] and first['blocked_origins']==[]
-  assert first['actions'][0]['label']=='Facturación'
+  assert first['actions'][0]['label']=='Marca Demo' and first['actions'][0]['brand']
   assert first['actions'][0]['permission_origin']=='https://provider.example'
   try:await manager.act('test-owner',first['session_id'],first['observation_id'],first['actions'][0]['reference'])
   except BrowserError as error:assert error.code=='browser_origin'
@@ -41,6 +42,8 @@ async def run():
   first=await manager.allow('test-owner',first['session_id'],['https://fixture.example','https://provider.example'])
   second=await manager.act('test-owner',first['session_id'],first['observation_id'],first['actions'][0]['reference'])
   assert second['fields'][0]['label']=='Cuenta'
+  assert second['fields'][0]['source_url']=='https://provider.example/form?brand=Demo'
+  assert second['bookmark_url']=='https://provider.example/form?brand=Demo'
   assert not second['submitted'] and not second['purchase_validated']
  finally:await manager.close()
 asyncio.run(run())

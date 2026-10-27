@@ -92,6 +92,46 @@ Web ID. Es otra lectura de IA, explícita y sujeta a la cuota compartida de arch
 La CSF y el perfil confirmado no se reinician. También se pueden completar campos
 obligatorios reconocidos usando los botones **Completar dato** y `/dato_ticket`.
 
+## Elegir la marca y recordar su portal
+
+En una página que agrupa varias marcas, el navegador lee el texto, `alt`, `title`
+y el nombre público del archivo de los logos. No necesita descargar esas imágenes
+ni hacer otra lectura con IA. También reconoce destinos literales observados de
+`window.open`, `location.href` y `location.assign/replace`; no ejecuta el JavaScript
+de esos manejadores. Los manejadores complejos o ambiguos quedan para intervención.
+
+Telegram muestra **Abrir marca**. Si la coincidencia con el comercio del ticket es
+única, puede elegirse con los controles nativos, sin otra llamada de IA. Si hay
+ambigüedad, el usuario elige entre las marcas observadas. Antes de abrir un dominio
+nuevo sigue apareciendo **Permitir / Cancelar**. El destino siempre procede de la
+página actual; ni el usuario del modelo ni el modelo pueden inventar una URL de
+navegación mediante la herramienta. Una ventana nueva se abre en el mismo contexto
+aislado, sin propagar ventanas emergentes.
+
+Al llegar a un formulario con campos de facturación reconocidos, aparece
+**Guardar portal de la marca**. Confirma este botón solo si corresponde al comercio.
+El enlace observado se guarda cifrado durante 30 días, separado por usuario,
+marca, RFC del emisor cuando esté disponible y dominio de origen. No se guarda el
+portal de una marca para todas las marcas de un mismo grupo o RFC. Se ignoran
+acentos y puntuación al comparar. También se reconocen etiquetas extendidas con
+el nombre como palabras completas, como «Dominos» y «Domino’s Pizza»; una
+asociación recordada siempre requiere la confirmación humana del formulario.
+
+En nuevos tickets de ese comercio se propone directamente el enlace recordado,
+conservando la liga impresa original. Antes de visitarlo se requiere el permiso
+del nuevo ticket; guardar la liga no guarda autorizaciones, cookies o sesiones.
+**Usar enlace del ticket** permite volver al recorrido original. `/portales`
+muestra enlaces propios y **Olvidar enlace** los retira sin borrar perfiles o
+tickets. Al vencer un enlace guardado se vuelve al origen del ticket.
+
+Solo se recuerdan URLs HTTPS observadas y autorizadas. Se descartan enlaces con
+parámetros de sesión, tokens o referencias de compra y se conservan únicamente
+parámetros públicos acotados de selección de marca/idioma. Un formulario dentro de
+un iframe puede recordar la dirección estable de ese formulario, si su dominio
+fue autorizado. Los botones viejos o una página que cambió no pueden guardar una
+dirección distinta sin una revisión nueva. La compatibilidad de cada portal real
+sigue requiriendo comprobación. Esta entrega no rellena ni envía formularios.
+
 ## Límites y comprobaciones
 
 - Se usa un único agente; Playwright es una herramienta, no otro agente.
@@ -188,3 +228,17 @@ docker compose -f compose.hostinger.yaml up -d --no-deps --no-build --force-recr
 El archivo `.env.hostinger` debe conservar `BILLING_BROWSER_ENABLED=false` o no
 definirlo; el complemento es quien lo habilita para el servicio. No ejecutes
 `down -v`: no hace falta borrar los volúmenes para activar o desactivar esta función.
+
+
+### API de enlaces recordados
+
+Con autenticación y CSRF para mutaciones:
+
+- `GET /api/billing/portals`: solo enlaces del usuario autenticado.
+- `POST /api/billing/tickets/{id}/portal-bookmark`: `confirmed: true` y el
+  `observation_id` actual; la URL se deriva en el servidor, no se acepta en el JSON.
+- `POST /api/billing/tickets/{id}/portal-selection`: `confirmed: true` y
+  `use_saved: true/false`; cambia el punto de entrada sin abrir páginas.
+- `DELETE /api/billing/portals/{id}` con `confirmed: true`: olvida un enlace propio.
+
+No hay herramienta del modelo que confirme o guarde el enlace por el usuario.

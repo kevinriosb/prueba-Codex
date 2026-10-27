@@ -111,7 +111,8 @@ def build_billing_tools(billing):
         record=await billing.browse_portal(ctx.context['user_id'],ticket['id'])
         review(ctx,'browser',ticket['id'])
         return browser_metadata(record)|{'ticket_fields_available':[key for key in
-            ('account_number','folio','reference_number','billing_code','web_id','toll_station','lane','purchase_date','purchase_time','total') if ticket.get(key)]}
+            ('account_number','folio','reference_number','billing_code','web_id','toll_station','lane','purchase_date','purchase_time','total') if ticket.get(key)],
+            'merchant_hint':(ticket.get('merchant') or '')[:120]}
 
     @function_tool(failure_error_function=browser_failure,timeout=15)
     async def portal_browser_navigate(ctx:RunContextWrapper[dict],observation_id:str,reference:str)->dict:

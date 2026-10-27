@@ -355,3 +355,68 @@ async def test_missing_public_frame_resource_does_not_stop_main_page_but_require
     first=await manager.open('owner-a',HOME,[ALLOWED[0]])
     assert first['blocked_origins']==['https://cdn.example'] and not first['network_blocked']
     assert all('cdn.example' not in url for url,_ in pages.calls)
+
+
+@pytest.mark.parametrize('image_markup,expected',[
+    ('<img src="/brand.png" alt="Domino’s">','Domino’s'),
+    ('<img src="/brand.png" title="Logo Domino-s">','Logo Domino-s'),
+    ('<img src="/images/logo-dominos.svg">','logo dominos'),
+])
+async def test_brand_image_links_are_named_without_downloading_images_and_keep_domain_permission(browser,image_markup,expected):
+    manager,pages=browser
+    pages.pages[HOME]='<a href="https://billing.example/form" target="_blank">'+image_markup+'</a>'
+    first=await manager.open('owner-a',HOME,[ALLOWED[0]])
+    assert first['actions'][0]['label']==expected and first['actions'][0]['brand']
+    assert first['actions'][0]['permission_origin']==ALLOWED[1]
+    assert [url for url,_ in pages.calls]==[HOME]
+
+
+@pytest.mark.parametrize('markup',[
+    '<button onclick="window.open(\'https://billing.example/form\',\'_blank\')"><img alt="Dominos"></button>',
+    '<a href="#" onclick="location.href=\'https://billing.example/form\';"><img alt="Dominos"></a>',
+    '<img alt="Dominos" width="100" height="50" onclick="window.location.assign(\'https://billing.example/form\')">',
+])
+async def test_literal_observed_navigation_is_followed_as_a_get_without_executing_page_handler(browser,markup):
+    manager,pages=browser
+    pages.pages[HOME]=markup
+    first=await manager.open('owner-a',HOME,ALLOWED)
+    assert first['actions'][0]['label']=='Dominos'
+    after=await manager.act('owner-a',first['session_id'],first['observation_id'],first['actions'][0]['reference'])
+    assert after['page']==FORM and after['fields'][0]['source_url']==FORM
+    assert len(manager.sessions[first['session_id']].context.pages)==1
+    assert [url for url,_ in pages.calls]==[HOME,FORM]
+
+
+async def test_arbitrary_onclick_and_form_buttons_are_not_exposed_as_navigation(browser):
+    manager,pages=browser
+    pages.pages[HOME]='''<button onclick="fetch('/issue',{method:'POST'});window.open('https://billing.example/form')"><img alt="Dominos"></button>
+     <form id="issue"><button onclick="window.open('https://billing.example/form')"><img alt="Otra marca"></button></form>
+     <button form="issue" onclick="window.open('https://billing.example/form')"><img alt="Marca fuera de formulario"></button>'''
+    first=await manager.open('owner-a',HOME,ALLOWED)
+    assert first['actions']==[] and [url for url,_ in pages.calls]==[HOME]
+
+
+async def test_iframe_form_exposes_its_stable_public_source_without_private_values(browser):
+    manager,pages=browser
+    pages.pages[HOME]='<iframe src="https://billing.example/form?brand=Demo"></iframe>'
+    pages.pages['https://billing.example/form?brand=Demo']='<label>RFC<input value="private-input-never-returned"></label>'
+    first=await manager.open('owner-a',HOME,ALLOWED)
+    assert first['fields'][0]['source_url']=='https://billing.example/form?brand=Demo'
+    assert 'private-input-never-returned' not in json.dumps(first)
+
+
+@pytest.mark.parametrize('url,expected',[
+    ('https://billing.example/form?opc=Dominos','https://billing.example/form?opc=Dominos'),
+    ('https://billing.example/form?brand=Demo&utm_source=ads#section','https://billing.example/form?brand=Demo'),
+    ('https://billing.example/form?token=private',None),
+    ('https://billing.example/form?session=private',None),
+    ('https://billing.example/form?folio=private',None),
+    ('https://billing.example/form?brand=abc%40private.example',None),
+    ('https://billing.example/form;jsessionid=private',None),
+    ('https://127.0.0.1/form',None),
+    ('https://user:private@billing.example/form',None),
+    ('https://www.googletagmanager.com/gtm.js',None),
+])
+def test_only_stable_public_brand_routes_are_eligible_for_bookmarks(url,expected):
+    from backend.browser_worker.policy import bookmark_url
+    assert bookmark_url(url)==expected

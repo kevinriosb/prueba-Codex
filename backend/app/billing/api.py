@@ -47,6 +47,12 @@ def create_billing_router(payload_base):
     class PortalPermissionDecision(payload_base):
         approve:bool=Field(strict=True)
 
+    class PortalBookmark(Confirm):
+        observation_id:str=Field(pattern=r'^[a-f0-9]{8}$')
+
+    class PortalSelection(Confirm):
+        use_saved:bool=Field(strict=True)
+
     class CertificateRequired(Confirm):
         evidence: str = Field(min_length=10,max_length=1000)
 
@@ -126,6 +132,31 @@ def create_billing_router(payload_base):
     @router.post('/tickets/{identifier}/browser/actions',dependencies=[Depends(check_csrf)])
     async def browser_action(identifier:uuid.UUID,payload:BrowserAction,request:Request,user=Depends(authenticated)):
         return public(await service(request).browse_portal(user['id'],str(identifier),**payload.model_dump()))
+
+    @router.get('/portals')
+    async def remembered_portals(request:Request,user=Depends(authenticated)):
+        return [{'id':item['id'],'merchant':item['merchant'],'url':item['url'],'expires':item['_expires']}
+            for item in service(request).store.list('portal_memory',user['id'])]
+
+    @router.post('/tickets/{identifier}/portal-bookmark',dependencies=[Depends(check_csrf)])
+    async def remember_portal(identifier:uuid.UUID,payload:PortalBookmark,request:Request,user=Depends(authenticated)):
+        if not payload.confirmed:
+            raise AppError(409,'portal_memory_confirmation','Confirma que es el portal correcto de ese comercio.')
+        record=service(request).portal_memory.save(user['id'],str(identifier),payload.observation_id)
+        return {'id':record['id'],'merchant':record['merchant'],'url':record['url'],'expires':record['_expires']}
+
+    @router.post('/tickets/{identifier}/portal-selection',dependencies=[Depends(check_csrf)])
+    async def select_portal(identifier:uuid.UUID,payload:PortalSelection,request:Request,user=Depends(authenticated)):
+        if not payload.confirmed:
+            raise AppError(409,'portal_memory_confirmation','Confirma el enlace que deseas utilizar.')
+        return public(service(request).portal_memory.select(user['id'],str(identifier),remembered=payload.use_saved))
+
+    @router.delete('/portals/{identifier}',dependencies=[Depends(check_csrf)])
+    async def forget_portal(identifier:uuid.UUID,payload:Confirm,request:Request,user=Depends(authenticated)):
+        if not payload.confirmed:
+            raise AppError(409,'portal_memory_confirmation','Confirma que deseas olvidar el enlace.')
+        service(request).portal_memory.forget(user['id'],str(identifier))
+        return {'ok':True}
 
     @router.delete('/tickets/{identifier}',dependencies=[Depends(check_csrf)])
     async def delete_ticket(identifier:uuid.UUID,payload:Confirm,request:Request,user=Depends(authenticated)):

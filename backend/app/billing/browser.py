@@ -5,7 +5,7 @@ from uuid import UUID
 import httpx2
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...browser_worker.policy import BrowserError, origin
+from ...browser_worker.policy import BrowserError, origin, bookmark_url
 from ..errors import AppError
 from .portal_inspection import field_key
 
@@ -16,6 +16,7 @@ class PublicField(BaseModel):
     kind:str=Field(max_length=20)
     required:bool
     options:list[str]=Field(max_length=25)
+    source_url:str|None=Field(default=None,max_length=2048)
 
 
 class PublicAction(BaseModel):
@@ -24,6 +25,7 @@ class PublicAction(BaseModel):
     label:str=Field(max_length=100)
     kind:str=Field(pattern=r'^(link|expand)$')
     permission_origin:str|None=Field(default=None,max_length=2048)
+    brand:bool=False
 
 
 class Observation(BaseModel):
@@ -31,6 +33,7 @@ class Observation(BaseModel):
     session_id:UUID
     observation_id:str=Field(pattern=r'^[a-f0-9]{8}$')
     page:str=Field(max_length=2048)
+    bookmark_url:str|None=Field(default=None,max_length=2048)
     title:str=Field(max_length=120)
     fields:list[PublicField]=Field(max_length=24)
     actions:list[PublicAction]=Field(max_length=24)
@@ -100,8 +103,8 @@ class PortalBrowserClient:
         if uri.scheme=='http' and uri.port in {None,80} and not uri.username and not uri.password:
             url=urlunsplit(('https',uri.hostname,uri.path or '/',uri.query,''))
         uri=urlsplit(url)
-        # La fase pública no transmite identificadores incluidos en consultas/fragmentos del ticket.
-        url=urlunsplit((uri.scheme,uri.netloc,uri.path or '/','',''))
+        # Solo parámetros públicos de marca; no referencias de compra ni sesiones.
+        url=bookmark_url(url) or urlunsplit((uri.scheme,uri.netloc,uri.path or '/','',''))
         try:
             allowed=sorted({origin(value) for value in allowed})
             if not allowed or len(allowed)>12:

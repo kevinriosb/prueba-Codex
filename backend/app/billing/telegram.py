@@ -16,6 +16,7 @@ from .telegram_agent import TelegramAgent
 from .telegram_profiles import TelegramProfiles, normalized
 from .telegram_requests import REQUEST_TEXTS, TelegramRequests
 from .portal_permissions import PortalPermissionRequired
+from .portal_memory import matching_brand,brand_options,has_billing_form
 
 
 class TelegramClient:
@@ -290,7 +291,12 @@ class TelegramBridge:
         channels=self.billing.detect_billing_channels(owner,identifier)
         if channels['method'] in {'portal','portal_manual'}:
             if ticket.get('billing_url'):
-                text+='\nPortal: '+ticket['billing_url']
+                entry=self.billing.portal_memory.entry_url(owner,ticket)
+                text+='\n'+('Portal guardado: ' if entry!=ticket['billing_url'] else 'Portal: ')+entry
+                if ticket.get('selected_portal'):
+                    buttons.append(('Usar enlace del ticket','bo:'+identifier))
+                elif self.billing.portal_memory.suggestion(owner,ticket):
+                    buttons.append(('Usar portal guardado','bm:'+identifier))
             plan=ticket.get('portal_inspection') or {}
             if plan.get('fields'):
                 prefix='Portal pide: ' if plan.get('status')=='verified' else 'Según plantilla, sin verificar en línea: '
@@ -356,7 +362,7 @@ class TelegramBridge:
         profile=self.billing.store.get('profile',owner,ticket['profile_id'])
         if not ticket.get('billing_url'):
             raise AppError(409,'billing_portal','No hay una página de facturación identificada.')
-        text='Datos para el portal\n'+ticket['billing_url']+'\n'
+        text='Datos para el portal\n'+self.billing.portal_memory.entry_url(owner,ticket)+'\n'
         plan=ticket['portal_inspection']
         if plan['status']=='verified':
             text+='Campos leídos del formulario público:\n'
@@ -398,11 +404,23 @@ class TelegramBridge:
             permission=self.billing.portal_permissions.request(owner,ticket['id'])
             await self._portal_permission(owner,chat_id,permission['id'])
             return
-        if not self.agent:
-            raise AppError(503,'telegram_agent','El agente de Telegram no está configurado.')
         state=self._state(owner)
         state.update(last_ticket_id=ticket['id'],browser_ticket_id=ticket['id'])
         self._save_state(owner,state)
+        try:
+            record=self.billing.browser_review(owner,ticket['id'])
+        except AppError as error:
+            if error.status!=404:
+                raise
+            record=None
+        choice=state.get('browser_choice') or {}
+        selected=choice.get('label') if choice.get('ticket_id')==ticket['id'] and choice.get('scope')==self.billing.portal_permissions.scope(ticket) and choice.get('expires',0)>time.time() else None
+        action=matching_brand(ticket,record['snapshot'],label=selected) if record else None
+        if action:
+            await self._brand(owner,chat_id,ticket['id'],record['snapshot']['observation_id'],action['reference'])
+            return
+        if not self.agent:
+            raise AppError(503,'telegram_agent','El agente de Telegram no está configurado.')
         try:
             await self.agent.reply(owner,chat_id,text='Revisa el portal público del ticket seleccionado. Observa sus controles, realiza como máximo un paso de navegación permitido y muestra el estado. No introduzcas datos ni solicites facturas.')
         except AppError as error:
@@ -410,6 +428,27 @@ class TelegramBridge:
                 raise
             await self.client.send(chat_id,'Revisión pausada por el límite de ejecución.')
             await self._browser(owner,chat_id,ticket['id'])
+
+    async def _brand(self,owner,chat_id,identifier,observed,reference):
+        ticket=self.billing.resolve_ticket(owner,identifier)
+        record=self.billing.browser_review(owner,ticket['id'])
+        action=next((item for item in record['snapshot']['actions'] if item['reference']==reference),None)
+        if observed!=record['snapshot']['observation_id'] or not action:
+            raise AppError(409,'browser_stale','La página cambió. Vuelve a revisar el portal.')
+        try:
+            await self.billing.browse_portal(owner,ticket['id'],observation_id=observed,reference=reference)
+        except PortalPermissionRequired as error:
+            state=self._state(owner)
+            state['browser_choice']={'ticket_id':ticket['id'],'scope':self.billing.portal_permissions.scope(ticket),
+                'label':action['label'],'expires':record['_expires']}
+            self._save_state(owner,state)
+            permission=self.billing.portal_permissions.request(owner,ticket['id'],origins=error.origins)
+            await self._portal_permission(owner,chat_id,permission['id'])
+            return
+        state=self._state(owner)
+        state.pop('browser_choice',None)
+        self._save_state(owner,state)
+        await self._browser(owner,chat_id,ticket['id'])
 
     async def _browser(self,owner,chat_id,identifier):
         ticket=self.billing.resolve_ticket(owner,identifier)
@@ -426,7 +465,11 @@ class TelegramBridge:
             return
         snapshot=record['snapshot']
         profile=self.billing.store.get('profile',owner,ticket['profile_id'])
-        text='Revisión pública\n'+snapshot['page']
+        try:
+            proposal=self.billing.portal_memory.propose(owner,ticket['id'])
+        except AppError:
+            proposal=None
+        text='Revisión pública\n'+(proposal['url'] if proposal else snapshot['page'])
         if ticket.get('portal_browser_error'):
             text+='\n'+ticket['portal_browser_error']['message']
         if snapshot['fields']:
@@ -437,14 +480,25 @@ class TelegramBridge:
                 text+='\n'+item['label']+': '+str(value)
         else:
             text+='\nAún no se encontró el formulario.'
+        pending=[target for target in snapshot['blocked_origins'] if target not in self.billing.portal_permissions.allowed(owner,ticket)]
+        awaiting_form=bool(pending and record.get('brand_label') and not has_billing_form(snapshot))
+        brands=brand_options(snapshot) if not has_billing_form(snapshot) and not snapshot['captcha'] and not snapshot['network_blocked'] and not awaiting_form else []
+        preferred=matching_brand(ticket,snapshot)
+        if brands:
+            text+='\nElige la marca del ticket.'
         if snapshot['captcha']:
             text+='\nEl sitio requiere CAPTCHA; intervención humana.'
-        pending=[target for target in snapshot['blocked_origins'] if target not in self.billing.portal_permissions.allowed(owner,ticket)]
-        needs_resources=bool(pending) and (snapshot['network_blocked'] or not (snapshot['fields'] or snapshot['actions']))
+        needs_resources=bool(pending) and (awaiting_form or snapshot['network_blocked'] or not (snapshot['fields'] or snapshot['actions']))
         if needs_resources:
             text+='\n¿Permites cargar estos recursos del sitio?\n'+'\n'.join(pending)
         text+='\nRevisar con IA consume tokens. No se enviaron datos fiscales ni se solicitó la factura.'
         buttons=[]
+        choices=[preferred] if preferred else brands[:8]
+        for item in choices:
+            buttons.append(('Abrir '+item['label'][:45],'ba:'+ticket['id']+':'+snapshot['observation_id']+':'+item['reference']))
+        if proposal:
+            text+='\nSi es el portal correcto, guárdalo para próximos tickets.'
+            buttons.append(('Guardar portal de '+proposal['merchant'][:35],'bs:'+ticket['id']+':'+snapshot['observation_id']))
         if needs_resources:
             permission=self.billing.portal_permissions.request(owner,ticket['id'],origins=pending)
             buttons.extend(self._permission_buttons(permission))
@@ -460,7 +514,7 @@ class TelegramBridge:
                 source=None
             if source and source.get('extraction_version')!=EXTRACTION_VERSION:
                 buttons.append(('Autorizar lectura de datos faltantes','ra:'+source['id']))
-        if snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot['network_blocked']:
+        if not choices and snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot['network_blocked']:
             buttons.append(('Continuar revisión con IA','bn:'+ticket['id']))
         buttons.append(('Ver estado del ticket','ts:'+ticket['id']))
         await self.client.send(chat_id,text,buttons)
@@ -569,7 +623,7 @@ class TelegramBridge:
         plain=normalized(message.get('text',''))
         callback_data=callback.get('data','')
         control=(not callback and not (message.get('document') or message.get('photo'))
-            and plain in REQUEST_TEXTS|{'/tickets','/limites'}) or (isinstance(callback_data,str) and callback_data.startswith(('ts:','wx:')))
+            and plain in REQUEST_TEXTS|{'/tickets','/limites','/portales'}) or (isinstance(callback_data,str) and callback_data.startswith(('ts:','wx:','bf:')))
         kind='channel_control' if control else 'channel_update'
         today=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
         with self.billing.database.connection() as conn:
@@ -607,7 +661,7 @@ class TelegramBridge:
         if not separator:
             raise AppError(422,'telegram_callback','Acción no válida.')
         code=None
-        if prefix in {'cu','rf','td'}:
+        if prefix in {'cu','rf','td','ba','bs'}:
             identifier,_,code=identifier.partition(':')
         try:
             uuid.UUID(identifier)
@@ -688,10 +742,30 @@ class TelegramBridge:
             await self._portal(owner,chat_id,identifier)
         elif prefix=='bn':
             await self._run_browser(owner,chat_id,identifier)
+        elif prefix=='ba':
+            observed,_,reference=(code or '').partition(':')
+            if len(observed)!=8 or len(reference)!=8:
+                raise AppError(422,'telegram_callback','Acción no válida.')
+            await self._brand(owner,chat_id,identifier,observed,reference)
+        elif prefix=='bs':
+            if not code or len(code)!=8:
+                raise AppError(422,'telegram_callback','Acción no válida.')
+            saved=self.billing.portal_memory.save(owner,identifier,code)
+            await self.client.send(chat_id,'Portal de '+saved['merchant']+' guardado para próximos tickets.')
+        elif prefix in {'bm','bo'}:
+            ticket=self.billing.portal_memory.select(owner,identifier,remembered=prefix=='bm')
+            await self._ticket(owner,chat_id,ticket['id'])
+        elif prefix=='bf':
+            self.billing.portal_memory.forget(owner,identifier)
+            await self.client.send(chat_id,'Enlace olvidado. Se usará el portal del ticket.')
         elif prefix in {'wa','wx'}:
             permission=self.billing.portal_permissions.decide(owner,identifier,approve=prefix=='wa')
             await self.billing.sync_portal_permissions(owner,permission['ticket_id'],cancel=prefix=='wx')
             if prefix=='wx':
+                state=self._state(owner)
+                if (state.get('browser_choice') or {}).get('ticket_id')==permission['ticket_id']:
+                    state.pop('browser_choice',None)
+                    self._save_state(owner,state)
                 await self.client.send(chat_id,'Revisión cancelada. Tu perfil y ticket se conservan.')
             elif permission['intent']=='details':
                 await self._portal(owner,chat_id,permission['ticket_id'])
@@ -758,11 +832,17 @@ class TelegramBridge:
             status='Perfil listo. Envía tu ticket.' if profiles else ('Completa tu perfil aquí: /perfil.' if draft or csf else 'Envía tu CSF una vez. Después, tus tickets.')
             await self.client.send(chat_id,status)
             if text=='/ayuda':
-                await self.client.send(chat_id,'/perfil · /estado · /tickets · /limites\n/documentos · /nuevo · /historial\nLa IA consume tokens.')
+                await self.client.send(chat_id,'/perfil · /estado · /tickets · /limites\n/portales · /documentos · /nuevo · /historial\nLa IA consume tokens.')
         elif normalized(text) in REQUEST_TEXTS:
             await self.requests.show(owner,chat_id)
         elif normalized(text)=='/limites':
             await self.requests.limits(owner,chat_id)
+        elif normalized(text)=='/portales':
+            records=self.billing.store.list('portal_memory',owner)
+            if not records:
+                await self.client.send(chat_id,'No hay portales guardados todavía.')
+            for record in records[:50]:
+                await self.client.send(chat_id,record['merchant']+'\n'+record['url'],[('Olvidar enlace','bf:'+record['id'])])
         elif text=='/nuevo' and self.agent:
             self.agent.conversation(owner,new=True)
             await self.client.send(chat_id,'Chat nuevo. Tu perfil y tickets se conservan.')

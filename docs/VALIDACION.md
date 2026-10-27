@@ -4,7 +4,7 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## Backend, seguridad y agente
 
-Resultado de la última ejecución completa de `.venv/bin/python -m pytest -q --tb=short -x`: **467 pruebas pasadas**, sin fallos ni pruebas omitidas (126,81 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
+Resultado de la última ejecución completa de `.venv/bin/python -m pytest -q --tb=short -x`: **510 pruebas pasadas**, sin fallos ni pruebas omitidas (153,47 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
 
 ### Solicitudes repetidas, perfil persistente y cuotas
 
@@ -576,3 +576,48 @@ facturación al final de 32 enlaces y conservó el permiso para el dominio del
 proveedor. El stack Compose confirmó salud y autenticación privadas, además del
 diagnóstico por stdin. Sus contenedores, redes y volúmenes temporales se retiraron.
 La repetición de la prueba real de Alsea en el VPS queda pendiente del propietario.
+
+
+## Marcas, logos y memoria de portales confirmados
+
+El propietario informó que la navegación llegó a la página de facturación del
+grupo y faltaba elegir la marca. Se incorporaron etiquetas de logos (`alt`,
+`title`, nombre del archivo), referencias de navegación literal y selección de
+marca con botones nativos. Una coincidencia ambigua requiere elección humana.
+Los destinos salen de controles observados; no se permite JavaScript arbitrario
+ni enviar formularios. Se espera de forma acotada al formulario de un iframe.
+
+El botón **Guardar portal** exige un formulario reconocido, una observación propia
+vigente, permiso para su dominio y confirmación humana. Solo guarda una URL pública
+estable, sin cookies, valores de inputs o parámetros privados. Los enlaces se
+cifran con el almacenamiento existente y vencen a los 30 días. Cada usuario, marca,
+emisor y origen tienen su propia asociación; un grupo con varias marcas no enseña
+un único portal para todos sus tickets. Nuevos tickets conservan el URL impreso y
+proponen el enlace directo, exigiendo un permiso nuevo antes de abrirlo. Se pueden
+consultar y olvidar desde `/portales`, sin borrar perfiles/tickets.
+
+Pasaron **510 pruebas completas** (153,47 segundos), incluyendo 43 regresiones
+nuevas: etiquetas de imagen, destinos literales en botones y anchors, popup
+convertido a navegación en el mismo contexto, manejadores arbitrarios/formularios
+excluidos, iframe y parámetros estables de marca, consentimiento antes del dominio
+nuevo, selección/guardado nativos sin otra llamada de IA, CSRF, propietario,
+observación cambiada, URL no aceptada del cliente, referencias de compra/sesión
+rechazadas, caducidad, borrado, emisor/origen/marca distintos y persistencia cifrada
+al crear otra instancia de la aplicación con la misma base de datos. También se
+verificó que «Dominos» y «Domino’s Pizza» compartan el nombre del ticket solo
+como palabras completas, conservando la confirmación humana y excluyendo
+nombres genéricos de una empresa que agrupa marcas distintas.
+
+Se intentó leer la página pública indicada por el propietario desde la ruta de red
+habitual de desarrollo; no fue posible inspeccionar ese HTML remoto. No se cambió
+la ruta de red ni se desactivó TLS. Las pruebas de Chromium usaron HTML ficticio y
+el SDK usó respuestas programadas; no hubo llamadas de IA de pago ni visita desde
+aquí al portal real. La selección de Domino’s en el VPS queda pendiente de probar.
+
+Las imágenes finales del agente y del navegador se construyeron conservando TLS
+y hashes. La prueba Docker leyó dos logos sin descargar imágenes, exigió permiso
+antes de abrir el proveedor, navegó sin crear un popup y devolvió el URL estable
+del formulario con su parámetro público de marca. El stack Compose pasó salud,
+autenticación interna y el diagnóstico por stdin con ambas imágenes finales.
+Todos sus contenedores, redes y volúmenes de prueba se eliminaron. No se modificó
+el VPS ni se desplegó desde este entorno.

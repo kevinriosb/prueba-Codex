@@ -21,6 +21,7 @@ from .receipt import browser_missing_fields, missing_receipt_fields, pending_rec
 from .portal_inspection import PortalInspector, portal_plan
 from .browser import PortalBrowserClient
 from .portal_permissions import PortalPermissions,PortalPermissionRequired
+from .portal_memory import PortalMemory
 from .store import BillingStore
 
 
@@ -45,6 +46,7 @@ class BillingService:
             self.portal_inspector=PortalInspector(settings)
             self.browser=browser or PortalBrowserClient(settings)
             self.portal_permissions=PortalPermissions(self)
+            self.portal_memory=PortalMemory(self)
             self.contacts=official_contacts(settings.billing_verified_contacts_json)
             self.store.purge()
 
@@ -343,6 +345,8 @@ class BillingService:
             'qr_urls':qr_urls,'validation':None,'note':'' if complete else 'Falta completar: '+', '.join(missing_receipt_fields(data))+'.'}
         ticket=self.store.update('ticket',owner,pending['id'],ticket)
         ticket=self._status(owner,ticket,ticket['status'])
+        if self.portal_memory.suggestion(owner,ticket):
+            ticket=self.portal_memory.select(owner,ticket['id'])
         return public(ticket)|{'channels':self.detect_billing_channels(owner,ticket['id'])}
 
     async def inspect_billing_portal(self,owner,ticket_id):
@@ -351,7 +355,7 @@ class BillingService:
         if not ticket.get('billing_url'):
             raise AppError(409,'billing_portal','No hay una página de facturación identificada.')
         self.portal_permissions.require(owner,ticket)
-        inspection=await self.portal_inspector.inspect(ticket['billing_url'])
+        inspection=await self.portal_inspector.inspect(self.portal_memory.entry_url(owner,ticket))
         profile=self.store.get('profile',owner,ticket['profile_id'])
         ticket['portal_inspection']=portal_plan(ticket|profile,inspection)
         ticket=self.store.update('ticket',owner,ticket_id,ticket)
@@ -374,9 +378,11 @@ class BillingService:
         self.portal_permissions.require(owner,ticket)
         lookup=self.store.digest('browser:'+ticket_id)
         previous=self.store.find('browser_review',owner,lookup)
+        brand_label=(previous or {}).get('brand_label')
         if previous and previous.get('scope')!=self.portal_permissions.scope(ticket):
             await self.sync_portal_permissions(owner,ticket_id,cancel=True)
             previous=None
+            brand_label=None
         if not previous:
             self.portal_permissions._expire_lookup('browser_review',owner,lookup)
         try:
@@ -384,6 +390,8 @@ class BillingService:
                 if not previous or previous['snapshot']['observation_id']!=observation_id or reference not in {item['reference'] for item in previous['snapshot']['actions']}:
                     raise AppError(409,'browser_stale','La página cambió. Actualiza la revisión.')
                 action=next(item for item in previous['snapshot']['actions'] if item['reference']==reference)
+                if action.get('brand'):
+                    brand_label=action['label']
                 if action.get('permission_origin'):
                     self.portal_permissions.require(owner,ticket,action['permission_origin'])
                 if previous['snapshot']['captcha'] or previous['snapshot']['network_blocked']:
@@ -399,9 +407,10 @@ class BillingService:
                     # sigue exigiendo el permiso vigente del mismo usuario/ticket.
                     self.store.delete('browser_review',owner,previous['id'])
                     previous=None
-                    snapshot=await self.browser.open(owner,ticket['billing_url'],allowed=self.portal_permissions.allowed(owner,ticket))
+                    brand_label=None
+                    snapshot=await self.browser.open(owner,self.portal_memory.entry_url(owner,ticket),allowed=self.portal_permissions.allowed(owner,ticket))
             else:
-                snapshot=await self.browser.open(owner,ticket['billing_url'],allowed=self.portal_permissions.allowed(owner,ticket))
+                snapshot=await self.browser.open(owner,self.portal_memory.entry_url(owner,ticket),allowed=self.portal_permissions.allowed(owner,ticket))
         except AppError as error:
             ticket['portal_browser_error']={'code':error.code,'message':error.message}
             self.store.update('ticket',owner,ticket_id,ticket)
@@ -416,7 +425,7 @@ class BillingService:
             'purchase_validated':False,'submitted':False}
         ticket['portal_browser_error']=None
         self.store.update('ticket',owner,ticket_id,ticket)
-        payload={'ticket_id':ticket_id,'scope':self.portal_permissions.scope(ticket),'snapshot':snapshot}
+        payload={'ticket_id':ticket_id,'scope':self.portal_permissions.scope(ticket),'snapshot':snapshot,'brand_label':brand_label}
         if previous:
             record=self.store.update('browser_review',owner,previous['id'],payload)
         else:

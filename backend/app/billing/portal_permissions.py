@@ -1,5 +1,6 @@
 """Permiso humano para leer portales: separado de análisis, perfil y facturación."""
 import time
+import json
 
 from ...browser_worker.policy import BrowserError,origin,secure_link
 from ..errors import AppError
@@ -23,7 +24,8 @@ class PortalPermissions:
         self.billing,self.store=billing,billing.store
 
     def scope(self,ticket):
-        return self.store.digest('portal-scope:'+ticket['id']+':'+ticket['profile_id']+':'+(ticket.get('billing_url') or ''))
+        selected=json.dumps(ticket.get('selected_portal'),sort_keys=True) if ticket.get('selected_portal') else ''
+        return self.store.digest('portal-scope:'+ticket['id']+':'+ticket['profile_id']+':'+(ticket.get('billing_url') or '')+selected)
 
     def allowed(self,owner,ticket):
         scope=self.scope(ticket)
@@ -31,7 +33,7 @@ class PortalPermissions:
             if item['scope']==scope and item['_state']=='active'})
 
     def require(self,owner,ticket,target=None):
-        requested=portal_origin(target or ticket.get('billing_url'))
+        requested=portal_origin(target or self.billing.portal_memory.entry_url(owner,ticket))
         if requested not in self.allowed(owner,ticket):
             raise PortalPermissionRequired([requested])
         return requested
@@ -43,7 +45,7 @@ class PortalPermissions:
                 (kind,owner,lookup,time.time()))
 
     def candidates(self,owner,ticket):
-        candidates={portal_origin(ticket.get('billing_url'))}
+        candidates={portal_origin(ticket.get('billing_url')),portal_origin(self.billing.portal_memory.entry_url(owner,ticket))}
         record=self.store.find('browser_review',owner,self.store.digest('browser:'+ticket['id']))
         if record and record.get('scope')==self.scope(ticket):
             snapshot=record['snapshot']
@@ -63,7 +65,7 @@ class PortalPermissions:
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         if intent not in {'browse','details'}:
             raise AppError(422,'portal_permission','Tipo de revisión no válido.')
-        targets=sorted({portal_origin(value) for value in (origins or [ticket.get('billing_url')])})
+        targets=sorted({portal_origin(value) for value in (origins or [self.billing.portal_memory.entry_url(owner,ticket)])})
         candidates,record=self.candidates(owner,ticket)
         if not targets or len(targets)>12 or not set(targets)<=candidates:
             raise AppError(403,'portal_permission_source','Ese dominio no procede del ticket ni de la página observada.')
@@ -75,7 +77,7 @@ class PortalPermissions:
             return previous
         if previous:
             self.store.change_lookup('portal_permission',owner,previous['id'],self.store.digest('old-portal-review:'+previous['id']))
-        root=portal_origin(ticket['billing_url'])
+        root=portal_origin(self.billing.portal_memory.entry_url(owner,ticket))
         expires=time.time()+900
         if any(target!=root for target in targets):
             if not record:
