@@ -74,6 +74,7 @@ class Session:
     requests:int=0
     size:int=0
     blocked:set=field(default_factory=set)
+    main_permission_origin:str|None=None
     network_blocked:bool=False
     unsafe_blocked:bool=False
 
@@ -167,6 +168,7 @@ class BrowserManager:
     async def _permission_block(self,session,route,url,*,main_document):
         session.blocked.add(origin(url))
         if main_document:
+            session.main_permission_origin=origin(url)
             session.network_blocked=True
             await self._redirect_page(route,url)
         else:
@@ -304,9 +306,12 @@ class BrowserManager:
             if not allowed or len(allowed)>12 or not session.allowed<=allowed:
                 raise BrowserError('browser_origin','Permisos de revisión no válidos.',403)
             session.allowed=allowed
-            if session.blocked and session.blocked<=allowed and not session.unsafe_blocked:
-                session.blocked.clear()
+            newly_allowed=session.blocked & allowed
+            session.blocked.difference_update(allowed)
+            main_allowed=not session.main_permission_origin or session.main_permission_origin in allowed
+            if newly_allowed and main_allowed and not session.unsafe_blocked:
                 session.network_blocked=False
+                session.main_permission_origin=None
                 # Recargar solo la página ya autorizada; nunca enviar formularios.
                 await session.page.reload(wait_until='domcontentloaded',timeout=8000)
             return await self._observe(identifier,session)

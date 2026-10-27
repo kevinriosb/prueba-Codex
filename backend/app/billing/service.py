@@ -790,28 +790,34 @@ Saludos.'''
         if self.store.count('document',owner)+len(reply.attachments)>self.settings.billing_max_documents:
             raise AppError(429,'document_limit','Elimina archivos anteriores antes de guardar más adjuntos de factura.')
         profile=ticket['delivery'].get('fiscal_data') or self.store.get('profile',owner,ticket['profile_id'])
-        record=self.store.add('mail_reply',owner,{'ticket_id':ticket_id,'text':reply.text[:8000],'message_id':reply.identifier},lookup=lookup)
-        if re.search(r'constancia|situaci[oó]n fiscal',reply.text,re.I):
-            ticket['merchant_csf_request_detected']=True
         validation=None
-        total=0
+        expected_uuid=(ticket.get('validation') or {}).get('uuid')
+        prepared=[]
+        invoice_lookups=set()
+        # Validar el conjunto antes de marcar el correo o persistir archivos:
+        # un XML incorrecto no debe dejar un PDF huérfano ni impedir la revisión.
         for attachment in reply.attachments[:6]:
-            total+=len(attachment.data)
-            if total>self.settings.billing_max_upload_bytes:
-                raise AppError(413,'reply_size','Los adjuntos de la respuesta superan el límite.')
             mime,data=inspect_document(attachment.data,self.settings.billing_max_upload_bytes,allow_xml=True)
             if mime=='application/xml':
                 validation=validate_cfdi(data,profile,ticket)
-                if ticket.get('validation') and ticket['validation']['uuid']!=validation['uuid']:
+                if expected_uuid and expected_uuid!=validation['uuid']:
                     raise AppError(409,'conflicting_invoice','Hay más de un UUID para esta compra. Revisa los documentos antes de continuar.')
+                expected_uuid=validation['uuid']
                 invoice_lookup=self.store.digest(validation['uuid'])
                 duplicate=self.store.find('invoice_uuid',owner,invoice_lookup)
                 if duplicate and duplicate['ticket_id']!=ticket_id:
                     raise AppError(409,'duplicate_invoice','El mismo UUID ya está asociado a otro ticket.')
                 if not duplicate:
-                    self.store.add('invoice_uuid',owner,{'ticket_id':ticket_id},lookup=invoice_lookup)
+                    invoice_lookups.add(invoice_lookup)
             elif mime!='application/pdf':
                 continue
+            prepared.append((mime,data))
+        self.store.add('mail_reply',owner,{'ticket_id':ticket_id,'text':reply.text[:8000],'message_id':reply.identifier},lookup=lookup)
+        if re.search(r'constancia|situaci[oó]n fiscal',reply.text,re.I):
+            ticket['merchant_csf_request_detected']=True
+        for invoice_lookup in invoice_lookups:
+            self.store.add('invoice_uuid',owner,{'ticket_id':ticket_id},lookup=invoice_lookup)
+        for mime,data in prepared:
             document=self.store.add('document',owner,{'purpose':'invoice_xml' if mime=='application/xml' else 'invoice_pdf',
                 'mime':mime,'data':base64.b64encode(data).decode(),'sha256':hashlib.sha256(data).hexdigest(),
                 'ticket_id':ticket_id,'profile_id':ticket['profile_id']},
@@ -846,10 +852,10 @@ Saludos.'''
         if not self.settings.billing_sat_enabled:
             raise AppError(503,'sat_disabled','La consulta de vigencia al SAT está desactivada en este servidor.')
         verdict=await self.sat.verify(ticket['validation'])
-        if not verdict.get('query_success') or not verdict.get('vigente'):
-            return public(self._status(owner,ticket,Status.REQUIERE_INTERVENCION,'El SAT no confirmó que el CFDI esté vigente.'))
-        ticket['validation']['sat_verified']=True
+        ticket['validation']['sat_verified']=bool(verdict.get('query_success') and verdict.get('vigente'))
         ticket['validation']['sat_checked_at']=time.time()
+        if not ticket['validation']['sat_verified']:
+            return public(self._status(owner,ticket,Status.REQUIERE_INTERVENCION,'El SAT no confirmó que el CFDI esté vigente.'))
         ticket=self._status(owner,ticket,Status.FACTURA_VALIDADA,'XML cotejado y vigencia consultada al SAT; no es una verificación criptográfica de sellos.')
         return self._finish_verified_invoice(owner,ticket)
 

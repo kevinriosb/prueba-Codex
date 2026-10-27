@@ -55,6 +55,33 @@ async def test_http_link_is_followed_only_over_https_on_approved_host(browser):
     assert after['page']==FORM and all(url.startswith('https://') for url,_ in pages.calls)
 
 
+@pytest.mark.parametrize('approve_auxiliary_first',[False,True])
+async def test_approving_main_destination_does_not_require_unrelated_optional_resource(browser,approve_auxiliary_first):
+    manager,_=browser
+    class RedirectWithOptionalScript(Pages):
+        async def fetch(self,url,headers):
+            if url=='https://merchant.example/jump':
+                self.calls.append((url,headers))
+                return 302,{'location':FORM},b''
+            return await super().fetch(url,headers)
+    manager.fetcher=pages=RedirectWithOptionalScript({
+        HOME:'<script src="https://cdn.example/optional.js"></script><a href="/jump">Facturación</a>',
+        FORM:'<label>Cuenta<input></label>'})
+    first=await manager.open('owner',HOME,[ALLOWED[0]])
+    redirected=await manager.act('owner',first['session_id'],first['observation_id'],first['actions'][0]['reference'])
+    assert redirected['network_blocked'] is True
+    assert set(redirected['blocked_origins'])=={'https://cdn.example',ALLOWED[1]}
+    if approve_auxiliary_first:
+        partial=await manager.allow('owner',first['session_id'],[ALLOWED[0],'https://cdn.example'])
+        assert partial['network_blocked'] is True
+        assert not any(url==FORM for url,_ in pages.calls)
+    allowed=await manager.allow('owner',first['session_id'],ALLOWED+(['https://cdn.example'] if approve_auxiliary_first else []))
+    assert allowed['network_blocked'] is False
+    after=await manager.act('owner',allowed['session_id'],allowed['observation_id'],allowed['actions'][0]['reference'])
+    assert after['fields'][0]['label']=='Cuenta'
+    assert not any(url.startswith('https://cdn.example') for url,_ in pages.calls)
+
+
 async def test_different_page_expands_alternative_and_discovers_toll_fields(browser):
     manager,pages=browser
     pages.pages[HOME]='''<label>Web ID<input></label>
