@@ -13,6 +13,7 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 
 from .policy import BrowserError, PublicFetcher, https_url, origin, public_page, secure_link, tracking_url, bookmark_url, PAGE_REQUEST_LIMIT, ROUTE_REQUEST_LIMIT, PAGE_BYTE_LIMIT, ROUTE_BYTE_LIMIT, LEGACY_BYTE_LIMIT, RESPONSE_BYTE_LIMIT, network_failure
 from .resources import PageResources,ResourceCache
+from .filling import fill_fields,fill_status
 
 
 # Código fijo del servidor. El modelo solo elige referencias observadas, nunca JS.
@@ -41,8 +42,15 @@ SNAPSHOT = r'''() => {
   for(const pattern of patterns){const match=code.match(pattern);if(match){try{return new URL(match[2],document.baseURI).href;}catch{return null;}}}
   return null;
  };
- const inputs=all('input,select,textarea').filter(e=>visible(e)&&!e.disabled&&!['hidden','password','file','submit','button','reset'].includes(e.type));
- const fields=inputs.slice(0,24).map(e=>({label:label(e),kind:e.tagName.toLowerCase(),required:!!e.required,options:e.tagName==='SELECT'?Array.from(e.options).slice(0,25).map(o=>o.text.slice(0,70)):[]}));
+ const inputs=all('input,select,textarea').filter(e=>visible(e)&&!e.disabled&&!['hidden','password','file','submit','button','reset','checkbox','radio'].includes(e.type));
+ const fields=inputs.slice(0,24).map(e=>{
+  const id='field-'+Math.random().toString(36).slice(2,12);e.setAttribute('data-public-field-ref',id);
+  return {selector:id,signature:JSON.stringify([e.tagName,e.type,e.name,e.id,e.required,e.readOnly,e.disabled,e.maxLength,e.form?.getAttribute('action'),e.form?.getAttribute('method')]),
+   label:label(e),kind:e.tagName.toLowerCase(),required:!!e.required||e.getAttribute('aria-required')==='true'||label(e).includes('*'),editable:!e.readOnly,
+   input_type:e.type||'text',placeholder:(e.getAttribute('placeholder')||'').slice(0,100),
+   max_length:e.maxLength>=0?e.maxLength:null,options:e.tagName==='SELECT'?Array.from(e.options).slice(0,25).map(o=>o.text.slice(0,70)):[]};
+ });
+ const unsupported_required=all('input').filter(e=>visible(e)&&e.required&&['file','checkbox','radio'].includes(e.type)).map(label).slice(0,10);
  const signature=e=>JSON.stringify(['href','onclick','aria-expanded','aria-selected','role','data-bs-toggle','data-toggle','data-bs-target','data-target'].map(name=>e.getAttribute(name)));
  const candidates=[];
  let scanned=0;
@@ -71,7 +79,7 @@ SNAPSHOT = r'''() => {
  const text=roots.map(root=>root===document?(document.body?.innerText||''):(root.textContent||'')).join(' ').slice(0,40000).replace(/\s+/g,' ');
  const brand_selection=/(?:seleccion\w*|elige|elija|choose|select)\s+(?:[\p{L}\p{N}]+\s+){0,6}(?:marcas?|brands?|restaurantes?|establecimientos?|cadenas?|restaurants?|chains?)\b/iu.test(text);
  const login_required=all('input[type=password]').some(e=>visible(e)&&/iniciar sesi[oó]n|sign in|log in|login|contrase[nñ]a|password/i.test((e.closest('form')?.innerText||'')+' '+label(e)));
- return {title:document.title.slice(0,120),fields,actions,brand_selection,login_required,partial:traversalPartial||inputs.length>24||candidates.length>48||scanned>800,
+ return {title:document.title.slice(0,120),fields,actions,brand_selection,login_required,unsupported_required,partial:traversalPartial||inputs.length>24||candidates.length>48||scanned>800,
   captcha:all('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],[class*="g-recaptcha"],[class*="h-captcha"]').some(visible)};
 }'''
 
@@ -86,6 +94,10 @@ class Session:
     created:float=field(default_factory=time.monotonic)
     observation:str=''
     actions:dict=field(default_factory=dict)
+    field_controls:dict=field(default_factory=dict)
+    private:bool=False
+    private_blocked:int=0
+    fill_result:dict|None=None
     lock:object=field(default_factory=asyncio.Lock)
     steps:int=1
     requests:int=0
@@ -157,6 +169,10 @@ class BrowserManager:
             if session.closed:
                 await route.abort('blockedbyclient')
                 return
+            if session.private:
+                session.private_blocked+=1
+                await route.abort('blockedbyclient')
+                return
             main_document=request.resource_type=='document' and request.frame==session.page.main_frame
             if main_document and request.method=='GET':
                 session.page_requests=0
@@ -182,6 +198,10 @@ class BrowserManager:
                 raise ValueError()
             forwarded=await request.all_headers()
             for redirect in range(4):
+                if session.private:
+                    session.private_blocked+=1
+                    await route.abort('blockedbyclient')
+                    return
                 if not main_document and tracking_url(url):
                     await route.abort('blockedbyclient')
                     return
@@ -254,6 +274,9 @@ class BrowserManager:
                     except BrowserError:
                         forwarded.pop('referer',None)
         except Exception as error:
+            if session.private:
+                with suppress(PlaywrightError):await route.abort('blockedbyclient')
+                return
             code={'browser_response_size':'response_size_limit','browser_address':'private_address','browser_redirect_cookie':'redirect_cookie'}.get(getattr(error,'code',''),getattr(error,'code',''))
             if code not in {'response_size_limit','private_address','size_limit','page_size_limit','redirect_cookie'}:
                 code=network_failure(error)
@@ -279,6 +302,8 @@ class BrowserManager:
     def _charge_bytes(self,session,page,size,*,network=True):
         if session.closed:
             raise BrowserError('browser_session','La revisión terminó.',404)
+        if session.private:
+            raise BrowserError('browser_private','La red del llenado está cerrada.')
         if session.unsafe_blocked and session.block_reason in {'size_limit','page_size_limit'}:
             raise BrowserError(session.block_reason,'Presupuesto agotado.')
         if network:
@@ -365,13 +390,13 @@ class BrowserManager:
             session.request_pages.pop(id(request),None)
         def failed(request):
             resource_page=session.request_pages.pop(id(request),session.resources)
-            if session.closed or request.method!='GET' or request.resource_type not in {'document','script','stylesheet','xhr','fetch'} or tracking_url(request.url):
+            if session.closed or session.private or request.method!='GET' or request.resource_type not in {'document','script','stylesheet','xhr','fetch'} or tracking_url(request.url):
                 return
             if request.failure and ('BLOCKED_BY_CLIENT' in request.failure or 'ERR_ABORTED' in request.failure):
                 return
             self._issue(resource_page,request.resource_type,request.url,'load_failed')
         def console(message):
-            if not session.closed and message.type=='error':
+            if not session.closed and not session.private and message.type=='error':
                 text=message.text[:10000].casefold()
                 code=('csp' if 'content security policy' in text else 'cors' if 'cors policy' in text
                     else 'unexpected_content' if 'mime type' in text else None)
@@ -411,9 +436,13 @@ class BrowserManager:
             return await self._observe(identifier,session)
 
     async def _observe(self,identifier,session):
+        if session.private:
+            raise BrowserError('browser_private','El llenado es privado; no se devuelve al modelo ni a la navegación pública.')
         session.observation=secrets.token_hex(4)
         session.actions={}
+        session.field_controls={}
         fields,actions=[],[]
+        unsupported_required=[]
         title=''
         captcha=brand_selection=login_required=partial=False
         async with asyncio.timeout(6):
@@ -457,7 +486,12 @@ class BrowserManager:
                 brand_selection=brand_selection or result['brand_selection']
                 login_required=login_required or result['login_required']
                 partial=partial or result['partial']
-                fields.extend(item|{'source_url':bookmark_url(source)} for item in result['fields'])
+                unsupported_required.extend(result['unsupported_required'])
+                for item in result['fields']:
+                    reference=secrets.token_hex(4)
+                    session.field_controls[reference]=(frame,item|{'frame_url':frame.url})
+                    fields.append({key:value for key,value in item.items() if key not in {'selector','signature'}}|
+                        {'source_url':bookmark_url(source),'reference':reference})
                 for item in result['actions']:
                     permission_origin=None
                     if item['kind']=='link':
@@ -491,6 +525,7 @@ class BrowserManager:
             'bookmark_url':bookmark,
             'title':title,'fields':fields[:24],'actions':actions[:48],'captcha':captcha,
             'login_required':login_required,'partial':partial or len(fields)>24 or len(actions)>48,
+            'unsupported_required':unsupported_required[:10],
             'blocked_origins':sorted(session.blocked)[:12],'network_blocked':session.network_blocked,
             'block_reason':session.block_reason,'omitted_writes':session.omitted_writes,'brand_selection':brand_selection,
             'requests_remaining':max(0,(ROUTE_REQUEST_LIMIT if session.public_route else PAGE_REQUEST_LIMIT)-session.requests),
@@ -518,6 +553,8 @@ class BrowserManager:
     async def act(self,owner,identifier,observation_id,reference):
         session=await self.get(owner,identifier)
         async with session.lock:
+            if session.private:
+                raise BrowserError('browser_private','La sesión de llenado no admite navegación pública.')
             if observation_id!=session.observation or reference not in session.actions:
                 raise BrowserError('browser_stale','La página cambió. Revisa el estado antes de continuar.')
             if session.network_blocked:
@@ -549,6 +586,8 @@ class BrowserManager:
     async def allow(self,owner,identifier,allowed,*,public_route=False):
         session=await self.get(owner,identifier)
         async with session.lock:
+            if session.private:
+                raise BrowserError('browser_private','La sesión de llenado conserva la red cerrada.')
             allowed={origin(value) for value in allowed}
             if public_route:
                 allowed|=session.allowed
@@ -579,3 +618,9 @@ class BrowserManager:
             self.sessions.pop(identifier,None)
             await self._dispose(session)
         return {'closed':True}
+
+    async def fill(self,owner,identifier,observation_id,values):
+        return await fill_fields(self,owner,identifier,observation_id,values)
+
+    async def filled(self,owner,identifier):
+        return await fill_status(self,owner,identifier)

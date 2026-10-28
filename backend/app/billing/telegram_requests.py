@@ -31,7 +31,7 @@ class TelegramRequests:
             if item['ticket_id'] == ticket['id']]
         uncertain = any(item['_state'] in {'claimed', 'unknown'} for item in approvals)
         pending = next((item for item in approvals if item['_state'] == 'pending'), None)
-        text = 'Estado: ' + STATUS_LABELS.get(ticket['status'], 'Requiere revisión') + '.'
+        text = 'Estado: ' + ('Portal identificado' if ticket.get('portal_stage')=='awaiting_form' else STATUS_LABELS.get(ticket['status'], 'Requiere revisión')) + '.'
         if uncertain:
             return text + '\nEnvío incierto. Revisa Gmail; no lo repitas.', None, False
         if ticket.get('delivery'):

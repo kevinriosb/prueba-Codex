@@ -1,4 +1,4 @@
-"""Cliente del navegador aislado. Solo envía URL pública y propietario opaco."""
+"""Navegación pública y llenado nativo autorizado con la red cerrada."""
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
@@ -17,6 +17,11 @@ class PublicField(BaseModel):
     required:bool
     options:list[str]=Field(max_length=25)
     source_url:str|None=Field(default=None,max_length=2048)
+    reference:str|None=Field(default=None,pattern=r'^[a-f0-9]{8}$')
+    input_type:str=Field(default='text',max_length=25)
+    editable:bool=True
+    placeholder:str=Field(default='',max_length=100)
+    max_length:int|None=Field(default=None,ge=0)
 
 
 class PublicAction(BaseModel):
@@ -65,12 +70,26 @@ class Observation(BaseModel):
     login_required:bool=False
     partial:bool=False
     diagnostics:BrowserDiagnostics|None=None
+    unsupported_required:list[str]=Field(default_factory=list,max_length=10)
     requests_remaining:int|None=Field(default=None,ge=0,le=240)
     page_requests_remaining:int|None=Field(default=None,ge=0,le=60)
     steps_remaining:int=Field(ge=0,le=8)
     public_only:bool
     purchase_validated:bool
     submitted:bool
+
+
+class FilledForm(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    session_id:UUID
+    observation_id:str=Field(pattern=r'^[a-f0-9]{8}$')
+    filled:bool
+    filled_references:list[str]=Field(min_length=1,max_length=24)
+    network_frozen:bool
+    submitted:bool
+    purchase_validated:bool
+    expires_in:int=Field(ge=0,le=180)
+    blocked_requests:int=Field(ge=0)
 
 
 class PortalBrowserClient:
@@ -85,7 +104,7 @@ class PortalBrowserClient:
     async def close(self):
         await self.client.aclose()
 
-    async def _call(self,path,payload,*,method='POST',observation=True):
+    async def _call(self,path,payload,*,method='POST',observation=True,filled=False):
         if not self.enabled:
             raise AppError(503,'browser_disabled','La navegación aún no está activada por el operador.')
         try:
@@ -99,7 +118,7 @@ class PortalBrowserClient:
                 raise ValueError()
             if response.status_code!=200:
                 data=response.json()
-                allowed={'browser_origin','browser_stale','browser_steps','browser_session','browser_busy','browser_intervention','browser_navigation'}
+                allowed={'browser_origin','browser_stale','browser_steps','browser_session','browser_busy','browser_intervention','browser_navigation','browser_fill','browser_private'}
                 if data.get('code') in allowed:
                     raise AppError(response.status_code,data['code'],{
                         'browser_origin':'Autoriza ese dominio con el botón Permitir en Telegram.',
@@ -107,9 +126,17 @@ class PortalBrowserClient:
                         'browser_steps':'Se alcanzó el límite de navegación. Revisa los campos encontrados.',
                         'browser_session':'La revisión venció. Inicia otra revisión.',
                         'browser_navigation':'No se pudo abrir la página pública. Consulta el diagnóstico.',
+                        'browser_fill':'No se completó el llenado; no se envió el formulario. Revisa los datos y el estado.',
+                        'browser_private':'La sesión contiene datos privados; no admite más navegación pública.',
                         'browser_intervention':'Se bloqueó una operación de la página. Requiere intervención humana.',
                         'browser_busy':'El navegador está ocupado. Intenta más tarde.'}[data['code']])
                 raise ValueError()
+            if filled:
+                result=FilledForm.model_validate(response.json()).model_dump(mode='json')
+                if (result['session_id']!=str(UUID(path.split('/')[3])) or not result['filled']
+                        or not result['network_frozen'] or result['submitted'] or result['purchase_validated']):
+                    raise AppError(502,'browser_boundary','El navegador no confirmó el llenado aislado. No se repetirá el paso.')
+                return result
             if not observation:
                 if response.json()!={'closed':True}:
                     raise ValueError()
@@ -127,7 +154,8 @@ class PortalBrowserClient:
         except ValidationError:
             raise AppError(502,'browser_protocol','El agente y el navegador tienen contratos distintos. Actualiza ambos contenedores.') from None
         except Exception:
-            raise AppError(502,'browser_unavailable','No se pudo revisar la página pública. No se envió información fiscal.') from None
+            message='No se confirmó el llenado. Consulta el estado antes de repetir.' if filled else 'No se pudo revisar la página pública. No se envió información fiscal.'
+            raise AppError(502,'browser_unavailable',message) from None
 
     async def open(self,owner,url,*,allowed,public_route=False):
         # Solo mejora HTTP a HTTPS en el mismo hostname; TLS debe ser válido.
@@ -170,3 +198,10 @@ class PortalBrowserClient:
         except ValueError:
             raise AppError(422,'browser_session','Revisión no válida.') from None
         return await self._call('/v1/sessions/'+session_id,{'owner':owner},method='GET')
+
+    async def fill(self,owner,session_id,observation_id,values):
+        return await self._call('/v1/sessions/'+str(UUID(session_id))+'/fill',
+            {'owner':owner,'observation_id':observation_id,'values':values},filled=True)
+
+    async def filled(self,owner,session_id):
+        return await self._call('/v1/sessions/'+str(UUID(session_id))+'/filled',{'owner':owner},method='GET',filled=True)

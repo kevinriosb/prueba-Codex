@@ -2,9 +2,26 @@
 
 La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamadas de IA de pago. Después se realizaron pruebas reales con autorización del usuario; sus resultados se detallan abajo. **La aplicación no está desplegada en Railway.** El código se versiona en [kevinriosb/prueba-Codex](https://github.com/kevinriosb/prueba-Codex); publicar el repositorio no inicia un servicio web.
 
+## 28 de octubre: lectura dirigida y llenado sin envío
+
+La suite completa pasó **680 pruebas en 320,80 s**. Después pasó una regresión
+adicional del canal por correo sin portal. Ruff (F821/F822/F823/E9), compilación y
+comprobación del diff sin errores. Se construyeron las imágenes finales de agent
+y browser; pasaron el llenado sin red en el contenedor y la comprobación del stack
+Compose. Los recursos ficticios de ambas comprobaciones fueron retirados.
+
+Las nuevas regresiones verifican el orden portal → campos → lectura dirigida →
+revisión nativa → llenado; Tienda y fechas; archivos y sesiones vencidos; cuotas,
+respuestas perdidas, cambio de datos/formulario, correcciones humanas y aislamiento.
+El SDK y Chromium son reales; documentos, páginas y respuestas son ficticios.
+No se llamó a OpenAI de pago, al SAT ni a comercios, y no se desplegó el VPS.
+El llenado autorizado deja la red cerrada: **no envía el formulario ni solicita
+la factura**. El envío posterior aún necesita implementación. Véase el
+[alcance y despliegue](LECTURA_POR_FORMULARIO.md).
+
 ## Backend, seguridad y agente
 
-Resultado de la última ejecución completa de `.venv/bin/python -m pytest -q --tb=short -x`: **510 pruebas pasadas**, sin fallos ni pruebas omitidas (153,47 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
+Resultado histórico de `.venv/bin/python -m pytest -q --tb=short -x`: **510 pruebas pasadas**, sin fallos ni pruebas omitidas (153,47 segundos). Las 58 comprobaciones originales se conservan. La preparación para Hostinger añadió una regresión que comprueba el rechazo de un PNG corrupto con HTTP 422, sin guardarlo ni llamar a IA, veinte pruebas de configuración del proxy, once pruebas de retirada reversible de referencias obsoletas, treinta del diagnóstico de OpenAI sin generación y veintisiete de sustitución privada de esa credencial. La conversación de Telegram añade quince pruebas; su configuración e invitaciones, veintinueve. La corrección de clasificación y recuperación de archivos añade trece regresiones; la reutilización de CSF y perfiles añade cinco. El flujo de perfil y las respuestas concretas añaden dieciséis regresiones, y el adaptador HTTP cubre además el límite específico de Telegram. La distinción de campos pendientes y recuperación de CSF añade veintitrés regresiones. La lectura de canales de tickets y solicitudes con CSF añade otras veintiséis. La recuperación de solicitudes y explicación de cuotas añade quince regresiones.
 
 ### Solicitudes repetidas, perfil persistente y cuotas
 

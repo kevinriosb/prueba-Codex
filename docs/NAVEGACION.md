@@ -1,4 +1,4 @@
-# Navegación adaptable: primera fase pública
+# Navegación adaptable y preparación del formulario
 
 El mismo agente de OpenAI puede observar controles reales de cada página, seguir
 un enlace observado y desplegar alternativas como «No cuento con Web ID».
@@ -22,11 +22,13 @@ historial y límite de turnos del chat general. Las cuotas diarias se comparten.
 Una referencia antigua se actualiza sin repetir el clic; los permisos vencidos
 se solicitan de nuevo. Véase [recuperación del portal](RECUPERACION_PORTAL.md).
 
-Esta entrega **no rellena formularios, no busca la compra con sus identificadores,
-no envía el perfil fiscal, no inicia sesión y no solicita o emite facturas**.
-Registrar tickets, introducir los datos fiscales, aprobar la operación, enviar
-el formulario y recuperar sus XML/PDF son la siguiente fase. El envío por Gmail
-existente es una integración separada con sus propias aprobaciones.
+Después de observar el formulario, Telegram puede extraer del ticket los campos
+que este solicita y proponer un llenado con Playwright. **Llenar formulario** es
+una aprobación nativa separada: copia los valores revisados al navegador con la
+red cerrada. No envía formularios, no busca la compra en el comercio, no inicia
+sesión ni solicita o emite facturas. La consulta de compra, el envío y recuperar
+XML/PDF siguen pendientes de implementar. Véase [lectura dirigida y llenado](LECTURA_POR_FORMULARIO.md).
+El envío por Gmail existente es una integración separada con sus propias aprobaciones.
 
 ## Qué necesitas
 
@@ -39,8 +41,10 @@ existente es una integración separada con sus propias aprobaciones.
 
 El navegador se ejecuta en otro contenedor, sin `.env.hostinger`, clave de OpenAI,
 contraseña de la aplicación, clave de cifrado ni volumen de documentos. El backend
-solo le proporciona la dirección del portal, dominios permitidos y un propietario
-opaco. El navegador mantiene cookies públicas separadas por usuario y efímeras.
+le proporciona dirección, dominios permitidos y propietario opaco durante la
+navegación pública. Solo al aprobar **Llenar formulario** recibe los valores de los
+campos revisados para una sesión sin red. El navegador mantiene cookies públicas
+separadas por usuario y efímeras.
 Las observaciones no incluyen valores de inputs, HTML completo o cookies.
 
 ## Activar desde Termius
@@ -73,8 +77,8 @@ Los botones son de un solo uso. Cancelar revoca los permisos de esa revisión y
 cierra su navegador, conservando perfil y ticket. Escribir «sí» no pulsa el botón.
 
 Permitir autoriza solo lectura y navegación pública con IA; no autoriza escribir
-el perfil, registrar compras ni emitir facturas. Esos pasos tendrán una aprobación
-separada al implementarse. Cada sitio debe aceptar HTTPS con certificado válido,
+el perfil, registrar compras ni emitir facturas. El llenado sin red tiene su propia
+aprobación nativa; el envío aún no está implementado. Cada sitio debe aceptar HTTPS con certificado válido,
 aunque el ticket imprima HTTP. No se continúa por HTTP ni hacia redes privadas.
 Las consultas y fragmentos de la URL inicial no se transmiten en esta fase pública.
 Si un portal depende de esos parámetros, puede requerir una adaptación posterior.
@@ -105,6 +109,12 @@ usarse juntos en las siguientes actualizaciones para conservar esta activación.
    otra ejecución dentro de las cuotas existentes.
 5. Revisa los campos descubiertos y sus alternativas. **Cuenta**, **Folio** y
    **Web ID** se mantienen separados; no se completan entre sí por suposición.
+6. En tickets nuevos, la lectura autorizada identifica primero portal/comercio;
+   al llegar al formulario hace una lectura dirigida a sus campos. Revisa los
+   valores y usa **Corregir dato** o **Completar dato** si hace falta.
+7. **Llenar formulario** introduce esos valores sin conexión al comercio. No es
+   una solicitud de factura. La sesión dura hasta tres minutos; no hay todavía
+   un paso de envío desde esa sesión ni acceso interactivo remoto para el usuario.
 
 Si faltan datos visibles en la foto original, el ticket anterior a esta versión
 permite **Autorizar nueva lectura guardada** para extraer caseta, carril, hora o
@@ -151,7 +161,8 @@ parámetros públicos acotados de selección de marca/idioma. Un formulario dent
 un iframe puede recordar la dirección estable de ese formulario, si su dominio
 fue autorizado. Los botones viejos o una página que cambió no pueden guardar una
 dirección distinta sin una revisión nueva. La compatibilidad de cada portal real
-sigue requiriendo comprobación. Esta entrega no rellena ni envía formularios.
+sigue requiriendo comprobación. El llenado autorizado tiene lugar sin red;
+esta entrega no envía formularios.
 
 ## Límites y comprobaciones
 
@@ -173,7 +184,10 @@ sigue requiriendo comprobación. Esta entrega no rellena ni envía formularios.
   IPs privadas, métodos POST, WebSockets, descargas y service workers se bloquean.
   Las conexiones HTTP verifican DNS público y fijan IP, Host y SNI para TLS.
   No se reutiliza una conexión TLS entre dos dominios que compartan IP.
-- El navegador no recibe secretos fiscales. Su tráfico pasa por el filtro del
+- El navegador no recibe claves ni documentos. Solo el llenado nativo aprobado
+  recibe los valores de campos; antes de introducirlos cierra toda la red y
+  bloquea el envío de formularios. Las herramientas públicas rechazan esa sesión
+  privada y no pueden devolver valores al modelo. El tráfico público pasa por el filtro del
   servidor; la salida directa del navegador usa un proxy local que no da servicio.
   El contenedor usa UID 10001, raíz de solo lectura, límites de memoria/procesos y
   ninguna capacidad adicional. No se afirma que Chromium use su sandbox interno.
@@ -243,7 +257,9 @@ Con autenticación, origen válido y CSRF:
 
 El chat web puede elegir el ticket con `portal_browser_observe(identifier)` y
 seguir una referencia observada. No existe una API para ejecutar JavaScript,
-selectores arbitrarios, escribir valores, enviar formularios o saltar aprobaciones.
+selectores arbitrarios, escribir valores desde el modelo, enviar formularios o
+saltar aprobaciones. El llenado pertenece únicamente al flujo nativo de Telegram;
+no hay herramienta de llenado para el modelo ni ruta web pública equivalente.
 
 ## Desactivar conservando datos
 

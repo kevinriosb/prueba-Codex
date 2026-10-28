@@ -14,7 +14,7 @@ import httpx2
 
 LABELS = {'account_number':'Cuenta', 'folio':'Folio', 'reference_number':'Referencia',
     'billing_code':'Código de facturación', 'purchase_date':'Fecha', 'total':'Importe',
-    'rfc':'RFC', 'postal_code':'CP fiscal', 'email':'Correo', 'fiscal_regime':'Régimen', 'cfdi_use':'Uso CFDI',
+    'rfc':'RFC', 'issuer_rfc':'RFC emisor','name':'Nombre fiscal','postal_code':'CP fiscal', 'email':'Correo', 'fiscal_regime':'Régimen', 'cfdi_use':'Uso CFDI',
     'web_id':'Web ID','store_number':'Tienda','toll_station':'Caseta','lane':'Carril','purchase_time':'Hora'}
 IDENTIFIERS = ('account_number', 'folio', 'reference_number', 'billing_code')
 
@@ -23,6 +23,8 @@ def field_key(text):
     text = ''.join(char for char in unicodedata.normalize('NFD', text.casefold())
         if unicodedata.category(char) != 'Mn')
     text = re.sub(r'[^a-z0-9]+', ' ', text)
+    if re.search(r'\b(emisor|comercio|proveedor|seller|issuer)\b',text):
+        return 'issuer_rfc' if re.search(r'\brfc\b',text) else None
     patterns = {'web_id':r'\b(web\s*id|webid)\b', 'toll_station':r'\b(caseta|plaza de cobro)\b',
         'lane':r'\b(carril|lane)\b','purchase_time':r'\b(hora|time)\b',
         'account_number':r'\b(cuenta|account|accountnumber|consumptionaccount)\b',
@@ -31,7 +33,8 @@ def field_key(text):
         'rfc':r'\brfc\b', 'postal_code':r'\b(cp|codigo postal|postal code|zip)\b',
         'cfdi_use':r'\b(uso cfdi|uso de cfdi|usocfdi)\b', 'fiscal_regime':r'\b(regimen|regime)\b',
         'email':r'\b(email|correo)\b', 'purchase_date':r'\b(fecha|date)\b', 'total':r'\b(total|importe|amount)\b',
-        'store_number':r'^\s*(tienda|store)(?: (?:number|code|id|no))?\s*$|\b(?:numero|num|no|codigo|id)(?: de)?(?: la)? (?:tienda|sucursal)\b'}
+        'store_number':r'^\s*(tienda|store)(?: (?:number|code|id|no))?\s*$|\b(?:numero|num|no|codigo|id)(?: de)?(?: la)? (?:tienda|sucursal)\b',
+        'name':r'^\s*(?:nombre(?: fiscal| o razon social)?|razon social|legal name)\s*$'}
     return next((key for key, pattern in patterns.items() if re.search(pattern, text)), None)
 
 

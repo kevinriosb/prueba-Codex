@@ -45,9 +45,16 @@ async def run():
   assert second['fields'][0]['source_url']=='https://provider.example/form?brand=Demo'
   assert second['bookmark_url']=='https://provider.example/form?brand=Demo'
   assert not second['submitted'] and not second['purchase_validated']
+  before=second['session_id']
+  filled=await manager.fill('test-owner',before,second['observation_id'],[{'reference':second['fields'][0]['reference'],'value':'DEMO-0001'}])
+  assert filled['filled'] and filled['network_frozen'] and not filled['submitted']
+  assert 'DEMO-0001' not in str(filled)
+  try:await manager.observe('test-owner',before)
+  except BrowserError as error:assert error.code=='browser_private'
+  else:raise AssertionError('La observación pública expuso la sesión llenada.')
  finally:await manager.close()
 asyncio.run(run())
-print('PASS: Chromium sin privilegios, páginas simuladas y ningún dato fiscal o llamada de IA.')
+print('PASS: Chromium sin privilegios, navegación y llenado sin red con datos ficticios; sin IA.')
 '''
 
 

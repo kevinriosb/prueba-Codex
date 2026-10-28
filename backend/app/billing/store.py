@@ -116,6 +116,14 @@ class BillingStore:
             conn.execute("UPDATE billing_records SET state='claimed',version=version+1,updated=?,expires=CASE WHEN kind='email_approval' THEN NULL ELSE expires END WHERE id=?",(time.time(),identifier))
         return self._read(row)
 
+    def expire_at(self,kind,owner,identifier,expires):
+        # No recuperar registros vencidos ni cambiar propietario/tipo.
+        self.get(kind,owner,identifier)
+        with self.database.connection(True) as conn:
+            conn.execute('UPDATE billing_records SET expires=? WHERE kind=? AND owner=? AND id=? AND (expires IS NULL OR expires>?)',
+                (expires,kind,owner,identifier,time.time()))
+        return self.get(kind,owner,identifier)
+
     def delete(self, kind, owner, identifier):
         self.get(kind,owner,identifier)
         with self.database.connection(True) as conn:

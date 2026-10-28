@@ -11,11 +11,13 @@ por persona y botones de aprobación. La [guía de Telegram para Hostinger](docs
 explica cómo conectar un bot nuevo desde Termius, sin compartir su token.
 En Telegram, `/estado` o **Repetir solicitud** recuperan el ticket guardado sin
 reiniciar el perfil ni repetir envíos; `/limites` muestra los contadores propios.
-Incluye una primera fase opcional de [navegación adaptable con Playwright](docs/NAVEGACION.md):
+Incluye [navegación adaptable con Playwright](docs/NAVEGACION.md), opcional:
 la misma IA observa páginas y elige enlaces u opciones públicas. Cada usuario
-autoriza el portal del ticket con **Permitir / Cancelar** en Telegram; un dominio
-nuevo pide otro permiso en el chat, sin listas fijas en Termius. Todavía no rellena
-ni envía formularios de facturación. Puede identificar marcas por sus logos
+autoriza el recorrido público del ticket con **Permitir / Cancelar** en Telegram,
+sin listas fijas en Termius ni otro permiso por cada proveedor del recorrido.
+Después [extrae los campos que pide el formulario](docs/LECTURA_POR_FORMULARIO.md)
+y propone llenarlos con aprobación nativa y la red cerrada. No envía el formulario
+ni solicita la factura. Puede identificar marcas por sus logos
 etiquetados y guardar el portal confirmado para próximos tickets del mismo comercio.
 En Telegram, `/portales` permite consultar y olvidar esos enlaces.
 

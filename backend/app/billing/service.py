@@ -22,8 +22,9 @@ from .receipt import browser_missing_fields, missing_receipt_fields, pending_rec
 from .portal_inspection import PortalInspector, portal_plan
 from .browser import PortalBrowserClient
 from .portal_permissions import PortalPermissions,PortalPermissionRequired,portal_origin
-from .portal_memory import PortalMemory
+from .portal_memory import PortalMemory,public_form_ready
 from .store import BillingStore
+from .portal_preparation import PortalPreparation
 
 
 def public(record):
@@ -48,6 +49,7 @@ class BillingService:
             self.browser=browser or PortalBrowserClient(settings)
             self.portal_permissions=PortalPermissions(self)
             self.portal_memory=PortalMemory(self)
+            self.portal_preparation=PortalPreparation(self)
             self.contacts=official_contacts(settings.billing_verified_contacts_json)
             self.store.purge()
 
@@ -129,14 +131,20 @@ class BillingService:
             return {'id':existing['id'],'purpose':purpose,'duplicate':True,'expires':existing['_expires']}
         payload={'purpose':purpose,'mime':mime,'data':encoded,'profile_id':profile_id,
             'sha256':sha256,'analysis_consent':False,'extracted':None}
+        retention=self.settings.billing_ticket_retention_hours if purpose=='ticket' else self.settings.billing_document_retention_hours
+        deadline=time.time()+retention*3600
+        if source and source['purpose']!='unclassified' and source['_expires']:
+            deadline=min(deadline,source['_expires'])
         if source and source['purpose']=='unclassified':
             record=self.store.update('document',owner,source['id'],payload)
+            if purpose=='ticket':
+                record=self.store.expire_at('document',owner,record['id'],deadline)
             self.store.change_lookup('document',owner,source['id'],lookup)
         else:
             if self.store.count('document',owner)>=self.settings.billing_max_documents:
                 raise AppError(429,'document_limit','Elimina documentos anteriores antes de subir más archivos.')
             record=self.store.add('document',owner,payload,lookup=lookup,
-                expires=min(source['_expires'],time.time()+self.settings.billing_document_retention_hours*3600) if source and source['_expires'] else time.time()+self.settings.billing_document_retention_hours*3600)
+                expires=deadline)
         if purpose=='ticket':
             pending={key:None for key in TicketExtraction.model_fields}
             pending.update(profile_id=profile_id,document_id=record['id'],verified_email=None,status=Status.TICKET_RECIBIDO,
@@ -197,7 +205,12 @@ class BillingService:
             document.update(analysis_consent=True,extraction_version=EXTRACTION_VERSION,analysis_error=None)
             document=self.store.update('document',owner,identifier,document)
             try:
-                result=await self.extractor.extract(purpose,document['mime'],base64.b64decode(document['data']))
+                routing=purpose=='ticket' and document.get('analysis_scope')=='portal-fields-v1' and hasattr(self.extractor,'extract_routing')
+                if routing:
+                    result=await self.extractor.extract_routing(document['mime'],base64.b64decode(document['data']))
+                    document['analysis_stage']='routing'
+                else:
+                    result=await self.extractor.extract(purpose,document['mime'],base64.b64decode(document['data']))
                 schema=FiscalExtraction if purpose=='csf' else TicketExtraction
                 extracted=schema.model_validate(result).model_dump()
                 document['extracted']=extracted
@@ -344,8 +357,13 @@ class BillingService:
             'status_history':pending['status_history'],
             'delivery':None,'certificate_requested':False,'csf_supplement_sent':False,'invoice_documents':[],
             'qr_urls':qr_urls,'validation':None,'note':'' if complete else 'Falta completar: '+', '.join(missing_receipt_fields(data))+'.'}
+        if document.get('analysis_stage')=='routing' and data.get('billing_url'):
+            ticket.update(portal_driven=True,portal_stage='awaiting_form',note='Portal identificado; falta leer su formulario.')
         ticket=self.store.update('ticket',owner,pending['id'],ticket)
         ticket=self._status(owner,ticket,ticket['status'])
+        if document.get('analysis_stage')=='routing' and not data.get('billing_url') and data.get('email_explicitly_for_billing'):
+            await self.portal_preparation.read_for_email(owner,ticket['id'])
+            ticket=self.resolve_ticket(owner,ticket['id'])
         if self.portal_memory.suggestion(owner,ticket):
             ticket=self.portal_memory.select(owner,ticket['id'])
         return public(ticket)|{'channels':self.detect_billing_channels(owner,ticket['id'])}
@@ -476,6 +494,8 @@ class BillingService:
             'purchase_validated':False,'submitted':False,'diagnostics':snapshot.get('diagnostics'),
             'block_reason':snapshot.get('block_reason'),'omitted_writes':snapshot.get('omitted_writes',0),
             'partial':snapshot.get('partial',False)}
+        if ticket.get('portal_stage')=='awaiting_form' and public_form_ready(snapshot):
+            ticket['portal_stage']='fields_pending'
         self._save_portal_checkpoint(owner,ticket,snapshot,brand_label)
         ticket['portal_browser_error']=None
         self.store.update('ticket',owner,ticket_id,ticket)
@@ -539,17 +559,21 @@ class BillingService:
         self._status(owner,ticket,Status.REQUIERE_INTERVENCION,'Archivo recuperado para una nueva lectura autorizada.')
         return result
 
-    def complete_ticket_field(self,owner,ticket_id,field,value):
+    def complete_ticket_field(self,owner,ticket_id,field,value,*,correction=False):
         ticket=self.store.get('ticket',owner,ticket_id)
         try:
             document=self.document(owner,ticket['document_id'])
-            analyzed=(document.get('extracted') or {}).get('is_ticket')
+            analyzed=(document.get('extracted') or {}).get('is_ticket') or (document.get('portal_replacement') and ticket.get('is_ticket') is True)
         except AppError as error:
             if error.status!=404:
                 raise
             # Los datos de un ticket ya analizado sobreviven al adjunto temporal.
             analyzed=ticket.get('is_ticket') is True
-        if ticket.get('delivery') or not analyzed or field not in set(pending_receipt_fields(ticket))|set(browser_missing_fields(ticket)):
+        allowed=set(pending_receipt_fields(ticket))|set(browser_missing_fields(ticket))
+        if correction:
+            allowed={item['key'] for item in (ticket.get('portal_browser') or {}).get('fields',[])} & {
+                'account_number','folio','reference_number','billing_code','web_id','store_number','toll_station','lane','purchase_time','purchase_date','total'}
+        if ticket.get('delivery') or not analyzed or field not in allowed:
             raise AppError(409,'ticket_field','Ese dato no está pendiente. Consulta /tickets.')
         value=value.strip()
         if not value or len(value)>160 or any(ord(char)<32 for char in value):
@@ -568,7 +592,7 @@ class BillingService:
         if ticket.get('portal_inspection'):
             profile=self.store.get('profile',owner,ticket['profile_id'])
             ticket['portal_inspection']=portal_plan(ticket|profile,ticket['portal_inspection'])
-        ticket.setdefault('fields_completed_by_user',[]).append(field)
+        ticket['fields_completed_by_user']=list(dict.fromkeys([*ticket.get('fields_completed_by_user',[]),field]))
         self.store.audit(owner,ticket_id,'ticket_field_completed_by_user')
         complete=not missing_receipt_fields(ticket)
         return self._status(owner,ticket,Status.DATOS_EXTRAIDOS if complete else Status.REQUIERE_INTERVENCION,
@@ -942,13 +966,13 @@ Saludos.'''
 
     def delete_ticket(self,owner,ticket_id):
         ticket=self.store.get('ticket',owner,ticket_id)
-        for kind in ('email_approval','mail_reply','invoice_uuid','portal_permission','portal_grant','browser_review'):
+        for kind in ('email_approval','mail_reply','invoice_uuid','portal_permission','portal_grant','browser_review','portal_data','portal_data_review','portal_fill_review'):
             for record in self.store.list(kind,owner):
                 if record['ticket_id']==ticket_id:
                     if kind=='email_approval' and record['_state']=='claimed':
                         raise AppError(409,'send_in_progress','Espera a que termine el envío antes de eliminar el ticket.')
                     self.store.delete(kind,owner,record['id'])
-        aliases=[item['id'] for item in self.store.list('document',owner) if item.get('duplicate_ticket_id')==ticket_id]
+        aliases=[item['id'] for item in self.store.list('document',owner) if item.get('duplicate_ticket_id')==ticket_id or item.get('ticket_id')==ticket_id]
         for identifier in dict.fromkeys([ticket['document_id'],*ticket['invoice_documents'],*aliases]):
             try:
                 self.store.delete('document',owner,identifier)

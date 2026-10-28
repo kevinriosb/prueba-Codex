@@ -129,5 +129,16 @@ class TicketExtraction(SafeModel):
         return portal_url(value)
 
 
+class TicketRouting(SafeModel):
+    is_ticket: bool
+    readable: bool
+    merchant: str | None = Field(max_length=160)
+    billing_url: str | None = Field(max_length=500)
+    billing_url_evidence: str | None = Field(max_length=500)
+    billing_email: str | None = Field(max_length=254)
+    billing_email_evidence: str | None = Field(max_length=500)
+    email_explicitly_for_billing: bool
+
+
 def validate_fiscal(data):
     return not missing_fiscal_fields(data)

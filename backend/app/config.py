@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     billing_encryption_key: SecretStr = SecretStr('')
     billing_max_upload_bytes: int = Field(default=8_388_608, ge=1024, le=12_582_912)
     billing_document_retention_hours: int = Field(default=24, ge=1, le=168)
+    billing_ticket_retention_hours: int = Field(default=168, ge=1, le=168)
     billing_invoice_retention_days: int = Field(default=30, ge=1, le=90)
     billing_max_documents: int = Field(default=40, ge=1, le=100)
     billing_max_profiles: int = Field(default=10, ge=1, le=20)

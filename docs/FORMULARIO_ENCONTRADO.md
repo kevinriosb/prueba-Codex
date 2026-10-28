@@ -1,5 +1,8 @@
 # Cerrar la revisión cuando ya existe un formulario
 
+Esta nota describe el cierre de la fase pública. La entrega posterior añade
+[extracción según campos y llenado sin red](LECTURA_POR_FORMULARIO.md).
+
 La captura del VPS llegó al formulario de Domino’s con RFC, Ticket, Tienda y
 Fecha, pero mostró «Revisión pausada por el límite de ejecución» y ofreció
 «Continuar revisión con IA». La navegación había conseguido su objetivo; el

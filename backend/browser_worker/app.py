@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field
 
 from .engine import BrowserManager
@@ -39,6 +40,17 @@ class Permission(BaseModel):
 class Close(BaseModel):
     model_config=ConfigDict(extra='forbid',hide_input_in_errors=True)
     owner:str=Field(min_length=1,max_length=100)
+
+
+class FillValue(BaseModel):
+    model_config=ConfigDict(extra='forbid',hide_input_in_errors=True)
+    reference:str=Field(pattern=r'^[a-f0-9]{8}$')
+    value:str=Field(min_length=1,max_length=250,strict=True)
+
+
+class Fill(Close):
+    observation_id:str=Field(pattern=r'^[a-f0-9]{8}$')
+    values:list[FillValue]=Field(min_length=1,max_length=24)
 
 
 def create_worker(manager=None,token_file=None):
@@ -75,12 +87,15 @@ def create_worker(manager=None,token_file=None):
     @app.exception_handler(BrowserError)
     async def browser_error(request,error):
         return JSONResponse({'code':error.code,'message':error.message},status_code=error.status)
+    @app.exception_handler(RequestValidationError)
+    async def invalid_input(request,error):
+        return JSONResponse({'code':'browser_input','message':'Parámetros del navegador no válidos.'},status_code=422)
     @app.exception_handler(Exception)
     async def unexpected(request,error):
         return JSONResponse({'code':'browser_failure','message':'No se completó la revisión pública. No se reintentó.'},status_code=502)
     @app.get('/health')
     async def health():
-        return {'status':'ok','public_only':True}
+        return {'status':'ok','public_only':True,'offline_form_fill':True}
     @app.post('/v1/sessions')
     async def open_session(payload:Open):
         return await manager.open(payload.owner,payload.url,payload.allowed,
@@ -98,6 +113,12 @@ def create_worker(manager=None,token_file=None):
     @app.delete('/v1/sessions/{identifier}')
     async def close(identifier:str,payload:Close):
         return await manager.close_session(payload.owner,identifier)
+    @app.post('/v1/sessions/{identifier}/fill')
+    async def fill(identifier:str,payload:Fill):
+        return await manager.fill(payload.owner,identifier,payload.observation_id,[item.model_dump() for item in payload.values])
+    @app.get('/v1/sessions/{identifier}/filled')
+    async def filled(identifier:str,owner:str):
+        return await manager.filled(owner,identifier)
     return app
 
 
