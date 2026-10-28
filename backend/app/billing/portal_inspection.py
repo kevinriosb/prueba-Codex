@@ -15,7 +15,7 @@ import httpx2
 LABELS = {'account_number':'Cuenta', 'folio':'Folio', 'reference_number':'Referencia',
     'billing_code':'Código de facturación', 'purchase_date':'Fecha', 'total':'Importe',
     'rfc':'RFC', 'postal_code':'CP fiscal', 'email':'Correo', 'fiscal_regime':'Régimen', 'cfdi_use':'Uso CFDI',
-    'web_id':'Web ID','toll_station':'Caseta','lane':'Carril','purchase_time':'Hora'}
+    'web_id':'Web ID','store_number':'Tienda','toll_station':'Caseta','lane':'Carril','purchase_time':'Hora'}
 IDENTIFIERS = ('account_number', 'folio', 'reference_number', 'billing_code')
 
 
@@ -30,7 +30,8 @@ def field_key(text):
         'folio':r'\b(folio|ticket|ticketnumber)\b', 'reference_number':r'\b(referencia|reference)\b',
         'rfc':r'\brfc\b', 'postal_code':r'\b(cp|codigo postal|postal code|zip)\b',
         'cfdi_use':r'\b(uso cfdi|uso de cfdi|usocfdi)\b', 'fiscal_regime':r'\b(regimen|regime)\b',
-        'email':r'\b(email|correo)\b', 'purchase_date':r'\b(fecha|date)\b', 'total':r'\b(total|importe|amount)\b'}
+        'email':r'\b(email|correo)\b', 'purchase_date':r'\b(fecha|date)\b', 'total':r'\b(total|importe|amount)\b',
+        'store_number':r'^\s*(tienda|store)(?: (?:number|code|id|no))?\s*$|\b(?:numero|num|no|codigo|id)(?: de)?(?: la)? (?:tienda|sucursal)\b'}
     return next((key for key, pattern in patterns.items() if re.search(pattern, text)), None)
 
 

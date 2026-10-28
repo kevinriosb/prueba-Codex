@@ -134,7 +134,8 @@ def test_public_navigation_stops_at_form_even_if_model_asks_to_click_more(billin
     client,app,extractor,mail,sat,telegram,chat=values
     chat(data=button(telegram,'wa'))
     assert [item[0] for item in browser.calls]==['open','act']
-    assert 'form_found' in str(model.inputs[-1])
+    assert len(model.inputs)==2  # No se solicita el siguiente clic ni un cierre de IA.
+    assert 'Formulario encontrado' in telegram.messages[-1][1]
     assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
     assert app.state.database.usage(owner(app))['runs']==1
 

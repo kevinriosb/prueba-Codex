@@ -97,6 +97,7 @@ class TicketExtraction(SafeModel):
     purchase_date: str | None = Field(max_length=10)
     folio: str | None = Field(max_length=100)
     account_number: str | None = Field(default=None,max_length=100)
+    store_number: str | None = Field(default=None,max_length=100)
     reference_number: str | None = Field(default=None,max_length=160)
     web_id: str | None = Field(default=None,max_length=160)
     toll_station: str | None = Field(default=None,max_length=160)

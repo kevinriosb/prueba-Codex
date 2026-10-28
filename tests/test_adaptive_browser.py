@@ -67,7 +67,7 @@ def test_real_agents_sdk_observes_and_chooses_public_link_without_fiscal_values(
     assert [item[0] for item in browser.calls]==['open','act']
     assert len(telegram.messages)==before+1  # Solo la observación más reciente.
     assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
-    assert 'No se enviaron datos fiscales' in telegram.messages[-1][1]
+    assert 'No se solicitó la factura' in telegram.messages[-1][1]
     assert all(value not in json.dumps(model.inputs) for value in (FISCAL['rfc'],FISCAL['name'],'cliente@example.com'))
     assert mail.sent==sat.calls==[] and len(extractor.calls)==2
 
@@ -159,7 +159,10 @@ def test_public_select_options_do_not_expand_model_context_or_token_cost(billing
     serialized=json.dumps(model.inputs,ensure_ascii=False)
     assert 'option-not-for-model-' not in serialized
     assert 'receipt-path-not-for-model' not in serialized
-    outputs=[item for item in model.inputs[-1] if item.get('type')=='function_call_output']
+    assert len(model.inputs)==1
+    with app.state.database.connection() as connection:
+        row=connection.execute("SELECT history FROM conversations WHERE user_id=? AND purpose='portal_review'",(owner(app),)).fetchone()
+    outputs=[item for item in json.loads(row['history']) if item.get('type')=='function_call_output']
     assert len(outputs[-1]['output'].encode())<4000
     assert mail.sent==[]
 

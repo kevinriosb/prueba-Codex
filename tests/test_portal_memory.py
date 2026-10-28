@@ -77,7 +77,7 @@ def arrive_and_save(billing_client,**options):
 def test_matching_brand_uses_observed_control_within_route_permission_without_extra_ai(billing_client):
     values,browser,model,saved=arrive_and_save(billing_client)
     client,app,extractor,mail,sat,telegram,chat=values
-    assert len(model.inputs)==2 and app.state.database.usage(owner(app))['runs']==1
+    assert len(model.inputs)==1 and app.state.database.usage(owner(app))['runs']==1
     assert saved['url']==FORM and saved['merchant']=='Dominos'
     assert 'guardado para próximos tickets' in telegram.messages[-1][1]
     assert len(extractor.calls)==2 and mail.sent==sat.calls==[]
@@ -94,7 +94,7 @@ def test_next_ticket_reuses_direct_route_only_after_new_permission_and_keeps_ori
     assert 'Portal guardado: '+FORM in telegram.messages[-1][1]
     before=len(browser.calls)
     assert button(telegram,'wa') and len(browser.calls)==before
-    model.outputs.extend([[call('portal_browser_observe')],[answer('Formulario listo.')]])
+    model.outputs=[[call('portal_browser_observe')]]
     chat(data=button(telegram,'wa'))
     assert browser.calls[-1][0]=='open' and browser.calls[-1][2]==FORM
     assert browser.allowed==['https://provider.example']

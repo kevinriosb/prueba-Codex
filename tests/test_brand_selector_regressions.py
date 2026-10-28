@@ -145,7 +145,7 @@ def test_telegram_sdk_reaches_brand_form_despite_startup_post_and_footer_link(bi
     before=len(telegram.messages)
     chat(data=button(telegram,'wa'))
     assert browser.calls==['open','act'] and [url for url,_ in pages.calls]==[root,form]
-    assert len(telegram.messages)==before+1 and len(model.inputs)==2
+    assert len(telegram.messages)==before+1 and len(model.inputs)==1
     assert 'RFC: '+FISCAL['rfc'] in telegram.messages[-1][1]
     assert 'Guardar portal' in str(telegram.messages[-1][2])
     assert FISCAL['rfc'] not in json.dumps(model.inputs)

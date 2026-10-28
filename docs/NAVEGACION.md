@@ -3,13 +3,16 @@
 El mismo agente de OpenAI puede observar controles reales de cada página, seguir
 un enlace observado y desplegar alternativas como «No cuento con Web ID».
 No hay una secuencia fija por comercio. Los nombres de campos se relacionan con
-conceptos de los documentos: Cuenta, Folio, Referencia, Web ID, caseta, carril,
+conceptos de los documentos: Cuenta, Folio, Referencia, Web ID, Tienda, caseta, carril,
 fecha y hora. Un campo desconocido queda para revisión humana.
 
 Las instrucciones de investigación son las mismas en web y Telegram: observar
 la página actual, elegir un control útil y reevaluar el resultado de cada acción.
 Un menú, selector de marcas, enlace directo o alternativa son posibilidades, no
 una secuencia obligatoria. Un formulario ya visible se revisa directamente.
+En Telegram, encontrar un formulario público utilizable cierra la revisión sin
+otro turno de IA ni botón de continuar. Los datos pendientes se completan en el
+chat. Véase [cierre del formulario](FORMULARIO_ENCONTRADO.md).
 El bot no pide elegir marca por ver un único logo, aunque se repita en el pie.
 No se mantiene una receta por dominio; guardar una liga conserva un punto de
 entrada confirmado, no los pasos ni las autorizaciones de otro ticket.

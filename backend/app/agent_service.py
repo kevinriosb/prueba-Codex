@@ -5,6 +5,7 @@ import time
 import uuid
 
 from agents import Agent, ModelSettings, RunConfig, RunHooks, Runner, RunState, set_tracing_disabled
+from agents.agent import ToolsToFinalOutputResult
 from agents.exceptions import MaxTurnsExceeded
 from agents.models.openai_responses import OpenAIResponsesModel
 from agents.retry import ModelRetrySettings
@@ -101,6 +102,13 @@ def channel_instructions(context, _agent):
     return instructions
 
 
+async def finish_public_form(context,_results):
+    # Solo lo marca una observación validada del servidor, no texto del modelo.
+    if context.context.get('purpose')=='portal_review' and context.context.get('browser_form_found'):
+        return ToolsToFinalOutputResult(is_final_output=True,final_output='Formulario encontrado.')
+    return ToolsToFinalOutputResult(is_final_output=False)
+
+
 class SafetyHooks(RunHooks):
     def __init__(self, settings):
         self.settings = settings
@@ -170,7 +178,7 @@ class AgentService:
             existing = self.database.get_conversation(identifier, owner)
             portal_review=existing['purpose']=='portal_review'
             available=[tool for tool in self.tools if tool.name in {'portal_browser_observe','portal_browser_navigate'}] if portal_review else self.tools
-            agent=self.agent.clone(tools=available) if portal_review else self.agent
+            agent=self.agent.clone(tools=available,tool_use_behavior=finish_public_form) if portal_review else self.agent
             if portal_review and approval_id:
                 raise AppError(409,'invalid_approval','Esta revisión pública no reanuda acciones privadas.')
             initial = json.loads(existing['history']) + ([{'role': 'user', 'content': text}] if text is not None else [])

@@ -99,13 +99,13 @@ def pending_receipt_fields(ticket):
     if identifiers and 'folio' not in identifiers and 'folio' in fields:
         fields.remove('folio')
     for item in portal_fields:
-        if item['key'] in {'account_number','reference_number','billing_code','folio','web_id','toll_station','lane','purchase_time'} and not ticket.get(item['key']) and item['key'] not in fields:
+        if item['key'] in {'account_number','reference_number','billing_code','folio','web_id','store_number','toll_station','lane','purchase_time'} and not ticket.get(item['key']) and item['key'] not in fields:
             fields.append(item['key'])
     return fields
 
 
 def browser_missing_fields(ticket):
     """Campos visibles sin valor; pueden ser alternativas, no requisitos universales."""
-    allowed={'account_number','folio','reference_number','billing_code','web_id','toll_station','lane','purchase_time','purchase_date','total'}
+    allowed={'account_number','folio','reference_number','billing_code','web_id','store_number','toll_station','lane','purchase_time','purchase_date','total'}
     return list(dict.fromkeys(item['key'] for item in (ticket.get('portal_browser') or {}).get('fields',[])
         if item.get('key') in allowed and not ticket.get(item['key'])))

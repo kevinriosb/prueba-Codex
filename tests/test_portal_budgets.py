@@ -105,7 +105,7 @@ def test_native_resume_opens_last_observed_page_without_restarting_merchant_or_p
     chat(data=button(telegram,'bn'))
     assert [event[0] for event in browser.calls]==['open','close','open']
     assert browser.calls[-1][2]==ENTRY and 'RFC:' in telegram.messages[-1][1]
-    assert len(model.inputs)==4 and app.state.database.usage(owner(app))['runs']==2
+    assert len(model.inputs)==3 and app.state.database.usage(owner(app))['runs']==2
     assert len(extractor.calls)==2 and mail.sent==sat.calls==[]
     assert len(app.state.billing.store.list('profile',owner(app)))==1
     assert app.state.billing.store.list('portal_memory',owner(app))==[]

@@ -8,7 +8,7 @@ from agents.exceptions import ModelBehaviorError
 from ..errors import AppError
 from .models import validate_fiscal
 from .portal_permissions import PortalPermissionRequired
-from .portal_memory import has_billing_form,matching_brand
+from .portal_memory import has_billing_form,matching_brand,public_form_ready
 from .portal_navigation import next_public_action
 
 OPERATIONS={
@@ -132,11 +132,12 @@ def build_billing_tools(billing):
 
     def remember_observation(ctx,ticket,record):
         snapshot=record['snapshot']
+        ctx.context['browser_form_found']=public_form_ready(snapshot)
         ctx.context['browser_observation']={'ticket_id':ticket['id'],'id':snapshot['observation_id'],
             'references':[item['reference'] for item in snapshot['actions']]}
         review(ctx,'browser',ticket['id'])
         return browser_metadata(record)|{'ticket_fields_available':[key for key in
-            ('account_number','folio','reference_number','billing_code','web_id','toll_station','lane','purchase_date','purchase_time','total') if ticket.get(key)],
+            ('account_number','folio','reference_number','billing_code','web_id','store_number','toll_station','lane','purchase_date','purchase_time','total') if ticket.get(key)],
             'merchant_hint':(ticket.get('merchant') or '')[:120]}
 
     async def advance_public_route(ctx,ticket,record):

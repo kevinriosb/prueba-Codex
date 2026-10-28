@@ -541,8 +541,15 @@ class BillingService:
 
     def complete_ticket_field(self,owner,ticket_id,field,value):
         ticket=self.store.get('ticket',owner,ticket_id)
-        document=self.document(owner,ticket['document_id'])
-        if ticket.get('delivery') or not (document.get('extracted') or {}).get('is_ticket') or field not in set(pending_receipt_fields(ticket))|set(browser_missing_fields(ticket)):
+        try:
+            document=self.document(owner,ticket['document_id'])
+            analyzed=(document.get('extracted') or {}).get('is_ticket')
+        except AppError as error:
+            if error.status!=404:
+                raise
+            # Los datos de un ticket ya analizado sobreviven al adjunto temporal.
+            analyzed=ticket.get('is_ticket') is True
+        if ticket.get('delivery') or not analyzed or field not in set(pending_receipt_fields(ticket))|set(browser_missing_fields(ticket)):
             raise AppError(409,'ticket_field','Ese dato no está pendiente. Consulta /tickets.')
         value=value.strip()
         if not value or len(value)>160 or any(ord(char)<32 for char in value):
@@ -551,7 +558,7 @@ class BillingService:
             value=purchase_date(value)
         elif field=='total':
             value=purchase_total(value)
-        elif field in {'folio','account_number'} and len(value)>100:
+        elif field in {'folio','account_number','store_number'} and len(value)>100:
             value=None
         elif field=='lane' and len(value)>40 or field=='purchase_time' and len(value)>20:
             value=None

@@ -17,7 +17,7 @@ from .telegram_agent import TelegramAgent
 from .telegram_profiles import TelegramProfiles, normalized
 from .telegram_requests import REQUEST_TEXTS, TelegramRequests
 from .portal_permissions import PortalPermissionRequired
-from .portal_memory import matching_brand,brand_options,has_billing_form
+from .portal_memory import matching_brand,brand_options,has_billing_form,public_form_ready
 
 
 class TelegramClient:
@@ -259,7 +259,7 @@ class TelegramBridge:
         state['last_ticket_id']=identifier
         self._save_state(owner,state)
         text=ticket.get('merchant') or 'Ticket guardado'
-        for key,label in [('account_number','Cuenta'),('folio','Folio'),('reference_number','Referencia'),('billing_code','Código de facturación')]:
+        for key,label in [('account_number','Cuenta'),('folio','Folio'),('store_number','Tienda'),('reference_number','Referencia'),('billing_code','Código de facturación')]:
             if ticket.get(key):
                 text+='\n'+label+': '+ticket[key]
         text+='\nImporte: '+str(ticket.get('total') or 'Pendiente')
@@ -285,9 +285,9 @@ class TelegramBridge:
         elif pending_receipt_fields(ticket):
             labels={'merchant':'comercio','purchase_date':'fecha','folio':'folio','total':'importe',
                 'account_number':'Cuenta','reference_number':'referencia','billing_code':'código de facturación',
-                'web_id':'Web ID','toll_station':'caseta','lane':'carril','purchase_time':'hora'}
+                'web_id':'Web ID','store_number':'Tienda','toll_station':'caseta','lane':'carril','purchase_time':'hora'}
             text+='\nFalta: '+', '.join(labels[key] for key in pending_receipt_fields(ticket))+'.'
-            if document and (document.get('extracted') or {}).get('is_ticket'):
+            if ticket.get('is_ticket') is True or document and (document.get('extracted') or {}).get('is_ticket'):
                 buttons.extend(('Completar '+labels[key],'td:'+identifier+':'+key) for key in pending_receipt_fields(ticket))
         channels=self.billing.detect_billing_channels(owner,identifier)
         if channels['method'] in {'portal','portal_manual'}:
@@ -414,6 +414,9 @@ class TelegramBridge:
             if error.status!=404:
                 raise
             record=None
+        if record and public_form_ready(record['snapshot']):
+            await self._browser(owner,chat_id,ticket['id'])
+            return
         choice=state.get('browser_choice') or {}
         selected=choice.get('label') if choice.get('ticket_id')==ticket['id'] and choice.get('scope')==self.billing.portal_permissions.scope(ticket) and choice.get('expires',0)>time.time() else None
         # Solo retoma una elección explícita del usuario tras autorizar su destino.
@@ -429,7 +432,14 @@ class TelegramBridge:
         except AppError as error:
             if error.code not in {'agent_turn_limit','tool_limit','run_timeout','context_limit'}:
                 raise
-            await self.client.send(chat_id,'Revisión pausada por el límite de ejecución.')
+            try:
+                ready=public_form_ready(self.billing.browser_review(owner,ticket['id'])['snapshot'])
+            except AppError as saved_error:
+                if saved_error.status!=404:
+                    raise
+                ready=False
+            if not ready:
+                await self.client.send(chat_id,'Revisión pausada por el límite de ejecución.')
             await self._browser(owner,chat_id,ticket['id'])
 
     async def _refresh_browser(self,owner,chat_id,identifier):
@@ -488,18 +498,19 @@ class TelegramBridge:
             await self.client.send(chat_id,failure.get('message') or 'La revisión venció o no pudo abrirse.',buttons)
             return
         snapshot=record['snapshot']
+        ready=public_form_ready(snapshot)
         profile=self.billing.store.get('profile',owner,ticket['profile_id'])
         try:
             proposal=self.billing.portal_memory.propose(owner,ticket['id'])
         except AppError:
             proposal=None
-        text='Revisión pública\n'+(proposal['url'] if proposal else snapshot['page'])
+        text=('Formulario encontrado\n' if ready else 'Revisión pública\n')+(proposal['url'] if proposal else snapshot['page'])
         if ticket.get('portal_browser_error'):
             text+='\n'+ticket['portal_browser_error']['message']
         if snapshot.get('login_required'):
             text+='\nEl portal requiere iniciar sesión. Hace falta intervención humana.'
         elif snapshot['fields']:
-            text+='\nCampos visibles; puede haber alternativas:'
+            text+='\nDatos para el portal:' if ready else '\nCampos visibles; puede haber alternativas:'
             for item in snapshot['fields']:
                 key=item.get('key')
                 value=ticket.get(key) or profile.get(key) or 'Pendiente de revisar'
@@ -539,7 +550,14 @@ class TelegramBridge:
             text+='\n'+reasons.get(snapshot.get('block_reason'),'Se bloqueó la carga del destino; revisa el diagnóstico.')
         if needs_resources:
             text+='\n¿Permites cargar estos recursos del sitio?\n'+'\n'.join(pending)
-        text+='\nRevisar con IA consume tokens. No se enviaron datos fiscales ni se solicitó la factura.'
+        if ready:
+            missing_labels=list(dict.fromkeys(item['label'].rstrip('* ').strip() for item in snapshot['fields']
+                if item['required'] and not (ticket.get(item.get('key')) or profile.get(item.get('key')))))
+            if missing_labels:
+                text+='\nFalta: '+', '.join(missing_labels)+'.'
+            text+='\nCaptura en el portal pendiente. No se solicitó la factura.'
+        else:
+            text+='\nRevisar con IA consume tokens. No se enviaron datos fiscales ni se solicitó la factura.'
         buttons=[]
         if snapshot['network_blocked'] and not snapshot['captcha'] and not snapshot.get('login_required') and snapshot.get('block_reason') in RESUMABLE_LIMITS and self.billing.portal_resume_url(owner,ticket):
             text+='\nPuedes retomar desde esta página.'
@@ -548,14 +566,13 @@ class TelegramBridge:
         for item in choices:
             buttons.append(('Abrir '+item['label'][:45],'ba:'+ticket['id']+':'+snapshot['observation_id']+':'+item['reference']))
         if proposal:
-            text+='\nSi es el portal correcto, guárdalo para próximos tickets.'
             buttons.append(('Guardar portal de '+proposal['merchant'][:35],'bs:'+ticket['id']+':'+snapshot['observation_id']))
         if needs_resources:
             permission=self.billing.portal_permissions.request(owner,ticket['id'],origins=pending)
             buttons.extend(self._permission_buttons(permission))
         missing=browser_missing_fields(ticket)
         if missing and not ticket.get('delivery'):
-            labels={'web_id':'Web ID','toll_station':'caseta','lane':'carril','purchase_time':'hora',
+            labels={'web_id':'Web ID','store_number':'Tienda','toll_station':'caseta','lane':'carril','purchase_time':'hora',
                 'account_number':'Cuenta','folio':'folio','reference_number':'referencia','billing_code':'código',
                 'purchase_date':'fecha','total':'importe'}
             buttons.extend(('Completar '+labels[key],'td:'+ticket['id']+':'+key) for key in missing[:6])
@@ -565,7 +582,7 @@ class TelegramBridge:
                 source=None
             if source and source.get('extraction_version')!=EXTRACTION_VERSION:
                 buttons.append(('Autorizar lectura de datos faltantes','ra:'+source['id']))
-        if snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot.get('login_required') and not snapshot['network_blocked']:
+        if not ready and snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot.get('login_required') and not snapshot['network_blocked']:
             buttons.append(('Continuar revisión con IA','bn:'+ticket['id']))
         if (snapshot.get('partial') or snapshot.get('block_reason') or (snapshot.get('diagnostics') or {}).get('issues')
                 or snapshot.get('brand_selection') and not brands and not preferred):
@@ -764,7 +781,7 @@ class TelegramBridge:
             self._save_state(owner,state)
             examples={'merchant':'COMERCIO','purchase_date':'AAAA-MM-DD','folio':'FOLIO','total':'IMPORTE',
                 'account_number':'CUENTA','reference_number':'REFERENCIA','billing_code':'CODIGO',
-                'web_id':'WEB_ID','toll_station':'CASETA','lane':'CARRIL','purchase_time':'HORA'}
+                'web_id':'WEB_ID','store_number':'TIENDA','toll_station':'CASETA','lane':'CARRIL','purchase_time':'HORA'}
             await self.client.send(chat_id,'Completa el dato: /dato_ticket '+examples[code])
         elif prefix=='ts':
             await self._ticket(owner,chat_id,identifier)
@@ -1038,7 +1055,14 @@ class TelegramBridge:
             ticket=self.billing.complete_ticket_field(owner,pending['id'],pending['field'],text.split(maxsplit=1)[1])
             state['ticket_input']=None
             self._save_state(owner,state)
-            await self._ticket(owner,chat_id,ticket['id'])
+            try:
+                self.billing.browser_review(owner,ticket['id'])
+            except AppError as error:
+                if error.status!=404:
+                    raise
+                await self._ticket(owner,chat_id,ticket['id'])
+            else:
+                await self._browser(owner,chat_id,ticket['id'])
         elif normalized(text) in {'por que no es fiable','por que no es confiable','por que no es legible','por que ilegible','por que fallo','por que no lo lee'} and state.get('last_document_id'):
             await self._document_diagnostic(owner,chat_id,state['last_document_id'])
         elif text and await self.profiles.text(owner,chat_id,text):

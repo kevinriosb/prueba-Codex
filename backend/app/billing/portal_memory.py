@@ -37,6 +37,12 @@ def has_billing_form(snapshot):
     return any(item.get('key') in FORM_KEYS for item in snapshot['fields'])
 
 
+def public_form_ready(snapshot):
+    return (has_billing_form(snapshot) and not snapshot['network_blocked'] and not snapshot['captcha']
+        and not snapshot.get('login_required') and snapshot.get('public_only') is True
+        and not snapshot.get('submitted') and not snapshot.get('purchase_validated'))
+
+
 def brand_options(snapshot):
     options=[item for item in snapshot['actions'] if item.get('brand') and brand_key(item.get('label')) not in
         {'','facebook','instagram','twitter','x','youtube','linkedin','tiktok','inicio','home'}]

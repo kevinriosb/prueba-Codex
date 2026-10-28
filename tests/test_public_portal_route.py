@@ -60,7 +60,7 @@ def test_one_native_permission_reaches_form_via_billing_brand_and_provider_witho
     before=len(telegram.messages)
     chat(data=button(telegram,'wa'))
     assert [entry[0] for entry in browser.calls]==['open','act','act','act']
-    assert len(telegram.messages)==before+1 and len(model.inputs)==2
+    assert len(telegram.messages)==before+1 and len(model.inputs)==1
     assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
     assert 'Guardar portal' in str(telegram.messages[-1][2])
     assert 'Permitir' not in str(telegram.messages[-1][2])
