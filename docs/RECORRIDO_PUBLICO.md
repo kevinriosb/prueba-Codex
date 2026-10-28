@@ -20,10 +20,13 @@ guardar su enlace estable sigue requiriendo el botón **Guardar portal**.
 
 Se conservan las cuotas/turnos/tokens y el plazo de ejecución existentes. Un trabajo
 admite hasta siete clics públicos; la sesión mantiene ocho pasos contando la apertura,
-12 orígenes, 60 solicitudes y 6 MiB. Los intentos auxiliares denegados también
+12 orígenes, 60 solicitudes por página, 240 por recorrido y 6 MiB. Los intentos auxiliares denegados también
 cuentan. El avance automático tiene un presupuesto de 22 segundos
 para iniciar pasos, sin repetir un clic fallido. No se abre otro trabajo automáticamente
 al agotar el presupuesto. La API web mantiene sus permisos por dominio.
+
+La recuperación del avance del mismo ticket y sus condiciones están descritas en
+[límites y recuperación](LIMITES_RECORRIDO.md).
 
 Los recursos siguen pasando por validación DNS pública, conexión a IP fijada y TLS.
 Los scripts/estilos pueden seguir hasta tres redirecciones adicionales validadas,

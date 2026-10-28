@@ -1,5 +1,8 @@
 # Selector de marcas: POST auxiliar y enlaces de pie
 
+La actualización posterior de presupuestos por página y recuperación del avance
+está descrita en [límites del recorrido](LIMITES_RECORRIDO.md).
+
 El diagnóstico ejecutado por el propietario en el VPS mostró 27 peticiones,
 1.530.670 bytes y tres dominios: no había alcanzado los límites. Se detectaban
 los enlaces de las marcas (incluido Domino’s), pero un POST XHR de la página

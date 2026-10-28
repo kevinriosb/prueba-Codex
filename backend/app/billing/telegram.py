@@ -515,6 +515,7 @@ class TelegramBridge:
         if snapshot['network_blocked']:
             reasons={'unsupported_request':'El sitio intentó enviar una solicitud no habilitada.',
                 'request_limit':'Se alcanzó el límite de peticiones del recorrido.',
+                'page_request_limit':'Se alcanzó el límite de peticiones de esta página.',
                 'size_limit':'Se alcanzó el límite de tamaño del recorrido.',
                 'origin_limit':'Se alcanzó el límite de dominios del recorrido.',
                 'navigation_failed':'Falló la carga del destino.',
@@ -524,6 +525,9 @@ class TelegramBridge:
             text+='\n¿Permites cargar estos recursos del sitio?\n'+'\n'.join(pending)
         text+='\nRevisar con IA consume tokens. No se enviaron datos fiscales ni se solicitó la factura.'
         buttons=[]
+        if snapshot['network_blocked'] and not snapshot['captcha'] and snapshot.get('block_reason') in {'request_limit','page_request_limit'} and self.billing.portal_resume_url(owner,ticket):
+            text+='\nPuedes retomar desde esta página.'
+            buttons.append(('Retomar desde esta página','bn:'+ticket['id']))
         choices=[preferred] if preferred else brands[:8]
         for item in choices:
             buttons.append(('Abrir '+item['label'][:45],'ba:'+ticket['id']+':'+snapshot['observation_id']+':'+item['reference']))

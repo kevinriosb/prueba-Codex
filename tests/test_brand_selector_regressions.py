@@ -100,7 +100,7 @@ def test_telegram_sdk_reaches_brand_form_despite_startup_post_and_footer_link(bi
     assert app.state.database.usage(owner(app))['runs']==1 and mail.sent==sat.calls==[]
 
 
-async def test_auxiliary_write_retry_storm_still_hits_global_request_limit():
+async def test_auxiliary_write_retry_storm_still_hits_page_request_limit():
     root='https://merchant.example/'
     pages=Pages({root:'''<script>
         Promise.all(Array.from({length:65},()=>fetch('/init',{method:'POST'}).catch(()=>{})));
@@ -108,7 +108,7 @@ async def test_auxiliary_write_retry_storm_still_hits_global_request_limit():
     manager=BrowserManager(fetcher=pages)
     try:
         observed=await manager.open('owner',root,['https://merchant.example'],public_route=True)
-        assert observed['network_blocked'] and observed['block_reason']=='request_limit'
+        assert observed['network_blocked'] and observed['block_reason']=='page_request_limit'
         assert observed['omitted_writes']>=60 and [url for url,_ in pages.calls]==[root]
     finally:
         await manager.close()

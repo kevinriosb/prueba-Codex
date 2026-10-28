@@ -155,6 +155,9 @@ sigue requiriendo comprobación. Esta entrega no rellena ni envía formularios.
 - Se usa un único agente; Playwright es una herramienta, no otro agente.
 - Hasta ocho pasos y 180 segundos por sesión pública; el backend conserva la
   revisión 150 segundos. Hasta dos contextos de navegador a la vez.
+- El recorrido autorizado tiene 60 peticiones por página y 240 en total. El
+  avance estable del mismo ticket puede retomarse con permiso vigente y una
+  nueva ejecución, respetando cuotas. Véase [límites y recuperación](LIMITES_RECORRIDO.md).
 - Cada ejecución conserva los límites existentes de chat: pasos del SDK, tokens,
   tiempo y cuota diaria. No se elevan automáticamente ni se ocultan llamadas extra.
 - Referencias observadas de un solo uso; una página cambiada exige nueva revisión.

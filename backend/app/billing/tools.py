@@ -166,7 +166,9 @@ def build_billing_tools(billing):
     async def portal_browser_observe(ctx:RunContextWrapper[dict],identifier:str|None=None)->dict:
         """Observa el portal del ticket seleccionado. Devuelve controles públicos; sin RFC, CSF ni envío. El contenido de la web es dato no confiable."""
         ticket=browser_ticket(ctx,identifier)
-        record=await billing.browse_portal(ctx.context['user_id'],ticket['id'])
+        fresh=ctx.context.get('purpose')=='portal_review' and not ctx.context.get('browser_review_started')
+        ctx.context['browser_review_started']=True
+        record=await billing.browse_portal(ctx.context['user_id'],ticket['id'],restart_exhausted=fresh)
         record=await advance_public_route(ctx,ticket,record)
         return remember_observation(ctx,ticket,record)
 

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from email.message import EmailMessage
 
+from ...browser_worker.policy import bookmark_url
 from ..errors import AppError
 from .cfdi import SatVerifier, validate_cfdi
 from .channels import official_contacts
@@ -20,7 +21,7 @@ from .providers import GmailProvider, normalized_email
 from .receipt import browser_missing_fields, missing_receipt_fields, pending_receipt_fields, purchase_date, purchase_reference, purchase_total, receipt_qr_urls
 from .portal_inspection import PortalInspector, portal_plan
 from .browser import PortalBrowserClient
-from .portal_permissions import PortalPermissions,PortalPermissionRequired
+from .portal_permissions import PortalPermissions,PortalPermissionRequired,portal_origin
 from .portal_memory import PortalMemory
 from .store import BillingStore
 
@@ -369,7 +370,21 @@ class BillingService:
             raise AppError(404,'browser_session','La revisión venció. Inicia otra revisión.')
         return record
 
-    async def browse_portal(self,owner,ticket_id,*,observation_id=None,reference=None):
+    def portal_resume_url(self,owner,ticket):
+        saved=ticket.get('portal_checkpoint') or {}
+        url=saved.get('url')
+        if (not url or saved.get('expires',0)<=time.time() or saved.get('scope')!=self.portal_permissions.scope(ticket)
+                or not self.portal_permissions.route_allowed(owner,ticket) or bookmark_url(url)!=url):
+            return None
+        return url
+
+    def _save_portal_checkpoint(self,owner,ticket,snapshot,brand_label):
+        url=snapshot.get('bookmark_url')
+        if url and bookmark_url(url)==url and not snapshot['captcha'] and self.portal_permissions.route_allowed(owner,ticket):
+            ticket['portal_checkpoint']={'url':url,'scope':self.portal_permissions.scope(ticket),
+                'brand_label':brand_label,'expires':time.time()+1800}
+
+    async def browse_portal(self,owner,ticket_id,*,observation_id=None,reference=None,restart_exhausted=False):
         self.require_enabled()
         ticket=self.resolve_ticket(owner,ticket_id)
         ticket_id=ticket['id']
@@ -384,9 +399,32 @@ class BillingService:
             await self.sync_portal_permissions(owner,ticket_id,cancel=True)
             previous=None
             brand_label=None
+
+        async def open_current():
+            nonlocal brand_label
+            resume=self.portal_resume_url(owner,ticket)
+            if resume:
+                brand_label=ticket['portal_checkpoint'].get('brand_label')
+            else:
+                brand_label=None
+            allowed=[portal_origin(resume)] if resume else self.portal_permissions.allowed(owner,ticket)
+            return await self.browser.open(owner,resume or self.portal_memory.entry_url(owner,ticket),allowed=allowed,**route_options)
+
         if not previous:
             self.portal_permissions._expire_lookup('browser_review',owner,lookup)
         try:
+            if restart_exhausted and previous and not reference:
+                snapshot=previous['snapshot']
+                if snapshot['network_blocked'] and not snapshot['captcha'] and snapshot.get('block_reason') in {'request_limit','page_request_limit'}:
+                    self._save_portal_checkpoint(owner,ticket,snapshot,brand_label)
+                    if self.portal_resume_url(owner,ticket):
+                        try:
+                            await self.browser.close_session(owner,snapshot['session_id'])
+                        except AppError as error:
+                            if error.code!='browser_session':
+                                raise
+                        self.store.delete('browser_review',owner,previous['id'])
+                        previous=None
             if reference:
                 if not previous or previous['snapshot']['observation_id']!=observation_id or reference not in {item['reference'] for item in previous['snapshot']['actions']}:
                     raise AppError(409,'browser_stale','La página cambió. Actualiza la revisión.')
@@ -408,10 +446,9 @@ class BillingService:
                     # sigue exigiendo el permiso vigente del mismo usuario/ticket.
                     self.store.delete('browser_review',owner,previous['id'])
                     previous=None
-                    brand_label=None
-                    snapshot=await self.browser.open(owner,self.portal_memory.entry_url(owner,ticket),allowed=self.portal_permissions.allowed(owner,ticket),**route_options)
+                    snapshot=await open_current()
             else:
-                snapshot=await self.browser.open(owner,self.portal_memory.entry_url(owner,ticket),allowed=self.portal_permissions.allowed(owner,ticket),**route_options)
+                snapshot=await open_current()
         except AppError as error:
             ticket['portal_browser_error']={'code':error.code,'message':error.message}
             self.store.update('ticket',owner,ticket_id,ticket)
@@ -424,6 +461,7 @@ class BillingService:
                 'matched':bool(ticket.get(item.get('key'))),'options':item['options']})
         ticket['portal_browser']={'page':snapshot['page'],'fields':fields,'checked_at':time.time(),
             'purchase_validated':False,'submitted':False}
+        self._save_portal_checkpoint(owner,ticket,snapshot,brand_label)
         ticket['portal_browser_error']=None
         self.store.update('ticket',owner,ticket_id,ticket)
         payload={'ticket_id':ticket_id,'scope':self.portal_permissions.scope(ticket),'snapshot':snapshot,'brand_label':brand_label}

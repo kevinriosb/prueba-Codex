@@ -11,6 +11,8 @@ import httpx2
 # Recursos de medición/publicidad, no portales ni bibliotecas de formularios.
 # Comparar límites del hostname evita incluir dominios que solo imitan el nombre.
 TRACKING_HOSTS=frozenset({'googletagmanager.com','google-analytics.com','doubleclick.net'})
+PAGE_REQUEST_LIMIT=60
+ROUTE_REQUEST_LIMIT=240
 
 
 def tracking_url(value):

@@ -9,7 +9,7 @@ from urllib.parse import urljoin
 
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
-from .policy import BrowserError, PublicFetcher, https_url, origin, public_page, secure_link, tracking_url, bookmark_url
+from .policy import BrowserError, PublicFetcher, https_url, origin, public_page, secure_link, tracking_url, bookmark_url, PAGE_REQUEST_LIMIT, ROUTE_REQUEST_LIMIT
 
 
 # Código fijo del servidor. El modelo solo elige referencias observadas, nunca JS.
@@ -75,6 +75,7 @@ class Session:
     lock:object=field(default_factory=asyncio.Lock)
     steps:int=1
     requests:int=0
+    page_requests:int=0
     size:int=0
     blocked:set=field(default_factory=set)
     main_permission_origin:str|None=None
@@ -126,6 +127,8 @@ class BrowserManager:
         main_document=False
         try:
             main_document=request.resource_type=='document' and request.frame==session.page.main_frame
+            if main_document and request.method=='GET':
+                session.page_requests=0
             if not main_document and tracking_url(request.url):
                 await route.abort('blockedbyclient')
                 return
@@ -136,10 +139,7 @@ class BrowserManager:
                 # Negar la petición auxiliar no invalida enlaces GET observados.
                 # Nunca se reenvía su cuerpo, ni se asume que sea telemetría.
                 session.omitted_writes+=1
-                session.requests+=1
-                if session.requests>60:
-                    session.unsafe_blocked=session.network_blocked=True
-                    session.block_reason='request_limit'
+                self._count_request(session)
                 await route.abort('blockedbyclient')
                 return
             url=https_url(request.url)
@@ -152,11 +152,7 @@ class BrowserManager:
                     await route.abort('blockedbyclient')
                     return
                 target=origin(url)
-                session.requests+=1
-                if session.requests>60:
-                    session.unsafe_blocked=True
-                    session.block_reason='request_limit'
-                    raise ValueError()
+                self._count_request(session)
                 if target not in session.allowed and not self._route_origin(session,target):
                     await self._permission_block(session,route,url,main_document=main_document)
                     return
@@ -194,6 +190,17 @@ class BrowserManager:
                 session.unsafe_blocked=True
                 session.block_reason=session.block_reason or 'navigation_failed'
             await route.abort('blockedbyclient')
+
+    def _count_request(self,session):
+        session.requests+=1
+        session.page_requests+=1
+        total_limit=ROUTE_REQUEST_LIMIT if session.public_route else PAGE_REQUEST_LIMIT
+        reason='request_limit' if session.requests>total_limit else (
+            'page_request_limit' if session.public_route and session.page_requests>PAGE_REQUEST_LIMIT else None)
+        if reason:
+            session.unsafe_blocked=True
+            session.block_reason=reason
+            raise BrowserError('browser_requests','Se alcanzó el límite de peticiones públicas.')
 
     def _route_origin(self,session,target):
         # Solo una sesión autorizada como recorrido admite los destinos que la
@@ -328,6 +335,8 @@ class BrowserManager:
             'title':title,'fields':fields[:24],'actions':actions[:24],'captcha':captcha,
             'blocked_origins':sorted(session.blocked)[:12],'network_blocked':session.network_blocked,
             'block_reason':session.block_reason,'omitted_writes':session.omitted_writes,'brand_selection':brand_selection,
+            'requests_remaining':max(0,(ROUTE_REQUEST_LIMIT if session.public_route else PAGE_REQUEST_LIMIT)-session.requests),
+            'page_requests_remaining':max(0,PAGE_REQUEST_LIMIT-session.page_requests),
             'steps_remaining':max(0,self.max_steps-session.steps),
             'public_only':True,'purchase_validated':False,'submitted':False}
 
