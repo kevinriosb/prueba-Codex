@@ -7,6 +7,11 @@ from .portal_memory import brand_options,brand_words,has_billing_form,matching_b
 def next_public_action(ticket,snapshot):
     if snapshot['captcha'] or snapshot['network_blocked'] or not snapshot['steps_remaining'] or has_billing_form(snapshot):
         return None
+    matched=matching_brand(ticket,snapshot)
+    if snapshot.get('brand_selection') and brand_options(snapshot):
+        # En una selección explícita manda la marca del ticket; un enlace
+        # genérico del pie no debe sacar al agente de esa selección.
+        return matched
     choices=[]
     for action in snapshot['actions']:
         label=' '.join(brand_words(action['label']))
@@ -25,4 +30,4 @@ def next_public_action(ticket,snapshot):
     if choices:
         return None
     # Nunca escoger otra marca ni recorrer todas las opciones por ensayo.
-    return matching_brand(ticket,snapshot)
+    return matched

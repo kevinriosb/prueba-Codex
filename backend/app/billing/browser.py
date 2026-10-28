@@ -40,6 +40,9 @@ class Observation(BaseModel):
     captcha:bool
     blocked_origins:list[str]=Field(max_length=12)
     network_blocked:bool
+    block_reason:str|None=Field(default=None,pattern=r'^(unsupported_request|request_limit|size_limit|origin_limit|navigation_failed|permission)$')
+    omitted_writes:int=Field(default=0,ge=0)
+    brand_selection:bool=False
     steps_remaining:int=Field(ge=0,le=8)
     public_only:bool
     purchase_validated:bool

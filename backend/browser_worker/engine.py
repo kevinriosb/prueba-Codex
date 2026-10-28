@@ -56,7 +56,9 @@ SNAPSHOT = r'''() => {
   e.setAttribute('data-public-nav-ref',id);
   actions.push({selector:id,label:item.label,kind:item.kind,url:item.url,brand:item.brand});
  }
- return {title:document.title.slice(0,120),fields,actions,captcha:!!document.querySelector('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],[class*="g-recaptcha"],[class*="h-captcha"]')};
+ const text=(document.body?.innerText||'').slice(0,40000).replace(/\s+/g,' ');
+ const brand_selection=/(?:seleccion\w*|elige|elija|choose|select)\s+(?:[\p{L}\p{N}]+\s+){0,6}(?:marcas?|brands?|restaurantes?|establecimientos?|cadenas?|restaurants?|chains?)\b/iu.test(text);
+ return {title:document.title.slice(0,120),fields,actions,brand_selection,captcha:!!document.querySelector('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],[class*="g-recaptcha"],[class*="h-captcha"]')};
 }'''
 
 
@@ -78,6 +80,9 @@ class Session:
     main_permission_origin:str|None=None
     network_blocked:bool=False
     unsafe_blocked:bool=False
+    block_reason:str|None=None
+    omitted_writes:int=0
+    last_public_page:str=''
 
 
 class BrowserManager:
@@ -127,8 +132,19 @@ class BrowserManager:
             if request.method=='GET' and request.resource_type in {'image','font','media','other'}:
                 await route.abort('blockedbyclient')
                 return
+            if session.public_route and request.method!='GET' and request.resource_type!='document':
+                # Negar la petición auxiliar no invalida enlaces GET observados.
+                # Nunca se reenvía su cuerpo, ni se asume que sea telemetría.
+                session.omitted_writes+=1
+                session.requests+=1
+                if session.requests>60:
+                    session.unsafe_blocked=session.network_blocked=True
+                    session.block_reason='request_limit'
+                await route.abort('blockedbyclient')
+                return
             url=https_url(request.url)
             if request.method!='GET' or request.resource_type not in {'document','script','stylesheet','xhr','fetch'}:
+                session.block_reason='unsupported_request'
                 raise ValueError()
             forwarded=await request.all_headers()
             for redirect in range(4):
@@ -139,6 +155,7 @@ class BrowserManager:
                 session.requests+=1
                 if session.requests>60:
                     session.unsafe_blocked=True
+                    session.block_reason='request_limit'
                     raise ValueError()
                 if target not in session.allowed and not self._route_origin(session,target):
                     await self._permission_block(session,route,url,main_document=main_document)
@@ -147,6 +164,7 @@ class BrowserManager:
                 session.size+=len(body)
                 if session.size>6_291_456:
                     session.unsafe_blocked=True
+                    session.block_reason='size_limit'
                     raise ValueError()
                 if 'location' not in headers:
                     await route.fulfill(status=status,headers=headers,body=body)
@@ -174,6 +192,7 @@ class BrowserManager:
             if main_document or request.method!='GET' or session.unsafe_blocked:
                 session.network_blocked=True
                 session.unsafe_blocked=True
+                session.block_reason=session.block_reason or 'navigation_failed'
             await route.abort('blockedbyclient')
 
     def _route_origin(self,session,target):
@@ -184,6 +203,7 @@ class BrowserManager:
             return False
         if len(session.allowed)>=12:
             session.unsafe_blocked=True
+            session.block_reason='origin_limit'
             raise BrowserError('browser_origin','Se alcanzó el límite de destinos del recorrido público.')
         session.allowed.add(target)
         return True
@@ -193,6 +213,7 @@ class BrowserManager:
         if main_document:
             session.main_permission_origin=origin(url)
             session.network_blocked=True
+            session.block_reason='permission'
             await self._redirect_page(route,url)
         else:
             await route.abort('blockedbyclient')
@@ -224,7 +245,7 @@ class BrowserManager:
         await context.route_web_socket('**/*',lambda socket:socket.close())
         page=await context.new_page()
         context.on('page',lambda popup:popup.close())
-        session=Session(owner,context,page,allowed,public_route=public_route)
+        session=Session(owner,context,page,allowed,public_route=public_route,last_public_page=public_page(url))
         await context.route('**/*',lambda route:self._route(session,route))
         page.on('dialog',lambda dialog:dialog.dismiss())
         identifier=str(uuid.uuid4())
@@ -255,7 +276,7 @@ class BrowserManager:
         session.actions={}
         fields,actions=[],[]
         title=''
-        captcha=False
+        captcha=brand_selection=False
         async with asyncio.timeout(6):
             # El DOM principal puede estar listo antes del formulario de un iframe.
             try:
@@ -272,6 +293,7 @@ class BrowserManager:
                 result=await frame.evaluate(SNAPSHOT)
                 title=title or result['title']
                 captcha=captcha or result['captcha']
+                brand_selection=brand_selection or result['brand_selection']
                 fields.extend(item|{'source_url':bookmark_url(frame.url)} for item in result['fields'])
                 for item in result['actions']:
                     permission_origin=None
@@ -291,10 +313,21 @@ class BrowserManager:
                     session.actions[reference]=(frame,item)
                     actions.append({'reference':reference,'label':item['label'],'kind':item['kind'],'brand':item['brand'],
                         **({'permission_origin':permission_origin} if permission_origin else {})})
-        return {'session_id':identifier,'observation_id':session.observation,'page':public_page(session.page.url),
-            'bookmark_url':bookmark_url(session.page.url),
+        try:
+            page=public_page(session.page.url)
+            bookmark=bookmark_url(session.page.url)
+            session.last_public_page=page
+        except BrowserError:
+            if not session.network_blocked:
+                raise
+            # Chromium puede sustituir una navegación denegada por chrome-error.
+            # Conservar la dirección pública previa y la causa, sin inventar DOM.
+            page,bookmark=session.last_public_page,None
+        return {'session_id':identifier,'observation_id':session.observation,'page':page,
+            'bookmark_url':bookmark,
             'title':title,'fields':fields[:24],'actions':actions[:24],'captcha':captcha,
             'blocked_origins':sorted(session.blocked)[:12],'network_blocked':session.network_blocked,
+            'block_reason':session.block_reason,'omitted_writes':session.omitted_writes,'brand_selection':brand_selection,
             'steps_remaining':max(0,self.max_steps-session.steps),
             'public_only':True,'purchase_validated':False,'submitted':False}
 
@@ -343,6 +376,7 @@ class BrowserManager:
             main_allowed=not session.main_permission_origin or session.main_permission_origin in allowed
             if newly_allowed and main_allowed and not session.unsafe_blocked:
                 session.network_blocked=False
+                session.block_reason=None
                 session.main_permission_origin=None
                 # Recargar solo la página ya autorizada; nunca enviar formularios.
                 await session.page.reload(wait_until='domcontentloaded',timeout=8000)

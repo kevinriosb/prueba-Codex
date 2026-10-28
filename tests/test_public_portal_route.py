@@ -199,7 +199,8 @@ async def test_route_authorization_cannot_fetch_private_dns_or_submit_post():
     manager=BrowserManager(fetcher=fetcher)
     try:
         observed=await manager.open('owner','https://merchant.example/',['https://merchant.example'],public_route=True)
-        assert observed['network_blocked'] and not observed['submitted']
+        assert not observed['network_blocked'] and not observed['submitted']
+        assert observed['omitted_writes']==1
         assert len(requests)==1 and all(request.method=='GET' for request in requests)
     finally:
         await manager.close()
@@ -213,6 +214,7 @@ async def test_route_origin_limit_is_enforced_without_offering_unbounded_new_gra
         observed=await manager.open('owner',root,['https://merchant.example'],public_route=True)
         session=await manager.get('owner',observed['session_id'])
         assert len(session.allowed)==12 and session.network_blocked and session.unsafe_blocked
+        assert observed['block_reason']=='origin_limit'
         assert len(manager.fetcher.calls)<=12
     finally:
         await manager.close()

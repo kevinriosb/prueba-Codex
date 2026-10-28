@@ -1,5 +1,8 @@
 # Un permiso para el recorrido público del ticket
 
+La corrección posterior del POST auxiliar y la prioridad del selector de marcas
+está documentada en [selector de marcas](SELECTOR_MARCAS.md).
+
 La captura llegó a `alsea.interfactura.com/RegistroDocumento.aspx`, pero aún pedía
 elegir la marca y autorizar bibliotecas/estilos. Había dos barreras de implementación:
 permiso por origen y un solo intento de navegación por ejecución.
@@ -17,7 +20,8 @@ guardar su enlace estable sigue requiriendo el botón **Guardar portal**.
 
 Se conservan las cuotas/turnos/tokens y el plazo de ejecución existentes. Un trabajo
 admite hasta siete clics públicos; la sesión mantiene ocho pasos contando la apertura,
-12 orígenes, 60 GET y 6 MiB. El avance automático tiene un presupuesto de 22 segundos
+12 orígenes, 60 solicitudes y 6 MiB. Los intentos auxiliares denegados también
+cuentan. El avance automático tiene un presupuesto de 22 segundos
 para iniciar pasos, sin repetir un clic fallido. No se abre otro trabajo automáticamente
 al agotar el presupuesto. La API web mantiene sus permisos por dominio.
 

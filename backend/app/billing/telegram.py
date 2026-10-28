@@ -513,7 +513,13 @@ class TelegramBridge:
             text+='\nEl sitio requiere CAPTCHA; intervención humana.'
         needs_resources=bool(pending) and not self.billing.portal_permissions.route_allowed(owner,ticket) and (awaiting_form or snapshot['network_blocked'] or not (snapshot['fields'] or snapshot['actions']))
         if snapshot['network_blocked']:
-            text+='\nLa carga se bloqueó o alcanzó un límite. Requiere revisión.'
+            reasons={'unsupported_request':'El sitio intentó enviar una solicitud no habilitada.',
+                'request_limit':'Se alcanzó el límite de peticiones del recorrido.',
+                'size_limit':'Se alcanzó el límite de tamaño del recorrido.',
+                'origin_limit':'Se alcanzó el límite de dominios del recorrido.',
+                'navigation_failed':'Falló la carga del destino.',
+                'permission':'Falta autorizar el destino de navegación.'}
+            text+='\n'+reasons.get(snapshot.get('block_reason'),'Se bloqueó la carga del destino; revisa el diagnóstico.')
         if needs_resources:
             text+='\n¿Permites cargar estos recursos del sitio?\n'+'\n'.join(pending)
         text+='\nRevisar con IA consume tokens. No se enviaron datos fiscales ni se solicitó la factura.'
