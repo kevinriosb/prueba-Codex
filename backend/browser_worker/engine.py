@@ -3,17 +3,27 @@ import os
 import secrets
 import time
 import uuid
+import json
+from contextlib import suppress
 from html import escape
 from dataclasses import dataclass, field
 from urllib.parse import urljoin
 
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout, Error as PlaywrightError
 
-from .policy import BrowserError, PublicFetcher, https_url, origin, public_page, secure_link, tracking_url, bookmark_url, PAGE_REQUEST_LIMIT, ROUTE_REQUEST_LIMIT
+from .policy import BrowserError, PublicFetcher, https_url, origin, public_page, secure_link, tracking_url, bookmark_url, PAGE_REQUEST_LIMIT, ROUTE_REQUEST_LIMIT, PAGE_BYTE_LIMIT, ROUTE_BYTE_LIMIT, LEGACY_BYTE_LIMIT, RESPONSE_BYTE_LIMIT, network_failure
+from .resources import PageResources,ResourceCache
 
 
 # Código fijo del servidor. El modelo solo elige referencias observadas, nunca JS.
 SNAPSHOT = r'''() => {
+ const roots=[document];let traversalPartial=false;
+ for(let i=0;i<roots.length&&i<16;i++) {
+  const elements=Array.from(roots[i].querySelectorAll('*'));
+  if(elements.length>2000)traversalPartial=true;
+  for(const e of elements.slice(0,2000))if(e.shadowRoot){if(roots.length<16)roots.push(e.shadowRoot);else traversalPartial=true;}
+ }
+ const all=selector=>roots.flatMap(root=>Array.from(root.querySelectorAll(selector))).slice(0,2000);
  const visible=e=>!!(e.getClientRects().length)&&getComputedStyle(e).visibility!=='hidden';
  const labelText=e=>{const c=e.cloneNode(true);c.querySelectorAll('input,select,textarea,script,style').forEach(x=>x.remove());return c.textContent;};
  const label=e=>((e.labels&&Array.from(e.labels).map(labelText).join(' '))||e.getAttribute('aria-label')||e.innerText||e.getAttribute('placeholder')||e.getAttribute('name')||e.id||'').replace(/\s+/g,' ').trim().slice(0,100);
@@ -31,17 +41,19 @@ SNAPSHOT = r'''() => {
   for(const pattern of patterns){const match=code.match(pattern);if(match){try{return new URL(match[2],document.baseURI).href;}catch{return null;}}}
   return null;
  };
- const fields=Array.from(document.querySelectorAll('input,select,textarea')).filter(e=>visible(e)&&!e.disabled&&!['hidden','password','file','submit','button','reset'].includes(e.type)).slice(0,24).map(e=>({label:label(e),kind:e.tagName.toLowerCase(),required:!!e.required,options:e.tagName==='SELECT'?Array.from(e.options).slice(0,25).map(o=>o.text.slice(0,70)):[]}));
+ const inputs=all('input,select,textarea').filter(e=>visible(e)&&!e.disabled&&!['hidden','password','file','submit','button','reset'].includes(e.type));
+ const fields=inputs.slice(0,24).map(e=>({label:label(e),kind:e.tagName.toLowerCase(),required:!!e.required,options:e.tagName==='SELECT'?Array.from(e.options).slice(0,25).map(o=>o.text.slice(0,70)):[]}));
+ const signature=e=>JSON.stringify(['href','onclick','aria-expanded','aria-selected','role','data-bs-toggle','data-toggle','data-bs-target','data-target'].map(name=>e.getAttribute(name)));
  const candidates=[];
  let scanned=0;
- for(const e of document.querySelectorAll('a[href],a[onclick],img[onclick],button[onclick],[role="link"][onclick],[role="button"][onclick],summary,[aria-expanded],[role="tab"],[data-bs-toggle="collapse"],[data-toggle="collapse"]')) {
+ for(const e of all('a[href],a[onclick],img[onclick],button[onclick],[role="link"][onclick],[role="button"][onclick],summary,[aria-expanded],[role="tab"],[data-bs-toggle="collapse"],[data-toggle="collapse"],[data-bs-toggle="tab"],[data-toggle="tab"],[data-bs-toggle="pill"],[data-toggle="pill"]')) {
   if(++scanned>800) break;
   if(!visible(e)||e.disabled) continue;
   const inForm=e.closest('form')||e.form;
   const literal=inForm?null:literalNavigation(e);
   const href=literal||(e.tagName==='A'?e.getAttribute('href'):null);
-  const expand=e.tagName==='SUMMARY'||e.hasAttribute('aria-expanded')||e.getAttribute('role')==='tab'||e.getAttribute('data-bs-toggle')==='collapse'||e.getAttribute('data-toggle')==='collapse';
-  if(inForm&&!expand) continue;
+  const expand=e.tagName==='SUMMARY'||e.hasAttribute('aria-expanded')||e.getAttribute('role')==='tab'||['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))||['collapse','tab','pill'].includes(e.getAttribute('data-toggle'));
+  if(inForm&&!expand&&e.tagName!=='A') continue;
   if(!expand&&(!href||href.startsWith('#'))) continue;
   if(expand&&(e.getAttribute('aria-selected')==='true'||e.getAttribute('aria-expanded')==='true')) continue;
   const text=navigationLabel(e);
@@ -50,15 +62,17 @@ SNAPSHOT = r'''() => {
   candidates.push({e,label:text,kind:expand?'expand':'link',url:expand?null:(literal||e.href),brand,priority});
  }
  const actions=[];
- for(const item of candidates.sort((a,b)=>b.priority-a.priority).slice(0,24)) {
+ for(const item of candidates.sort((a,b)=>b.priority-a.priority).slice(0,48)) {
   const id='nav-'+Math.random().toString(36).slice(2,12);
   const e=item.e;
   e.setAttribute('data-public-nav-ref',id);
-  actions.push({selector:id,label:item.label,kind:item.kind,url:item.url,brand:item.brand});
+  actions.push({selector:id,label:item.label,kind:item.kind,url:item.url,brand:item.brand,signature:signature(e)});
  }
- const text=(document.body?.innerText||'').slice(0,40000).replace(/\s+/g,' ');
+ const text=roots.map(root=>root===document?(document.body?.innerText||''):(root.textContent||'')).join(' ').slice(0,40000).replace(/\s+/g,' ');
  const brand_selection=/(?:seleccion\w*|elige|elija|choose|select)\s+(?:[\p{L}\p{N}]+\s+){0,6}(?:marcas?|brands?|restaurantes?|establecimientos?|cadenas?|restaurants?|chains?)\b/iu.test(text);
- return {title:document.title.slice(0,120),fields,actions,brand_selection,captcha:!!document.querySelector('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],[class*="g-recaptcha"],[class*="h-captcha"]')};
+ const login_required=all('input[type=password]').some(e=>visible(e)&&/iniciar sesi[oó]n|sign in|log in|login|contrase[nñ]a|password/i.test((e.closest('form')?.innerText||'')+' '+label(e)));
+ return {title:document.title.slice(0,120),fields,actions,brand_selection,login_required,partial:traversalPartial||inputs.length>24||candidates.length>48||scanned>800,
+  captcha:all('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],[class*="g-recaptcha"],[class*="h-captcha"]').some(visible)};
 }'''
 
 
@@ -84,6 +98,13 @@ class Session:
     block_reason:str|None=None
     omitted_writes:int=0
     last_public_page:str=''
+    resources:object=field(default_factory=PageResources)
+    cache:object=field(default_factory=ResourceCache)
+    cache_hits:int=0
+    closed:bool=False
+    captcha:bool=False
+    login_required:bool=False
+    request_pages:dict=field(default_factory=dict)
 
 
 class BrowserManager:
@@ -110,11 +131,17 @@ class BrowserManager:
         for identifier,session in list(self.sessions.items()):
             if time.monotonic()-session.created>self.ttl:
                 self.sessions.pop(identifier,None)
-                await session.context.close()
+                await self._dispose(session)
+
+    async def _dispose(self,session):
+        session.closed=True
+        session.cache.clear()
+        session.request_pages.clear()
+        await session.context.close()
 
     async def close(self):
         for session in list(self.sessions.values()):
-            await session.context.close()
+            await self._dispose(session)
         self.sessions.clear()
         if self.browser:
             await self.browser.close()
@@ -125,10 +152,17 @@ class BrowserManager:
     async def _route(self,session,route):
         request=route.request
         main_document=False
+        page=session.resources
         try:
+            if session.closed:
+                await route.abort('blockedbyclient')
+                return
             main_document=request.resource_type=='document' and request.frame==session.page.main_frame
             if main_document and request.method=='GET':
                 session.page_requests=0
+                session.resources=PageResources()
+                page=session.resources
+            session.request_pages[id(request)]=page
             if not main_document and tracking_url(request.url):
                 await route.abort('blockedbyclient')
                 return
@@ -139,7 +173,7 @@ class BrowserManager:
                 # Negar la petición auxiliar no invalida enlaces GET observados.
                 # Nunca se reenvía su cuerpo, ni se asume que sea telemetría.
                 session.omitted_writes+=1
-                self._count_request(session)
+                self._count_request(session,page)
                 await route.abort('blockedbyclient')
                 return
             url=https_url(request.url)
@@ -152,17 +186,45 @@ class BrowserManager:
                     await route.abort('blockedbyclient')
                     return
                 target=origin(url)
-                self._count_request(session)
+                self._count_request(session,page)
                 if target not in session.allowed and not self._route_origin(session,target):
                     await self._permission_block(session,route,url,main_document=main_document)
                     return
-                status,headers,body=await self.fetcher.fetch(url,forwarded)
-                session.size+=len(body)
-                if session.size>6_291_456:
-                    session.unsafe_blocked=True
-                    session.block_reason='size_limit'
-                    raise ValueError()
+                cacheable=request.resource_type in {'script','stylesheet'}
+                cached=session.cache.get(url,forwarded) if cacheable else None
+                if cached:
+                    status,headers,body=cached
+                    session.cache_hits+=1
+                    self._charge_bytes(session,page,len(body),network=False)
+                elif hasattr(self.fetcher,'fetch_limited'):
+                    status,headers,body=await self.fetcher.fetch_limited(url,forwarded,
+                        on_bytes=lambda size:self._charge_bytes(session,page,size))
+                else:
+                    status,headers,body=await self.fetcher.fetch(url,forwarded)
+                    self._charge_bytes(session,page,len(body))
+                    if len(body)>RESPONSE_BYTE_LIMIT:
+                        raise BrowserError('browser_response_size','Archivo demasiado grande.')
+                if not cached and cacheable:
+                    session.cache.put(url,forwarded,status,headers,body)
+                if status>=400:
+                    self._issue(page,request.resource_type,url,'http_error',status=status)
+                    if main_document:
+                        session.network_blocked=session.unsafe_blocked=True
+                        session.block_reason='http_error'
+                media=headers.get('content-type','').casefold()
+                if main_document and media and not ('text/html' in media or 'application/xhtml+xml' in media):
+                    session.network_blocked=session.unsafe_blocked=True
+                    session.block_reason='unsupported_document'
+                    self._issue(page,'document',url,'unsupported_document')
+                    await route.abort('blockedbyclient')
+                    return
+                if request.resource_type in {'script','stylesheet'} and ('text/html' in media or 'application/json' in media):
+                    self._issue(page,request.resource_type,url,'unexpected_content')
                 if 'location' not in headers:
+                    if redirect:
+                        # La respuesta del proveedor final no puede instalar su
+                        # cookie como si perteneciera al primer recurso del salto.
+                        headers={name:value for name,value in headers.items() if name!='set-cookie'}
                     await route.fulfill(status=status,headers=headers,body=body)
                     return
                 target_url=secure_link(urljoin(url,headers['location']))
@@ -170,36 +232,81 @@ class BrowserManager:
                     await route.abort('blockedbyclient')
                     return
                 if origin(target_url) not in session.allowed and not self._route_origin(session,origin(target_url)):
-                    await self._permission_block(session,route,target_url,main_document=main_document)
+                    await self._permission_block(session,route,target_url,main_document=main_document,headers=headers)
                     return
                 # Los documentos pasan por una referencia observada. Los recursos
                 # del recorrido pasan por el mismo fetch con DNS/TLS en cada salto.
                 if request.resource_type=='document':
-                    await self._redirect_page(route,target_url)
+                    await self._redirect_page(route,target_url,headers=headers)
                     return
+                if headers.get('set-cookie'):
+                    # No instalar cookies de un salto intermedio bajo el dominio
+                    # de otro recurso. La navegación documental sí las conserva.
+                    raise BrowserError('browser_redirect_cookie','Recurso redirigido con estado no compatible.')
                 if not session.public_route or redirect==3:
                     raise ValueError()
                 url=target_url
                 # Jamás reenviar la cookie del origen anterior a otro proveedor.
                 forwarded={key:value for key,value in forwarded.items() if key.lower()!='cookie'}
-        except Exception:
+                if forwarded.get('referer'):
+                    try:
+                        forwarded['referer']=origin(forwarded['referer'])+'/'
+                    except BrowserError:
+                        forwarded.pop('referer',None)
+        except Exception as error:
+            code={'browser_response_size':'response_size_limit','browser_address':'private_address','browser_redirect_cookie':'redirect_cookie'}.get(getattr(error,'code',''),getattr(error,'code',''))
+            if code not in {'response_size_limit','private_address','size_limit','page_size_limit','redirect_cookie'}:
+                code=network_failure(error)
+            self._issue(page,request.resource_type,request.url,code)
             # Un script/estilo auxiliar puede fallar sin impedir enlaces visibles.
             # La navegación principal, métodos de escritura y límites sí detienen.
             if main_document or request.method!='GET' or session.unsafe_blocked:
                 session.network_blocked=True
                 session.unsafe_blocked=True
-                session.block_reason=session.block_reason or 'navigation_failed'
-            await route.abort('blockedbyclient')
+                session.block_reason=session.block_reason or code
+            with suppress(PlaywrightError):
+                await route.abort('blockedbyclient')
 
-    def _count_request(self,session):
+    def _issue(self,page,kind,url,code,*,status=None):
+        try:
+            site=origin(url)
+        except BrowserError:
+            site=''
+        issue={'kind':kind,'site':site,'code':code,**({'status':status} if status else {})}
+        if issue not in page.issues and len(page.issues)<12:
+            page.issues.append(issue)
+
+    def _charge_bytes(self,session,page,size,*,network=True):
+        if session.closed:
+            raise BrowserError('browser_session','La revisión terminó.',404)
+        if session.unsafe_blocked and session.block_reason in {'size_limit','page_size_limit'}:
+            raise BrowserError(session.block_reason,'Presupuesto agotado.')
+        if network:
+            session.size+=size
+        page.size+=size
+        limit=ROUTE_BYTE_LIMIT if session.public_route else LEGACY_BYTE_LIMIT
+        code='size_limit' if session.size>limit else ('page_size_limit' if session.public_route and page.size>PAGE_BYTE_LIMIT else None)
+        if code:
+            if code=='size_limit' or page is session.resources:
+                session.unsafe_blocked=True
+                session.block_reason=code
+            raise BrowserError(code,'Se alcanzó el límite de bytes públicos.')
+
+    def _count_request(self,session,page=None):
+        if session.closed:
+            raise BrowserError('browser_session','La revisión terminó.',404)
+        page=page or session.resources
         session.requests+=1
-        session.page_requests+=1
+        page.requests+=1
+        if page is session.resources:
+            session.page_requests=page.requests
         total_limit=ROUTE_REQUEST_LIMIT if session.public_route else PAGE_REQUEST_LIMIT
         reason='request_limit' if session.requests>total_limit else (
-            'page_request_limit' if session.public_route and session.page_requests>PAGE_REQUEST_LIMIT else None)
+            'page_request_limit' if session.public_route and page.requests>PAGE_REQUEST_LIMIT else None)
         if reason:
-            session.unsafe_blocked=True
-            session.block_reason=reason
+            if reason=='request_limit' or page is session.resources:
+                session.unsafe_blocked=True
+                session.block_reason=reason
             raise BrowserError('browser_requests','Se alcanzó el límite de peticiones públicas.')
 
     def _route_origin(self,session,target):
@@ -215,19 +322,20 @@ class BrowserManager:
         session.allowed.add(target)
         return True
 
-    async def _permission_block(self,session,route,url,*,main_document):
+    async def _permission_block(self,session,route,url,*,main_document,headers=None):
         session.blocked.add(origin(url))
         if main_document:
             session.main_permission_origin=origin(url)
             session.network_blocked=True
             session.block_reason='permission'
-            await self._redirect_page(route,url)
+            await self._redirect_page(route,url,headers=headers)
         else:
             await route.abort('blockedbyclient')
 
-    async def _redirect_page(self,route,url):
+    async def _redirect_page(self,route,url,*,headers=None):
         # Sin meta-refresh ni JS: el siguiente paso requiere una referencia nueva.
-        await route.fulfill(status=200,content_type='text/html',body=
+        await route.fulfill(status=200,content_type='text/html',headers={
+            'set-cookie':headers['set-cookie']} if headers and headers.get('set-cookie') else {},body=
             '<!doctype html><title>Continuar navegación</title><a href="'+escape(url,quote=True)+
             '">Continuar al portal de facturación</a>')
 
@@ -253,6 +361,25 @@ class BrowserManager:
         page=await context.new_page()
         context.on('page',lambda popup:popup.close())
         session=Session(owner,context,page,allowed,public_route=public_route,last_public_page=public_page(url))
+        def finished(request):
+            session.request_pages.pop(id(request),None)
+        def failed(request):
+            resource_page=session.request_pages.pop(id(request),session.resources)
+            if session.closed or request.method!='GET' or request.resource_type not in {'document','script','stylesheet','xhr','fetch'} or tracking_url(request.url):
+                return
+            if request.failure and ('BLOCKED_BY_CLIENT' in request.failure or 'ERR_ABORTED' in request.failure):
+                return
+            self._issue(resource_page,request.resource_type,request.url,'load_failed')
+        def console(message):
+            if not session.closed and message.type=='error':
+                text=message.text[:10000].casefold()
+                code=('csp' if 'content security policy' in text else 'cors' if 'cors policy' in text
+                    else 'unexpected_content' if 'mime type' in text else None)
+                if code:self._issue(session.resources,'script',page.url,code)
+        page.on('requestfinished',finished)
+        page.on('requestfailed',failed)
+        page.on('console',console)
+        page.on('pageerror',lambda _error:self._issue(session.resources,'script',page.url,'javascript_error') if not session.closed else None)
         await context.route('**/*',lambda route:self._route(session,route))
         page.on('dialog',lambda dialog:dialog.dismiss())
         identifier=str(uuid.uuid4())
@@ -262,8 +389,13 @@ class BrowserManager:
                 await page.goto(url,wait_until='domcontentloaded',timeout=8000)
                 return await self._observe(identifier,session)
         except Exception:
+            if session.network_blocked:
+                try:
+                    return await self._observe(identifier,session)
+                except Exception:
+                    pass
             self.sessions.pop(identifier,None)
-            await context.close()
+            await self._dispose(session)
             raise BrowserError('browser_navigation','No se pudo abrir la página pública autorizada.',502) from None
 
     async def get(self,owner,identifier):
@@ -283,25 +415,49 @@ class BrowserManager:
         session.actions={}
         fields,actions=[],[]
         title=''
-        captcha=brand_selection=False
+        captcha=brand_selection=login_required=partial=False
         async with asyncio.timeout(6):
             # El DOM principal puede estar listo antes del formulario de un iframe.
             try:
                 await session.page.wait_for_load_state('load',timeout=1000)
             except PlaywrightTimeout:
                 pass
-            for frame in session.page.frames[:4]:
+            eligible=[]
+            partial=len(session.page.frames)>64
+            for frame in session.page.frames[:64]:
+                source=frame.url
+                ancestor=frame
+                for _ in range(4):
+                    if source not in {'about:blank','about:srcdoc'} or not ancestor.parent_frame:
+                        break
+                    ancestor=ancestor.parent_frame
+                    source=ancestor.url
                 try:
-                    approved=origin(frame.url) in session.allowed
+                    approved=origin(source) in session.allowed
                 except BrowserError:
                     approved=False
                 if not approved:
                     continue
-                result=await frame.evaluate(SNAPSHOT)
+                if frame!=session.page.main_frame:
+                    try:
+                        if not await (await frame.frame_element()).is_visible():continue
+                    except PlaywrightError:
+                        partial=True
+                        continue
+                eligible.append((frame,source))
+            partial=partial or len(eligible)>8
+            for frame,source in eligible[:8]:
+                try:
+                    result=await frame.evaluate(SNAPSHOT)
+                except PlaywrightError:
+                    partial=True
+                    continue
                 title=title or result['title']
                 captcha=captcha or result['captcha']
                 brand_selection=brand_selection or result['brand_selection']
-                fields.extend(item|{'source_url':bookmark_url(frame.url)} for item in result['fields'])
+                login_required=login_required or result['login_required']
+                partial=partial or result['partial']
+                fields.extend(item|{'source_url':bookmark_url(source)} for item in result['fields'])
                 for item in result['actions']:
                     permission_origin=None
                     if item['kind']=='link':
@@ -309,7 +465,7 @@ class BrowserManager:
                             url=secure_link(item['url'])
                             if tracking_url(url):
                                 continue
-                            if url==secure_link(frame.url):
+                            if url==secure_link(source):
                                 continue
                             if origin(url) not in session.allowed and not session.public_route:
                                 permission_origin=origin(url)
@@ -330,15 +486,34 @@ class BrowserManager:
             # Chromium puede sustituir una navegación denegada por chrome-error.
             # Conservar la dirección pública previa y la causa, sin inventar DOM.
             page,bookmark=session.last_public_page,None
-        return {'session_id':identifier,'observation_id':session.observation,'page':page,
+        session.captcha,session.login_required=captcha,login_required
+        result={'session_id':identifier,'observation_id':session.observation,'page':page,
             'bookmark_url':bookmark,
-            'title':title,'fields':fields[:24],'actions':actions[:24],'captcha':captcha,
+            'title':title,'fields':fields[:24],'actions':actions[:48],'captcha':captcha,
+            'login_required':login_required,'partial':partial or len(fields)>24 or len(actions)>48,
             'blocked_origins':sorted(session.blocked)[:12],'network_blocked':session.network_blocked,
             'block_reason':session.block_reason,'omitted_writes':session.omitted_writes,'brand_selection':brand_selection,
             'requests_remaining':max(0,(ROUTE_REQUEST_LIMIT if session.public_route else PAGE_REQUEST_LIMIT)-session.requests),
             'page_requests_remaining':max(0,PAGE_REQUEST_LIMIT-session.page_requests),
             'steps_remaining':max(0,self.max_steps-session.steps),
-            'public_only':True,'purchase_validated':False,'submitted':False}
+            'public_only':True,'purchase_validated':False,'submitted':False,
+            'diagnostics':{'requests':session.requests,'page_requests':session.resources.requests,
+                'transferred_bytes':session.size,'page_bytes':session.resources.size,
+                'cache_hits':session.cache_hits,'cache_bytes':session.cache.size,'issues':list(session.resources.issues)}}
+        # Los valores de inputs nunca entran aquí. Reducir opciones antes de
+        # superar el contrato de 64 KiB del cliente, marcando la vista parcial.
+        while len(json.dumps(result,ensure_ascii=False).encode())>60000:
+            options=next((item for item in reversed(result['fields']) if item['options']),None)
+            if options:
+                options['options'].pop()
+            elif result['actions']:
+                result['actions'].pop()
+            elif result['fields']:
+                result['fields'].pop()
+            else:
+                break
+            result['partial']=True
+        return result
 
     async def act(self,owner,identifier,observation_id,reference):
         session=await self.get(owner,identifier)
@@ -347,6 +522,8 @@ class BrowserManager:
                 raise BrowserError('browser_stale','La página cambió. Revisa el estado antes de continuar.')
             if session.network_blocked:
                 raise BrowserError('browser_intervention','Se bloqueó una solicitud de la página. Requiere intervención.')
+            if session.captcha or session.login_required:
+                raise BrowserError('browser_intervention','El sitio requiere intervención humana.')
             if session.steps>=self.max_steps:
                 raise BrowserError('browser_steps','La revisión alcanzó su límite de navegación. Requiere revisión humana.')
             frame,item=session.actions[reference]
@@ -355,12 +532,17 @@ class BrowserManager:
             session.actions.pop(reference)
             session.observation=''
             session.steps+=1  # Consumir ANTES del clic: no se reintenta por fallos.
+            locator=frame.locator('[data-public-nav-ref="'+item['selector']+'"]')
+            try:
+                valid=await locator.count()==1 and await locator.evaluate(
+                    "e=>JSON.stringify(['href','onclick','aria-expanded','aria-selected','role','data-bs-toggle','data-toggle','data-bs-target','data-target'].map(name=>e.getAttribute(name)))")==item['signature']
+            except PlaywrightError:
+                valid=False
+            if not valid:
+                raise BrowserError('browser_stale','El control cambió. Revisa la página nuevamente.')
             if item['kind']=='link':
                 await session.page.goto(https_url(item['url']),wait_until='domcontentloaded',timeout=8000)
             else:
-                locator=frame.locator('[data-public-nav-ref="'+item['selector']+'"]')
-                if await locator.count()!=1:
-                    raise BrowserError('browser_stale','El control cambió. Revisa la página nuevamente.')
                 await locator.click(timeout=4000)
             return await self._observe(identifier,session)
 
@@ -395,5 +577,5 @@ class BrowserManager:
         session=await self.get(owner,identifier)
         async with session.lock:
             self.sessions.pop(identifier,None)
-            await session.context.close()
+            await self._dispose(session)
         return {'closed':True}

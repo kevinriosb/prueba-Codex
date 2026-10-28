@@ -3,7 +3,7 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 import httpx2
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ...browser_worker.policy import BrowserError, origin, bookmark_url
 from ..errors import AppError
@@ -28,6 +28,25 @@ class PublicAction(BaseModel):
     brand:bool=False
 
 
+class ResourceIssue(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    kind:str=Field(max_length=24)
+    site:str=Field(max_length=2048)
+    code:str=Field(max_length=40)
+    status:int|None=Field(default=None,ge=100,le=599)
+
+
+class BrowserDiagnostics(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    requests:int=Field(ge=0)
+    page_requests:int=Field(ge=0)
+    transferred_bytes:int=Field(ge=0)
+    page_bytes:int=Field(ge=0)
+    cache_hits:int=Field(ge=0)
+    cache_bytes:int=Field(ge=0)
+    issues:list[ResourceIssue]=Field(max_length=12)
+
+
 class Observation(BaseModel):
     model_config=ConfigDict(extra='forbid')
     session_id:UUID
@@ -36,13 +55,16 @@ class Observation(BaseModel):
     bookmark_url:str|None=Field(default=None,max_length=2048)
     title:str=Field(max_length=120)
     fields:list[PublicField]=Field(max_length=24)
-    actions:list[PublicAction]=Field(max_length=24)
+    actions:list[PublicAction]=Field(max_length=48)
     captcha:bool
     blocked_origins:list[str]=Field(max_length=12)
     network_blocked:bool
-    block_reason:str|None=Field(default=None,pattern=r'^(unsupported_request|request_limit|page_request_limit|size_limit|origin_limit|navigation_failed|permission)$')
+    block_reason:str|None=Field(default=None,pattern=r'^(unsupported_request|unsupported_document|request_limit|page_request_limit|size_limit|page_size_limit|response_size_limit|origin_limit|navigation_failed|permission|timeout|network_error|dns_error|tls_error|private_address|http_error)$')
     omitted_writes:int=Field(default=0,ge=0)
     brand_selection:bool=False
+    login_required:bool=False
+    partial:bool=False
+    diagnostics:BrowserDiagnostics|None=None
     requests_remaining:int|None=Field(default=None,ge=0,le=240)
     page_requests_remaining:int|None=Field(default=None,ge=0,le=60)
     steps_remaining:int=Field(ge=0,le=8)
@@ -77,13 +99,14 @@ class PortalBrowserClient:
                 raise ValueError()
             if response.status_code!=200:
                 data=response.json()
-                allowed={'browser_origin','browser_stale','browser_steps','browser_session','browser_busy','browser_intervention'}
+                allowed={'browser_origin','browser_stale','browser_steps','browser_session','browser_busy','browser_intervention','browser_navigation'}
                 if data.get('code') in allowed:
                     raise AppError(response.status_code,data['code'],{
                         'browser_origin':'Autoriza ese dominio con el botón Permitir en Telegram.',
                         'browser_stale':'La página cambió. Actualiza la revisión.',
                         'browser_steps':'Se alcanzó el límite de navegación. Revisa los campos encontrados.',
                         'browser_session':'La revisión venció. Inicia otra revisión.',
+                        'browser_navigation':'No se pudo abrir la página pública. Consulta el diagnóstico.',
                         'browser_intervention':'Se bloqueó una operación de la página. Requiere intervención humana.',
                         'browser_busy':'El navegador está ocupado. Intenta más tarde.'}[data['code']])
                 raise ValueError()
@@ -92,13 +115,17 @@ class PortalBrowserClient:
                     raise ValueError()
                 return None
             observation=Observation.model_validate(response.json()).model_dump(mode='json')
+            if path.startswith('/v1/sessions/') and str(observation['session_id'])!=str(UUID(path.split('/')[3])):
+                raise AppError(502,'browser_protocol','La respuesta no corresponde a la sesión solicitada. No se repetirá el paso.')
             if not observation['public_only'] or observation['submitted'] or observation['purchase_validated']:
-                raise ValueError()
+                raise AppError(502,'browser_boundary','El navegador reportó una operación fuera del modo público. Revisa el estado antes de repetir.')
             for item in observation['fields']:
                 item['key']=field_key(item['label'])
             return observation
         except AppError:
             raise
+        except ValidationError:
+            raise AppError(502,'browser_protocol','El agente y el navegador tienen contratos distintos. Actualiza ambos contenedores.') from None
         except Exception:
             raise AppError(502,'browser_unavailable','No se pudo revisar la página pública. No se envió información fiscal.') from None
 
@@ -131,7 +158,7 @@ class PortalBrowserClient:
 
     async def act(self,owner,session_id,observation_id,reference):
         try:
-            UUID(session_id)
+            session_id=str(UUID(session_id))
         except ValueError:
             raise AppError(422,'browser_session','Revisión no válida.') from None
         return await self._call('/v1/sessions/'+session_id+'/actions',
@@ -139,7 +166,7 @@ class PortalBrowserClient:
 
     async def observe(self,owner,session_id):
         try:
-            UUID(session_id)
+            session_id=str(UUID(session_id))
         except ValueError:
             raise AppError(422,'browser_session','Revisión no válida.') from None
         return await self._call('/v1/sessions/'+session_id,{'owner':owner},method='GET')

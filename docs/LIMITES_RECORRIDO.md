@@ -12,9 +12,17 @@ auxiliares denegados también cuentan. Una página con reintentos no puede eludi
 su límite, y muchos cambios de página tampoco eluden el total. La API con permisos
 antiguos por dominio conserva su límite total anterior de 60.
 
-Siguen vigentes los ocho pasos, 180 segundos por sesión, 12 orígenes, 6 MiB por
-sesión, límites por respuesta, DNS público/IP fijada/TLS, aislamiento y denegación
-de envíos. Las cuotas de IA y documentos no cambian.
+El recorrido público admite 4 MiB por respuesta, 8 MiB por página y 24 MiB de
+red por sesión, medidos tras descomprimir. Los scripts/estilos reutilizables se
+guardan hasta 180 segundos en una caché privada de 8 MiB; no se cachean documentos,
+XHR, respuestas privadas ni respuestas con cookies. Una reutilización sigue
+contando como petición y bytes de página, sin volver a cargar el total de red.
+La API con permisos antiguos conserva sus 6 MiB totales.
+
+Siguen vigentes los ocho pasos, 180 segundos por sesión, 12 orígenes,
+DNS público/IP fijada/TLS, aislamiento y denegación de envíos. Las descargas se
+cortan durante la lectura al superar el presupuesto; cada GET tiene además un
+plazo total de ocho segundos. Las cuotas de IA y documentos no cambian.
 
 ## Retomar
 
@@ -23,7 +31,8 @@ estable observada del ticket. Se vincula al propietario, ticket, perfil y origen
 exacto de la autorización. Solo conserva parámetros públicos admitidos de marca
 o idioma; no guarda referencias de compra, sesiones, tokens ni cookies.
 
-Si la revisión agota peticiones, Telegram ofrece **Retomar desde esta página**.
+Si la revisión agota peticiones o bytes de página/recorrido, Telegram ofrece
+**Retomar desde esta página**.
 Ese botón solicita otra ejecución de IA, sujeta a la cuota diaria. Solo la primera
 observación de ese trabajo puede cerrar la sesión agotada y abrir la dirección
 guardada. El modelo no puede reiniciar el presupuesto dentro del mismo trabajo.
@@ -36,6 +45,11 @@ El avance no sustituye la liga impresa ni enseña un portal a otros tickets. Gua
 un portal para futuros tickets sigue requiriendo **Guardar portal**.
 
 ## Validación
+
+La revisión posterior de recursos, cookies, DOM, transporte TLS y diagnóstico
+está documentada en [auditoría de navegación](AUDITORIA_NAVEGACION.md). La
+verificación siguiente corresponde a la entrega anterior del presupuesto de
+peticiones; no demuestra la navegación de producción de esta entrega.
 
 Las pruebas usan Chromium y el SDK reales con sitios/modelo simulados. Incluyen:
 tres páginas con 81 GET, siete páginas que exceden el total, una página con más

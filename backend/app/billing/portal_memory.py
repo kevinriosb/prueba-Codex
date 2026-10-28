@@ -106,7 +106,7 @@ class PortalMemory:
         snapshot=record['snapshot']
         if observation_id is not None and observation_id!=snapshot['observation_id']:
             raise AppError(409,'browser_stale','La página cambió. Revisa el portal antes de guardarlo.')
-        if snapshot['network_blocked'] or snapshot['captcha'] or not has_billing_form(snapshot):
+        if snapshot['network_blocked'] or snapshot['captcha'] or snapshot.get('login_required') or not has_billing_form(snapshot):
             raise AppError(409,'portal_memory_form','Primero llega al formulario de facturación y revisa que corresponda al comercio.')
         candidates=[item.get('source_url') for item in snapshot['fields'] if item.get('key') in FORM_KEYS]
         urls=list(dict.fromkeys(value for value in candidates if value and bookmark_url(value)==value))

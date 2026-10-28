@@ -8,6 +8,7 @@ from pathlib import PurePosixPath
 import httpx2
 from fastapi import APIRouter, Request
 
+from ...browser_worker.policy import RESUMABLE_LIMITS
 from ..errors import AppError
 from .models import CFDI_USES, missing_fiscal_fields, validate_fiscal
 from .extraction import EXTRACTION_VERSION
@@ -482,7 +483,7 @@ class TelegramBridge:
                 raise
             failure=ticket.get('portal_browser_error') or {}
             buttons=[('Ver ticket','ts:'+ticket['id'])]
-            if failure.get('code') not in {'browser_origin','browser_configuration','browser_disabled'}:
+            if failure.get('code') not in {'browser_origin','browser_configuration','browser_disabled','browser_protocol','browser_boundary'}:
                 buttons.insert(0,('Revisar portal con IA','bn:'+ticket['id']))
             await self.client.send(chat_id,failure.get('message') or 'La revisión venció o no pudo abrirse.',buttons)
             return
@@ -495,7 +496,9 @@ class TelegramBridge:
         text='Revisión pública\n'+(proposal['url'] if proposal else snapshot['page'])
         if ticket.get('portal_browser_error'):
             text+='\n'+ticket['portal_browser_error']['message']
-        if snapshot['fields']:
+        if snapshot.get('login_required'):
+            text+='\nEl portal requiere iniciar sesión. Hace falta intervención humana.'
+        elif snapshot['fields']:
             text+='\nCampos visibles; puede haber alternativas:'
             for item in snapshot['fields']:
                 key=item.get('key')
@@ -503,10 +506,12 @@ class TelegramBridge:
                 text+='\n'+item['label']+': '+str(value)
         else:
             text+='\nAún no se encontró el formulario.'
+        if snapshot.get('partial'):
+            text+='\nLa vista es parcial; algunos controles u opciones no se incluyeron.'
         pending=[target for target in snapshot['blocked_origins'] if target not in self.billing.portal_permissions.allowed(owner,ticket)]
         awaiting_form=bool(pending and record.get('brand_label') and not has_billing_form(snapshot))
-        brands=brand_options(snapshot) if not has_billing_form(snapshot) and not snapshot['captcha'] and not snapshot['network_blocked'] and not awaiting_form else []
-        preferred=matching_brand(ticket,snapshot)
+        brands=brand_options(snapshot) if not has_billing_form(snapshot) and not snapshot['captcha'] and not snapshot.get('login_required') and not snapshot['network_blocked'] and not awaiting_form else []
+        preferred=matching_brand(ticket,snapshot) if not snapshot.get('login_required') else None
         if brands:
             text+='\nPuedes elegir la marca o continuar la revisión con IA.'
         if snapshot['captcha']:
@@ -514,18 +519,27 @@ class TelegramBridge:
         needs_resources=bool(pending) and not self.billing.portal_permissions.route_allowed(owner,ticket) and (awaiting_form or snapshot['network_blocked'] or not (snapshot['fields'] or snapshot['actions']))
         if snapshot['network_blocked']:
             reasons={'unsupported_request':'El sitio intentó enviar una solicitud no habilitada.',
+                'unsupported_document':'El destino es un archivo o respuesta sin formulario HTML.',
                 'request_limit':'Se alcanzó el límite de peticiones del recorrido.',
                 'page_request_limit':'Se alcanzó el límite de peticiones de esta página.',
                 'size_limit':'Se alcanzó el límite de tamaño del recorrido.',
+                'page_size_limit':'Esta página supera el presupuesto de tamaño.',
+                'response_size_limit':'Un archivo del portal supera el tamaño admitido.',
                 'origin_limit':'Se alcanzó el límite de dominios del recorrido.',
                 'navigation_failed':'Falló la carga del destino.',
+                'timeout':'El portal tardó demasiado en responder.',
+                'network_error':'Falló una conexión del portal.',
+                'dns_error':'No se pudo resolver la dirección del portal.',
+                'tls_error':'El certificado HTTPS del portal no se pudo validar.',
+                'private_address':'El destino no es una dirección pública admitida.',
+                'http_error':'El portal devolvió un error HTTP.',
                 'permission':'Falta autorizar el destino de navegación.'}
             text+='\n'+reasons.get(snapshot.get('block_reason'),'Se bloqueó la carga del destino; revisa el diagnóstico.')
         if needs_resources:
             text+='\n¿Permites cargar estos recursos del sitio?\n'+'\n'.join(pending)
         text+='\nRevisar con IA consume tokens. No se enviaron datos fiscales ni se solicitó la factura.'
         buttons=[]
-        if snapshot['network_blocked'] and not snapshot['captcha'] and snapshot.get('block_reason') in {'request_limit','page_request_limit'} and self.billing.portal_resume_url(owner,ticket):
+        if snapshot['network_blocked'] and not snapshot['captcha'] and not snapshot.get('login_required') and snapshot.get('block_reason') in RESUMABLE_LIMITS and self.billing.portal_resume_url(owner,ticket):
             text+='\nPuedes retomar desde esta página.'
             buttons.append(('Retomar desde esta página','bn:'+ticket['id']))
         choices=[preferred] if preferred else brands[:8]
@@ -549,10 +563,46 @@ class TelegramBridge:
                 source=None
             if source and source.get('extraction_version')!=EXTRACTION_VERSION:
                 buttons.append(('Autorizar lectura de datos faltantes','ra:'+source['id']))
-        if snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot['network_blocked']:
+        if snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot.get('login_required') and not snapshot['network_blocked']:
             buttons.append(('Continuar revisión con IA','bn:'+ticket['id']))
+        if snapshot.get('partial') or snapshot.get('block_reason') or (snapshot.get('diagnostics') or {}).get('issues'):
+            buttons.append(('Ver diagnóstico (sin IA)','bd:'+ticket['id']))
         buttons.append(('Ver estado del ticket','ts:'+ticket['id']))
         await self.client.send(chat_id,text,buttons)
+
+    async def _browser_diagnostic(self,owner,chat_id,identifier):
+        ticket=self.billing.resolve_ticket(owner,identifier)
+        try:
+            saved=self.billing.browser_review(owner,ticket['id'])['snapshot']
+        except AppError as error:
+            if error.status!=404:
+                raise
+            saved=ticket.get('portal_browser') or {}
+        report=saved.get('diagnostics') or {}
+        if not report:
+            await self.client.send(chat_id,'Sin diagnóstico guardado. Abre otra revisión del portal.')
+            return
+        text='Diagnóstico guardado · sin IA\n'
+        text+=f"Descargado: {report['transferred_bytes']/1048576:.2f} MiB. Página: {report['page_bytes']/1048576:.2f} MiB.\n"
+        text+=f"Peticiones: {report['requests']}. Recursos reutilizados: {report['cache_hits']}."
+        if saved.get('omitted_writes'):
+            text+='\nSolicitudes de envío bloqueadas: '+str(saved['omitted_writes'])+'.'
+        if saved.get('partial'):
+            text+='\nVista parcial de controles y opciones.'
+        labels={'response_size_limit':'archivo demasiado grande','size_limit':'presupuesto total agotado',
+            'page_size_limit':'presupuesto de página agotado','http_error':'error HTTP','timeout':'tiempo de espera agotado',
+            'network_error':'fallo de conexión','private_address':'dirección privada denegada','dns_error':'fallo DNS',
+            'tls_error':'fallo de certificado HTTPS','redirect_cookie':'redirección de recurso con estado no compatible',
+            'unexpected_content':'el recurso no devolvió el formato esperado','load_failed':'falló la carga',
+            'csp':'bloqueo de la política de seguridad del sitio','javascript_error':'falló un script de la página',
+            'cors':'el sitio bloqueó el recurso por CORS','unsupported_document':'destino sin formulario HTML'}
+        for issue in report.get('issues',[])[:4]:
+            text+='\n'+issue['kind']+': '+labels.get(issue['code'],'recurso no disponible')
+            if issue.get('status'):
+                text+=' '+str(issue['status'])
+            if issue.get('site'):
+                text+=' · '+issue['site']
+        await self.client.send(chat_id,text,[('Ver ticket','ts:'+ticket['id'])])
 
     async def _document_diagnostic(self,owner,chat_id,identifier):
         document=self.billing.document(owner,identifier)
@@ -658,7 +708,7 @@ class TelegramBridge:
         plain=normalized(message.get('text',''))
         callback_data=callback.get('data','')
         control=(not callback and not (message.get('document') or message.get('photo'))
-            and plain in REQUEST_TEXTS|{'/tickets','/limites','/portales'}) or (isinstance(callback_data,str) and callback_data.startswith(('ts:','wx:','bf:')))
+            and plain in REQUEST_TEXTS|{'/tickets','/limites','/portales'}) or (isinstance(callback_data,str) and callback_data.startswith(('ts:','wx:','bf:','bd:')))
         kind='channel_control' if control else 'channel_update'
         today=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
         with self.billing.database.connection() as conn:
@@ -715,6 +765,8 @@ class TelegramBridge:
             await self.client.send(chat_id,'Completa el dato: /dato_ticket '+examples[code])
         elif prefix=='ts':
             await self._ticket(owner,chat_id,identifier)
+        elif prefix=='bd':
+            await self._browser_diagnostic(owner,chat_id,identifier)
         elif prefix=='er':
             await self._email_review(owner,chat_id,identifier)
         elif prefix in {'cu','rf','fc','pe','pm','pu','pp','px'}:

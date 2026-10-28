@@ -2,6 +2,7 @@ import asyncio
 import ipaddress
 import socket
 import re
+import ssl
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode, unquote
 
@@ -13,6 +14,29 @@ import httpx2
 TRACKING_HOSTS=frozenset({'googletagmanager.com','google-analytics.com','doubleclick.net'})
 PAGE_REQUEST_LIMIT=60
 ROUTE_REQUEST_LIMIT=240
+RESPONSE_BYTE_LIMIT=4_194_304
+PAGE_BYTE_LIMIT=8_388_608
+ROUTE_BYTE_LIMIT=25_165_824
+LEGACY_BYTE_LIMIT=6_291_456
+RESUMABLE_LIMITS=frozenset({'request_limit','page_request_limit','size_limit','page_size_limit'})
+RESOURCE_POLICY_VERSION=2
+FETCH_TIMEOUT=8
+
+
+def network_failure(error):
+    chain=[]
+    for _ in range(8):
+        if error is None or any(error is item for item in chain):
+            break
+        chain.append(error)
+        error=error.__cause__ or error.__context__
+    if any(isinstance(item,socket.gaierror) for item in chain):
+        return 'dns_error'
+    if any(isinstance(item,ssl.SSLError) or 'CERTIFICATE_VERIFY_FAILED' in str(item) for item in chain):
+        return 'tls_error'
+    if any(isinstance(item,TimeoutError) or 'Timeout' in type(item).__name__ for item in chain):
+        return 'timeout'
+    return 'network_error'
 
 
 def tracking_url(value):
@@ -102,7 +126,10 @@ class PublicFetcher:
     """Cada GET se conecta a una IP pública validada, conservando TLS Host/SNI."""
     def __init__(self, *, resolver=resolve, client=None):
         self.resolver=resolver
-        self.client=client or httpx2.AsyncClient(trust_env=False,timeout=5,follow_redirects=False)
+        # El pool ve la IP fijada, no el hostname del certificado. No reutilizar
+        # conexiones entre peticiones: dos dominios pueden compartir esa IP.
+        self.client=client or httpx2.AsyncClient(trust_env=False,timeout=5,follow_redirects=False,
+            http2=False,limits=httpx2.Limits(max_connections=12,max_keepalive_connections=0))
         # Las cookies pertenecen al contexto Chromium, nunca al transporte compartido.
         self.client.cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[]))
 
@@ -110,6 +137,15 @@ class PublicFetcher:
         await self.client.aclose()
 
     async def fetch(self,url,headers):
+        return await self.fetch_limited(url,headers)
+
+    async def fetch_limited(self,url,headers,*,on_bytes=None):
+        # Un servidor que gotea datos no debe mantener la descarga viva
+        # indefinidamente renovando el timeout de cada lectura.
+        async with asyncio.timeout(FETCH_TIMEOUT):
+            return await self._fetch_limited(url,headers,on_bytes=on_bytes)
+
+    async def _fetch_limited(self,url,headers,*,on_bytes=None):
         uri=urlsplit(https_url(url))
         addresses=await self.resolver(uri.hostname)
         if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
@@ -118,15 +154,24 @@ class PublicFetcher:
         authority='['+address+']' if ':' in address else address
         pinned=urlunsplit(('https',authority,uri.path,uri.query,''))
         forwarded={'Host':uri.hostname,'Accept':headers.get('accept','text/html'),
-            'User-Agent':'PublicBillingNavigator/1.0','Cookie':headers.get('cookie','')}
+            'User-Agent':'PublicBillingNavigator/1.0','Cookie':headers.get('cookie',''),'Connection':'close'}
+        for name in ('accept-language','origin','referer','sec-fetch-site','sec-fetch-mode','sec-fetch-dest'):
+            if name in headers:
+                forwarded[name]=headers[name]
         async with self.client.stream('GET',pinned,headers=forwarded,
                 extensions={'sni_hostname':uri.hostname},follow_redirects=False) as response:
             chunks,size=[],0
-            async for chunk in response.aiter_bytes():
+            async for chunk in response.aiter_bytes(chunk_size=65536):
                 size+=len(chunk)
-                if size>1_048_576:
+                if on_bytes:
+                    on_bytes(len(chunk))
+                if size>RESPONSE_BYTE_LIMIT:
                     raise BrowserError('browser_response_size','La página supera el tamaño permitido.')
                 chunks.append(chunk)
             # Sin transfer/content-encoding: el cuerpo ya está descomprimido.
-            allowed={'content-type','location','set-cookie','content-security-policy'}
-            return response.status_code,{key:value for key,value in response.headers.items() if key.lower() in allowed},b''.join(chunks)
+            allowed={'content-type','location','content-security-policy','cache-control','vary',
+                'access-control-allow-origin','access-control-allow-credentials','cross-origin-resource-policy','x-content-type-options'}
+            result={key:value for key,value in response.headers.items() if key.lower() in allowed}
+            if response.headers.get_list('set-cookie'):
+                result['set-cookie']='\n'.join(response.headers.get_list('set-cookie'))
+            return response.status_code,result,b''.join(chunks)

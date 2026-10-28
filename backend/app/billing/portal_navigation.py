@@ -5,7 +5,7 @@ from .portal_memory import brand_options,brand_words,has_billing_form,matching_b
 
 
 def next_public_action(ticket,snapshot):
-    if snapshot['captcha'] or snapshot['network_blocked'] or not snapshot['steps_remaining'] or has_billing_form(snapshot):
+    if snapshot['captcha'] or snapshot.get('login_required') or snapshot['network_blocked'] or not snapshot['steps_remaining'] or has_billing_form(snapshot):
         return None
     matched=matching_brand(ticket,snapshot)
     if snapshot.get('brand_selection') and brand_options(snapshot):

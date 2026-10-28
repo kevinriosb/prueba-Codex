@@ -158,12 +158,18 @@ sigue requiriendo comprobación. Esta entrega no rellena ni envía formularios.
 - El recorrido autorizado tiene 60 peticiones por página y 240 en total. El
   avance estable del mismo ticket puede retomarse con permiso vigente y una
   nueva ejecución, respetando cuotas. Véase [límites y recuperación](LIMITES_RECORRIDO.md).
+- Los cuerpos descomprimidos tienen un máximo de 4 MiB por respuesta, 8 MiB por
+  página y 24 MiB de red por recorrido. La caché efímera de scripts/estilos admite
+  8 MiB por contexto, respeta las restricciones HTTP y no comparte cookies ni
+  recursos entre usuarios. Los aciertos cuentan como peticiones y como bytes
+  de página, pero no como otra descarga. Véase [auditoría](AUDITORIA_NAVEGACION.md).
 - Cada ejecución conserva los límites existentes de chat: pasos del SDK, tokens,
   tiempo y cuota diaria. No se elevan automáticamente ni se ocultan llamadas extra.
 - Referencias observadas de un solo uso; una página cambiada exige nueva revisión.
 - Solo peticiones HTTPS GET dentro del recorrido autorizado (máximo 12 orígenes).
   IPs privadas, métodos POST, WebSockets, descargas y service workers se bloquean.
   Las conexiones HTTP verifican DNS público y fijan IP, Host y SNI para TLS.
+  No se reutiliza una conexión TLS entre dos dominios que compartan IP.
 - El navegador no recibe secretos fiscales. Su tráfico pasa por el filtro del
   servidor; la salida directa del navegador usa un proxy local que no da servicio.
   El contenedor usa UID 10001, raíz de solo lectura, límites de memoria/procesos y

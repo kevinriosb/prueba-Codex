@@ -105,6 +105,11 @@ def main():
         if result.returncode:
             raise RuntimeError(result.stderr[-1800:])
         print(result.stdout.strip())
+        diagnostic=subprocess.run(['docker','exec','-i',container,'python','-','--help'],
+            input=(root/'scripts/diagnose_portal.py').read_text(),text=True,capture_output=True)
+        if diagnostic.returncode or '--merchant' not in diagnostic.stdout:
+            raise RuntimeError('El diagnóstico por stdin no pudo importarse en la imagen browser.')
+        print('PASS: diagnóstico público por stdin disponible en la imagen, sin IA ni navegación externa.')
         print('PASS: /health, autenticación interna y rechazo de archivos locales.')
     finally:
         if container:

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from email.message import EmailMessage
 
-from ...browser_worker.policy import bookmark_url
+from ...browser_worker.policy import bookmark_url,RESUMABLE_LIMITS
 from ..errors import AppError
 from .cfdi import SatVerifier, validate_cfdi
 from .channels import official_contacts
@@ -380,7 +380,7 @@ class BillingService:
 
     def _save_portal_checkpoint(self,owner,ticket,snapshot,brand_label):
         url=snapshot.get('bookmark_url')
-        if url and bookmark_url(url)==url and not snapshot['captcha'] and self.portal_permissions.route_allowed(owner,ticket):
+        if url and bookmark_url(url)==url and not snapshot['captcha'] and not snapshot.get('login_required') and self.portal_permissions.route_allowed(owner,ticket):
             ticket['portal_checkpoint']={'url':url,'scope':self.portal_permissions.scope(ticket),
                 'brand_label':brand_label,'expires':time.time()+1800}
 
@@ -410,21 +410,30 @@ class BillingService:
             allowed=[portal_origin(resume)] if resume else self.portal_permissions.allowed(owner,ticket)
             return await self.browser.open(owner,resume or self.portal_memory.entry_url(owner,ticket),allowed=allowed,**route_options)
 
+        async def discard_exhausted(snapshot):
+            nonlocal previous
+            if not restart_exhausted or not previous or reference:
+                return False
+            if (not snapshot['network_blocked'] or snapshot['captcha'] or snapshot.get('login_required')
+                    or snapshot.get('block_reason') not in RESUMABLE_LIMITS):
+                return False
+            self._save_portal_checkpoint(owner,ticket,snapshot,brand_label)
+            if not self.portal_resume_url(owner,ticket):
+                return False
+            try:
+                await self.browser.close_session(owner,snapshot['session_id'])
+            except AppError as error:
+                if error.code!='browser_session':
+                    raise
+            self.store.delete('browser_review',owner,previous['id'])
+            previous=None
+            return True
+
         if not previous:
             self.portal_permissions._expire_lookup('browser_review',owner,lookup)
         try:
-            if restart_exhausted and previous and not reference:
-                snapshot=previous['snapshot']
-                if snapshot['network_blocked'] and not snapshot['captcha'] and snapshot.get('block_reason') in {'request_limit','page_request_limit'}:
-                    self._save_portal_checkpoint(owner,ticket,snapshot,brand_label)
-                    if self.portal_resume_url(owner,ticket):
-                        try:
-                            await self.browser.close_session(owner,snapshot['session_id'])
-                        except AppError as error:
-                            if error.code!='browser_session':
-                                raise
-                        self.store.delete('browser_review',owner,previous['id'])
-                        previous=None
+            if previous:
+                await discard_exhausted(previous['snapshot'])
             if reference:
                 if not previous or previous['snapshot']['observation_id']!=observation_id or reference not in {item['reference'] for item in previous['snapshot']['actions']}:
                     raise AppError(409,'browser_stale','La página cambió. Actualiza la revisión.')
@@ -433,7 +442,7 @@ class BillingService:
                     brand_label=action['label']
                 if action.get('permission_origin'):
                     self.portal_permissions.require(owner,ticket,action['permission_origin'])
-                if previous['snapshot']['captcha'] or previous['snapshot']['network_blocked']:
+                if previous['snapshot']['captcha'] or previous['snapshot']['network_blocked'] or previous['snapshot'].get('login_required'):
                     raise AppError(409,'browser_intervention','La página requiere intervención humana antes de continuar.')
                 snapshot=await self.browser.act(owner,previous['snapshot']['session_id'],observation_id,reference)
             elif previous:
@@ -449,6 +458,10 @@ class BillingService:
                     snapshot=await open_current()
             else:
                 snapshot=await open_current()
+            # El presupuesto pudo agotarse después de la observación guardada.
+            # Solo el primer observe de un trabajo nuevo puede reabrir una vez.
+            if await discard_exhausted(snapshot):
+                snapshot=await open_current()
         except AppError as error:
             ticket['portal_browser_error']={'code':error.code,'message':error.message}
             self.store.update('ticket',owner,ticket_id,ticket)
@@ -460,7 +473,9 @@ class BillingService:
             fields.append({'key':item.get('key'),'label':item['label'],'required':item['required'],
                 'matched':bool(ticket.get(item.get('key'))),'options':item['options']})
         ticket['portal_browser']={'page':snapshot['page'],'fields':fields,'checked_at':time.time(),
-            'purchase_validated':False,'submitted':False}
+            'purchase_validated':False,'submitted':False,'diagnostics':snapshot.get('diagnostics'),
+            'block_reason':snapshot.get('block_reason'),'omitted_writes':snapshot.get('omitted_writes',0),
+            'partial':snapshot.get('partial',False)}
         self._save_portal_checkpoint(owner,ticket,snapshot,brand_label)
         ticket['portal_browser_error']=None
         self.store.update('ticket',owner,ticket_id,ticket)
