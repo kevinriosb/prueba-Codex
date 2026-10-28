@@ -8,9 +8,10 @@ def next_public_action(ticket,snapshot):
     if snapshot['captcha'] or snapshot.get('login_required') or snapshot['network_blocked'] or not snapshot['steps_remaining'] or has_billing_form(snapshot):
         return None
     matched=matching_brand(ticket,snapshot)
-    if snapshot.get('brand_selection') and brand_options(snapshot):
+    if snapshot.get('brand_selection'):
         # En una selección explícita manda la marca del ticket; un enlace
-        # genérico del pie no debe sacar al agente de esa selección.
+        # genérico del pie no debe sacar al agente aunque no se hayan podido
+        # leer las opciones. Su ausencia no convierte el pie en la ruta correcta.
         return matched
     choices=[]
     for action in snapshot['actions']:

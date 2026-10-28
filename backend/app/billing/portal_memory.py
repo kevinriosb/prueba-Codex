@@ -50,7 +50,7 @@ def matching_brand(ticket,snapshot,*,label=None):
     expected=brand_key(label or ticket.get('merchant'))
     if len(expected)<3:
         return None
-    if not label and not brand_options(snapshot):
+    if not label and not brand_options(snapshot) and not snapshot.get('brand_selection'):
         return None
     candidates=[item for item in snapshot['actions'] if item.get('label') and brand_key(item['label'])==expected]
     if not candidates:

@@ -59,6 +59,58 @@ def test_explicit_brand_selector_with_ambiguous_merchant_does_not_return_to_foot
     assert next_public_action({'merchant':'Pizza Alfa'},observed)['reference']=='aaaaaaaa'
 
 
+def test_explicit_brand_selector_without_readable_options_does_not_choose_footer():
+    observed=snapshot(actions=[
+        {'reference':'cccccccc','label':'- Facturación Electrónica','kind':'link'}])
+    observed['brand_selection']=True
+    assert next_public_action({'merchant':'Pizza Alfa'},observed) is None
+
+
+def test_explicit_brand_selector_can_match_a_single_observed_option():
+    observed=snapshot(actions=[{'reference':'aaaaaaaa','label':'Pizza Alfa','kind':'link','brand':True},
+        {'reference':'cccccccc','label':'Facturación Electrónica','kind':'link'}])
+    observed['brand_selection']=True
+    assert next_public_action({'merchant':'Pizza Alfa'},observed)['reference']=='aaaaaaaa'
+
+
+async def test_hidden_brand_controls_do_not_send_public_route_to_corporate_footer():
+    root='https://provider.example/brands'
+    pages=Pages({root:'''<h2>Selecciona la marca</h2>
+        <section hidden><a href="/form?brand=Pizza"><img alt="Pizza Alfa"></a>
+        <a href="/form?brand=Coffee"><img alt="Café Beta"></a></section>
+        <footer><a href="https://group.example/invoices">Facturación Electrónica</a></footer>'''})
+    manager=BrowserManager(fetcher=pages)
+    try:
+        observed=await manager.open('owner',root,['https://provider.example'],public_route=True)
+        assert observed['brand_selection'] and len(observed['actions'])==1
+        assert next_public_action({'merchant':'Pizza Alfa'},observed) is None
+        assert [url for url,_ in pages.calls]==[root]
+    finally:
+        await manager.close()
+
+
+def test_model_cannot_follow_footer_in_explicit_brand_selector_without_options(billing_client):
+    class MissingBrands(FakeBrowser):
+        async def open(self,*args,**kwargs):
+            result=await super().open(*args,**kwargs)
+            result['brand_selection']=True
+            result['actions']=[{'reference':'bbbbbbbb','label':'Facturación Electrónica','kind':'link'}]
+            return result
+    browser=MissingBrands()
+    model=ScriptedModel([[call('portal_browser_observe')],
+        [call('portal_browser_navigate',observation_id='aaaaaaaa',reference='bbbbbbbb')],
+        [answer('Faltan opciones de marca.')]])
+    client,app,extractor,mail,sat,telegram,chat=create(billing_client,model,browser=browser)
+    confirm_profile(telegram,chat)
+    extractor.ticket.update(merchant='Pizza Alfa',billing_url='https://merchant.example/')
+    telegram.files['receipt']=image('red');chat(document='receipt');chat(data=button(telegram,'an'))
+    chat(data=button(telegram,'wa'))
+    assert [item[0] for item in browser.calls]==['open']
+    assert 'brand_selection_pending' in str(model.inputs[-1])
+    assert 'no se detectaron sus opciones' in telegram.messages[-1][1]
+    assert mail.sent==sat.calls==[]
+
+
 def test_telegram_sdk_reaches_brand_form_despite_startup_post_and_footer_link(billing_client):
     root='https://group.example/brands'
     form='https://provider.example/form?opc=Pizza'

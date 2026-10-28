@@ -165,12 +165,20 @@ async def test_large_resource_failure_is_reported_without_calling_document_illeg
     finally:await manager.close()
 
 
-async def test_combined_diagnostic_follows_observed_route_without_ai_or_private_values():
+@pytest.mark.parametrize('layout',[False,True])
+async def test_combined_diagnostic_follows_observed_route_without_ai_or_private_values(layout):
     output=[]
     pages=WeightedPages()
+    pages.pages[HOME]+='<aside hidden><a href="/private?token=never-print-token"><img src="/hidden-logo.svg?secret=never-print-query" alt="Hidden brand"></a></aside>'
     pages.pages[HOME+'step/2']=pages.pages[HOME+'step/2'].replace('<input>','<input value="never-print-fiscal">')
-    code=await diagnose(HOME,manager=BrowserManager(fetcher=pages),emit=output.append)
+    code=await diagnose(HOME,manager=BrowserManager(fetcher=pages),emit=output.append,layout=layout)
     reports=[json.loads(line) for line in output if line.startswith('{')]
     assert code==0 and reports[-1]['fields'][0]['key']=='rfc'
     assert reports[-1]['diagnostics']['cache_hits']==10
     assert 'never-print-fiscal' not in '\n'.join(output)
+    assert 'never-print-token' not in '\n'.join(output) and 'never-print-query' not in '\n'.join(output)
+    if layout:
+        assert reports[0]['layout'][0]['image']=='hidden-logo.svg'
+        assert reports[0]['layout'][0]['rects']==0 and reports[0]['layout'][0]['hiddenAncestors']
+    else:
+        assert 'layout' not in reports[0]

@@ -121,3 +121,37 @@ imágenes finales se construyeron y pasaron la prueba del contenedor y del stack
 Compose: salud, autenticación interna, rechazo de archivos locales, UID sin
 privilegios y ejecución del diagnóstico por stdin con las dependencias de
 producción. Los contenedores y volúmenes ficticios se retiraron al terminar.
+
+## Resultado posterior desde el VPS
+
+El registro compartido después de desplegar `1c18970` confirma que ambos
+contenedores quedaron saludables. En la entrada de Interfactura se descargaron
+1.453.036 bytes en 28 peticiones, sin bloqueo ni incidencias de recursos. No
+aparecieron opciones de marca entre las acciones. La selección automática siguió
+«Facturación Electrónica» del pie y llegó a la página corporativa; allí terminó
+sin formulario. Ese resultado no identifica la causa de la ausencia de logos.
+
+Se reprodujo otro caso: la protección del selector explícito dependía de haber
+leído al menos dos opciones de marca. Si no se leían, el pie volvía a considerarse
+una ruta válida. Ahora un selector explícito se conserva como tal aunque falten
+sus opciones, tanto en la selección automática como ante una orden del modelo.
+Una sola opción observada que coincida de forma única también puede seguirse.
+No se agregaron reglas por comercio ni URLs inventadas.
+
+Cuatro regresiones adicionales cubren selector sin opciones, marcas ocultas,
+una única opción coincidente y el intento del modelo de seguir el pie. El
+diagnóstico por stdin también informa `brand_selection`. Para determinar por
+qué faltan las marcas reales hace falta observar su estructura y visibilidad
+en el VPS; no se cambia la carga de recursos basándose solo en esa ausencia.
+
+El argumento opcional `--layout` agrega la visibilidad, ancestros ocultos y
+estado de carga de hasta 50 enlaces con imágenes del documento principal. No
+imprime href, manejadores, consultas URL ni valores de formularios. Ese script
+puede ejecutarse por stdin en el contenedor `1c18970` ya desplegado, sin volver
+a construir Docker: basta obtener el archivo actualizado con `git pull`.
+
+Validación de la protección del pie: 630 pruebas locales completas aprobadas,
+48 casos focalizados, ambas imágenes construidas y comprobaciones del contenedor
+y del stack Compose.
+La variante nueva de diagnóstico con/sin `--layout` se comprueba además por
+separado para verificar que no exponga valores ni consultas URL.

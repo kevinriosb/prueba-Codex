@@ -8,7 +8,7 @@ from agents.exceptions import ModelBehaviorError
 from ..errors import AppError
 from .models import validate_fiscal
 from .portal_permissions import PortalPermissionRequired
-from .portal_memory import has_billing_form
+from .portal_memory import has_billing_form,matching_brand
 from .portal_navigation import next_public_action
 
 OPERATIONS={
@@ -114,6 +114,7 @@ def build_billing_tools(billing):
         result['blocked_domains']=bool(snapshot['blocked_origins']) and snapshot['network_blocked']
         result['optional_resources_pending']=bool(snapshot['blocked_origins']) and not snapshot['network_blocked']
         result['login_required']=snapshot.get('login_required',False)
+        result['brand_selection']=snapshot.get('brand_selection',False)
         result['resource_issues']=sorted({item['code'] for item in (snapshot.get('diagnostics') or {}).get('issues',[])})[:6]
         result['fields']=[{'label':item['label'][:60],'key':item.get('key'),'required':item['required']}
             for item in snapshot['fields'][:12]]
@@ -197,6 +198,11 @@ def build_billing_tools(billing):
         if previous.get('ticket_id')!=ticket['id'] or previous.get('id')!=observation_id or reference not in previous.get('references',set()):
             record=await billing.browse_portal(ctx.context['user_id'],ticket['id'])
             return remember_observation(ctx,ticket,record)|{'navigation_performed':False,'observation_refreshed':True}
+        if record['snapshot'].get('brand_selection'):
+            action=next((item for item in record['snapshot']['actions'] if item['reference']==reference),None)
+            matched=matching_brand(ticket,record['snapshot'])
+            if action and action['kind']=='link' and (not matched or matched['reference']!=reference):
+                return remember_observation(ctx,ticket,record)|{'navigation_performed':False,'brand_selection_pending':True}
         ctx.context['browser_navigation_count']=ctx.context.get('browser_navigation_count',0)+1
         try:
             record=await billing.browse_portal(ctx.context['user_id'],ticket['id'],

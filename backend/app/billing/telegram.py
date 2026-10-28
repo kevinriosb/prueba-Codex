@@ -512,6 +512,8 @@ class TelegramBridge:
         awaiting_form=bool(pending and record.get('brand_label') and not has_billing_form(snapshot))
         brands=brand_options(snapshot) if not has_billing_form(snapshot) and not snapshot['captcha'] and not snapshot.get('login_required') and not snapshot['network_blocked'] and not awaiting_form else []
         preferred=matching_brand(ticket,snapshot) if not snapshot.get('login_required') else None
+        if snapshot.get('brand_selection') and not brands and not preferred and not snapshot['fields']:
+            text+='\nEl selector de marcas está visible, pero no se detectaron sus opciones.'
         if brands:
             text+='\nPuedes elegir la marca o continuar la revisión con IA.'
         if snapshot['captcha']:
@@ -565,7 +567,8 @@ class TelegramBridge:
                 buttons.append(('Autorizar lectura de datos faltantes','ra:'+source['id']))
         if snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot.get('login_required') and not snapshot['network_blocked']:
             buttons.append(('Continuar revisión con IA','bn:'+ticket['id']))
-        if snapshot.get('partial') or snapshot.get('block_reason') or (snapshot.get('diagnostics') or {}).get('issues'):
+        if (snapshot.get('partial') or snapshot.get('block_reason') or (snapshot.get('diagnostics') or {}).get('issues')
+                or snapshot.get('brand_selection') and not brands and not preferred):
             buttons.append(('Ver diagnóstico (sin IA)','bd:'+ticket['id']))
         buttons.append(('Ver estado del ticket','ts:'+ticket['id']))
         await self.client.send(chat_id,text,buttons)
