@@ -351,13 +351,20 @@ class PortalPreparation:
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         if ticket.get('delivery'):
             raise AppError(409,'portal_source','El ticket ya tiene una solicitud enviada. Revisa su estado.')
-        mime,content=inspect_document(data,self.billing.settings.billing_max_upload_bytes)
+        staged=self.billing.document(owner,staged_id) if staged_id else None
+        if staged:
+            # receive_document ya verificó y normalizó estos bytes. Repetir la
+            # compresión JPEG cambia la huella y degrada una foto con detalle.
+            content=base64.b64decode(staged['data'],validate=True)
+            if (staged['purpose']!='unclassified' or content!=data
+                    or hashlib.sha256(content).hexdigest()!=staged['sha256']):
+                raise AppError(409,'portal_source','El archivo recibido cambió. Revisa el ticket.')
+            mime=staged['mime']
+        else:
+            mime,content=inspect_document(data,self.billing.settings.billing_max_upload_bytes)
         sha=hashlib.sha256(content).hexdigest()
         lookup=self.store.digest('portal-source:'+ticket['id']+sha)
         document=self.store.find('document',owner,lookup)
-        staged=self.billing.document(owner,staged_id) if staged_id else None
-        if staged and (staged['purpose']!='unclassified' or staged['sha256']!=sha):
-            raise AppError(409,'portal_source','El archivo recibido cambió. Revisa el ticket.')
         if not document and staged:
             document=self.store.update('document',owner,staged['id'],staged|{'purpose':'ticket',
                 'profile_id':ticket['profile_id'],'ticket_id':ticket['id'],'portal_replacement':True,'intended_purpose':None})

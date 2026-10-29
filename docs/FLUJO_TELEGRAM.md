@@ -82,7 +82,9 @@ siguen usando la deduplicación y el bloqueo existentes por cuenta. El control d
 selección también se aplica a herramientas de IA, comandos manuales y botones.
 
 La foto de reemplazo ya guardada se convierte en el documento del ticket sin
-crear una segunda copia ni otro ticket provisional. Se conserva su vencimiento.
+crear una segunda copia ni otro ticket provisional. Se conservan su vencimiento
+y sus bytes ya validados: no se aplica otra compresión JPEG que cambie la huella
+o degrade la imagen. El archivo recibido por primera vez mantiene su validación.
 La verificación de la foto, los campos y los permisos de llenado sigue intacta.
 No se transfieren análisis, datos o autorizaciones de una solicitud a otra.
 
@@ -98,8 +100,9 @@ se hacen llamadas de IA de pago ni se demuestra compatibilidad universal de siti
 ## Validación y despliegue
 
 Pasaron **732 pruebas completas** (344,48 s) y una ejecución posterior de las
-**23 regresiones del flujo** (15,44 s), incluyendo el seguimiento del video sin
-citarlo, sustitución al límite de archivos y repetición tras vencer una foto.
+**68 regresiones de flujo y preparación** (88,85 s), que incluyen los **24 casos
+del flujo nativo**: video citado o no, sustitución al límite de archivos,
+caducidad y una foto con detalle que conserva su huella y contenido exactos.
 También pasaron compilación de Python, sintaxis JavaScript, detección de nombres
 inválidos y comprobación de espacios. Las pruebas previas de fotos diferentes y
 portales guardados incorporan ahora la elección humana, conservando sus controles

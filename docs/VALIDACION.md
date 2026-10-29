@@ -702,9 +702,10 @@ archivo, solicitud activa y conversación de IA; otro ticket pide elegir pausar,
 cancelar o conservar la solicitud anterior. Los videos se identifican como tales.
 Se guarda el archivo nuevo para elegir después sin analizarlo ni reenviarlo.
 
-Pasaron **732 pruebas completas** (344,48 s). Después pasaron **23 regresiones
-nativas** (15,44 s), incluyendo recuperación tras reiniciar, permisos y botones
-viejos, sustitución al límite de archivos, caducidad, vídeo citado o no, menús con
+Pasaron **732 pruebas completas** (344,48 s). Después pasaron **68 regresiones
+de flujo y preparación** (88,85 s), incluidos los **24 casos nativos**: recuperación
+tras reiniciar, permisos y botones viejos, sustitución al límite de archivos,
+caducidad, conservación exacta de fotos con detalle, vídeo citado o no, menús con
 cuota agotada y el recorrido hasta XML/PDF y validación SAT simulados. El modelo
 no puede reutilizar otra solicitud a partir del historial. El motor del navegador,
 frontend, dependencias y Compose se conservan. La comprobación adicional Docker

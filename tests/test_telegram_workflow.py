@@ -346,3 +346,22 @@ def test_replacing_an_expired_replacement_does_not_collide_with_its_old_lookup(b
     chat(data=choice(telegram,'same'))
     assert app.state.billing.resolve_ticket(who,ticket['id'])['document_id']==staged
     assert 'xa:' in str(telegram.messages[-1][2]) and len(extractor.calls)==3
+
+
+def test_replacement_uses_validated_photo_bytes_without_recompressing_it(billing_client):
+    import io,random
+    from PIL import Image
+    from .test_portal_preparation import prepared
+    result,browser,_=prepared(billing_client)
+    client,app,extractor,mail,sat,telegram,chat=result
+    who=owner(app);ticket=app.state.telegram.workflow.active(who)
+    picture=Image.frombytes('RGB',(96,96),random.Random(42).randbytes(96*96*3))
+    original=io.BytesIO();picture.save(original,format='PNG')
+    chat(data='xu:'+ticket['id']);telegram.files['detail']=original.getvalue();chat(document='detail')
+    staged=app.state.telegram.workflow.pending(who)['document_id']
+    source=app.state.billing.document(who,staged)
+    chat(data=choice(telegram,'same'))
+    saved=app.state.billing.document(who,staged)
+    assert app.state.billing.resolve_ticket(who,ticket['id'])['document_id']==staged
+    assert saved['sha256']==source['sha256'] and saved['data']==source['data']
+    assert 'xa:' in str(telegram.messages[-1][2]) and len(extractor.calls)==3
