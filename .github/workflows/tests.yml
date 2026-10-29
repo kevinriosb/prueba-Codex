@@ -31,4 +31,7 @@ jobs:
                   subprocess.run(['sudo', 'ln', '-s', str(executable), '/usr/bin/chromium'], check=True)
           PY
       - name: Pruebas sin API ni cargos
-        run: uv run --frozen --group browser pytest -q
+        run: uv run --frozen --group browser pytest -q --junitxml=.local/pytest-results.xml
+      - name: Mostrar fallos concretos en GitHub
+        if: ${{ failure() }}
+        run: python scripts/report_test_failures.py .local/pytest-results.xml
