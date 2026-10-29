@@ -365,3 +365,16 @@ def test_replacement_uses_validated_photo_bytes_without_recompressing_it(billing
     assert app.state.billing.resolve_ticket(who,ticket['id'])['document_id']==staged
     assert saved['sha256']==source['sha256'] and saved['data']==source['data']
     assert 'xa:' in str(telegram.messages[-1][2]) and len(extractor.calls)==3
+
+
+def test_explicit_csf_upload_takes_priority_over_an_old_receipt_photo_prompt(billing_client):
+    result,identifier=first_ticket(billing_client)
+    client,app,extractor,mail,sat,telegram,chat=result
+    chat(data='xu:'+identifier)
+    telegram.files['other-csf']=image('green')
+    chat(document='other-csf',caption='/csf')
+    received=app.state.billing.document(owner(app),app.state.telegram._state(owner(app))['last_document_id'])
+    assert received['purpose']=='csf'
+    assert not app.state.telegram._state(owner(app)).get('portal_upload_ticket')
+    assert app.state.telegram.workflow.active(owner(app))['id']==identifier
+    assert len(extractor.calls)==2 and button(telegram,'an').endswith(received['id'])

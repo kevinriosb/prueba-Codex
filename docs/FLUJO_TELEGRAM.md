@@ -18,7 +18,9 @@
    **Ticket por asignar**; no exige subirlo otra vez.
 6. Si se pidió otra foto mediante el botón del ticket, la siguiente subida pregunta
    **Otra foto del mismo ticket** o **Es otro ticket**. Nunca adjunta una foto
-   distinta al ticket anterior por conservar un estado viejo del chat.
+   distinta al ticket anterior por conservar un estado viejo del chat. Una
+   indicación explícita `/csf` o **Actualizar CSF** tiene prioridad sobre esa
+   petición de foto anterior; no cambia la solicitud activa.
 7. La misma imagen de la misma solicitud reutiliza los datos y conserva el punto
    de navegación. Otra foto de la misma compra puede detectarse como duplicada
    después del análisis autorizado; se informa y se reutiliza la solicitud real.
@@ -140,3 +142,7 @@ posteriores de ciclo de recursos, reemplazo y flujo nativo pasaron (46,71 s).
 GitHub publica ahora el nombre y detalle de cada fallo como anotación a partir
 del informe JUnit; la descarga de logs no estuvo disponible en este entorno.
 No se silencian advertencias de recursos ni se cambian los límites del portal.
+
+La revisión posterior de ciclo de recursos pasó 737 casos completos (357,91 s).
+Después pasaron 62 comprobaciones de flujo, perfiles, archivos y cierre (33,97 s),
+incluida la prioridad de una CSF explícita sobre una petición vieja de foto.

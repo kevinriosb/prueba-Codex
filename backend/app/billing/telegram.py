@@ -1181,7 +1181,8 @@ class TelegramBridge:
             data=await self.client.download(attachment['file_id'])
             active=self.workflow.active(owner)
             state=self._state(owner)
-            if state.get('portal_upload_ticket') and (not active or active['id']!=state['portal_upload_ticket']):
+            explicit_csf=caption.casefold().startswith('/csf') or state.get('replace_profile_id') or state.get('expected_upload')=='csf'
+            if state.get('portal_upload_ticket') and (explicit_csf or not active or active['id']!=state['portal_upload_ticket']):
                 state.pop('portal_upload_ticket',None)
                 self._save_state(owner,state)
             if state.get('portal_upload_ticket'):
@@ -1196,7 +1197,6 @@ class TelegramBridge:
             selected=next((item['id'] for item in profiles if item['id']==state.get('active_profile')),None)
             if not selected and len(profiles)==1:
                 selected=profiles[0]['id']
-            explicit_csf=caption.casefold().startswith('/csf') or state.get('replace_profile_id') or state.get('expected_upload')=='csf'
             document=self.billing.receive_document(owner,'unclassified',data,profile_id=None if explicit_csf else selected)
             state['last_document_id']=document['id']
             state['last_received_media']='document'
