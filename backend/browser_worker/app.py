@@ -53,6 +53,13 @@ class Fill(Close):
     values:list[FillValue]=Field(min_length=1,max_length=24)
 
 
+class Transaction(Fill):
+    operation_id:str=Field(pattern=r'^[a-f0-9-]{36}$')
+    reference:str=Field(pattern=r'^[a-f0-9]{8}$')
+    values:list[FillValue]=Field(default_factory=list,max_length=24)
+    origins:list[str]=Field(min_length=1,max_length=4)
+
+
 def create_worker(manager=None,token_file=None):
     token_path=Path(token_file or os.environ.get('BROWSER_TOKEN_FILE','/run/browser-auth/token'))
     manager=manager or BrowserManager()
@@ -119,6 +126,18 @@ def create_worker(manager=None,token_file=None):
     @app.get('/v1/sessions/{identifier}/filled')
     async def filled(identifier:str,owner:str):
         return await manager.filled(owner,identifier)
+    @app.get('/v1/sessions/{identifier}/transaction')
+    async def transaction_view(identifier:str,owner:str):
+        return await manager.transaction_view(owner,identifier)
+    @app.post('/v1/sessions/{identifier}/transaction')
+    async def transaction_send(identifier:str,payload:Transaction):
+        return await manager.transaction_send(payload.owner,identifier,**payload.model_dump(exclude={'owner'}))
+    @app.get('/v1/sessions/{identifier}/transaction/{operation_id}')
+    async def transaction_status(identifier:str,operation_id:str,owner:str):
+        return await manager.transaction_status(owner,identifier,operation_id)
+    @app.get('/v1/sessions/{identifier}/files/{reference}')
+    async def transaction_file(identifier:str,reference:str,owner:str):
+        return await manager.transaction_file(owner,identifier,reference)
     return app
 
 

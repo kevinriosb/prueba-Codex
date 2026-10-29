@@ -349,7 +349,8 @@ class PortalPreparation:
         from .documents import inspect_document
         import hashlib
         ticket=self.billing.resolve_ticket(owner,ticket_id)
-        if ticket.get('delivery'):
+        tx=self.billing.portal_submission.current(owner,ticket['id'])
+        if ticket.get('delivery') or tx and tx['state'] in {'unknown','submitted'}:
             raise AppError(409,'portal_source','El ticket ya tiene una solicitud enviada. Revisa su estado.')
         staged=self.billing.document(owner,staged_id) if staged_id else None
         if staged:

@@ -58,7 +58,8 @@
 | Paso 1: ticket recibido | Identidad y autorización de lectura | Botón de análisis; no un «sí» escrito |
 | Paso 2: medio de facturación | Portal o correo observado | Recorrido público autorizado o revisión del contacto |
 | Paso 3: datos | Campos reales del portal o borrador de correo | Leer la foto según esos campos y completar solo lo que falta |
-| Paso 4: revisión | Datos concretos y controles de confirmación | Llenar la sesión sin red o aprobar un correo preparado |
+| Paso 4: revisión | Datos concretos y controles de confirmación | Enviar un paso del portal, llenar sin red o aprobar un correo |
+| Portal enviado | Respuesta real, archivos disponibles o envío sin confirmar | Consultar sin repetir; completar los nuevos campos si los pide |
 | Correo enviado | Esperando factura e identidad de solicitud | Consultar respuesta o autorizar seguimiento |
 | Factura recibida | XML/PDF y resultado de comprobación | Consultar SAT solo con su autorización específica |
 | Factura validada | Completada, descargas y menú | Iniciar otra solicitud conservando el perfil |
@@ -69,6 +70,10 @@ El navegador sigue investigando los controles actuales de cada sitio. El llenado
 con red cerrada **no envía el formulario ni emite la factura**. No se añade una
 secuencia específica para marcas o proveedores. CAPTCHA, login o controles no
 compatibles pueden requerir intervención humana.
+
+El envío real y la corrección con una foto de un solo campo se describen en
+[Facturación desde Telegram](FACTURACION_PORTAL.md). Cada pantalla del portal
+se revisa y confirma por separado; el llenado aislado sigue disponible.
 
 ## Estado y controles del servidor
 

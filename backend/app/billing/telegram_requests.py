@@ -32,6 +32,8 @@ class TelegramRequests:
         uncertain = any(item['_state'] in {'claimed', 'unknown'} for item in approvals)
         pending = next((item for item in approvals if item['_state'] == 'pending'), None)
         text = 'Estado: ' + ('Portal identificado' if ticket.get('portal_stage')=='awaiting_form' else STATUS_LABELS.get(ticket['status'], 'Requiere revisión')) + '.'
+        if ticket.get('portal_delivery'):
+            return self.bridge.workflow.stage(ticket),None,False
         if uncertain:
             return text + '\nEnvío incierto. Revisa Gmail; no lo repitas.', None, False
         if ticket.get('delivery'):

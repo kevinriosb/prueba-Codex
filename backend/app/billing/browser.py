@@ -1,4 +1,5 @@
-"""Navegación pública y llenado nativo autorizado con la red cerrada."""
+"""Contratos separados de navegación pública, llenado aislado y envío autorizado."""
+import re
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
@@ -90,6 +91,37 @@ class FilledForm(BaseModel):
     purchase_validated:bool
     expires_in:int=Field(ge=0,le=180)
     blocked_requests:int=Field(ge=0)
+
+
+class TransactionAction(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    reference:str=Field(pattern=r'^[a-f0-9]{8}$')
+    label:str=Field(max_length=100)
+    kind:str=Field(pattern=r'^(continue|issue|download)$')
+    origin:str=Field(max_length=2048)
+
+
+class TransactionFile(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    reference:str=Field(pattern=r'^[a-f0-9]{8}$')
+    mime:str=Field(pattern=r'^application/(xml|pdf)$')
+    sha256:str=Field(pattern=r'^[a-f0-9]{64}$')
+
+
+class TransactionView(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    snapshot:Observation
+    actions:list[TransactionAction]=Field(max_length=12)
+    error:str=Field(max_length=350)
+    success:bool
+    files:list[TransactionFile]=Field(max_length=6)
+
+
+class TransactionResult(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    operation_id:UUID
+    state:str=Field(pattern=r'^(unknown|correction|review|submitted)$')
+    view:TransactionView
 
 
 class PortalBrowserClient:
@@ -206,3 +238,47 @@ class PortalBrowserClient:
 
     async def filled(self,owner,session_id):
         return await self._call('/v1/sessions/'+str(UUID(session_id))+'/filled',{'owner':owner},method='GET',filled=True)
+
+    async def _transaction_call(self,path,payload,*,method='GET',result=False,file=False):
+        if not self.enabled:raise AppError(503,'browser_disabled','El navegador no está activado.')
+        try:
+            token=self.settings.billing_browser_token_file.read_text().strip()
+            uri=urlsplit(self.settings.billing_browser_worker_url)
+            if len(token)<40 or uri.scheme not in {'http','https'} or not uri.hostname or uri.username or uri.password or uri.query or uri.fragment:
+                raise ValueError()
+            response=await self.client.request(method,self.settings.billing_browser_worker_url.rstrip('/')+path,
+                headers={'X-Browser-Key':token},timeout=25,**({'params':payload} if method=='GET' else {'json':payload}))
+            if len(response.content)>(5_600_000 if file else 65536):raise ValueError()
+            if response.status_code!=200:
+                data=response.json()
+                code=data.get('code')
+                if code in {'browser_stale','browser_session','browser_private','browser_submission','browser_intervention'}:
+                    raise AppError(response.status_code,code,{
+                        'browser_stale':'Cambió el formulario. Revisa este paso antes de enviar.',
+                        'browser_session':'La sesión venció. Revisa el estado; no repitas un envío sin confirmar.',
+                        'browser_private':'Actualiza el formulario antes de solicitar la factura.',
+                        'browser_submission':'El portal no admite este paso con los datos revisados.',
+                        'browser_intervention':'El portal requiere intervención humana.'}[code])
+                raise ValueError()
+            if file:return response.json()
+            data=(TransactionResult if result else TransactionView).model_validate(response.json()).model_dump(mode='json')
+            view=data['view'] if result else data
+            if view['snapshot']['session_id']!=str(UUID(path.split('/')[3])):raise ValueError()
+            for item in view['snapshot']['fields']:item['key']=field_key(item['label'])
+            return data
+        except AppError:raise
+        except Exception:
+            raise AppError(502,'portal_send_unknown','No se confirmó la respuesta del portal. Consulta el estado; no repitas el envío.') from None
+
+    async def transaction_view(self,owner,session_id):
+        return await self._transaction_call('/v1/sessions/'+str(UUID(session_id))+'/transaction',{'owner':owner})
+
+    async def transaction_send(self,owner,session_id,**payload):
+        return await self._transaction_call('/v1/sessions/'+str(UUID(session_id))+'/transaction',{'owner':owner,**payload},method='POST',result=True)
+
+    async def transaction_status(self,owner,session_id,operation_id):
+        return await self._transaction_call('/v1/sessions/'+str(UUID(session_id))+'/transaction/'+str(UUID(operation_id)),{'owner':owner},result=True)
+
+    async def transaction_file(self,owner,session_id,reference):
+        if not re.fullmatch('[a-f0-9]{8}',reference):raise AppError(422,'portal_file','Archivo no válido.')
+        return await self._transaction_call('/v1/sessions/'+str(UUID(session_id))+'/files/'+reference,{'owner':owner},file=True)

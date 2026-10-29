@@ -17,6 +17,7 @@ from .telegram_agent import TelegramAgent
 from .telegram_profiles import TelegramProfiles, normalized
 from .telegram_requests import REQUEST_TEXTS, TelegramRequests
 from .telegram_workflow import TelegramWorkflow
+from .telegram_submission import TelegramSubmission
 from .portal_permissions import PortalPermissionRequired
 from .portal_memory import matching_brand,brand_options,has_billing_form,public_form_ready,unresolved_brand_selector
 
@@ -94,6 +95,7 @@ class TelegramBridge:
         self.profiles=TelegramProfiles(self)
         self.requests=TelegramRequests(self)
         self.workflow=TelegramWorkflow(self)
+        self.submission=TelegramSubmission(self)
         self._locks={}
 
     @property
@@ -284,6 +286,10 @@ class TelegramBridge:
             await self.client.send(chat_id,text+'\n'+label+'.\n'+summary+'\nLo ya enviado al comercio no se anula.',
                 [('Retomar solicitud','ts:'+identifier)]+downloads+self.workflow.navigation(owner))
             return
+        transaction=self.billing.portal_submission.current(owner,identifier)
+        if transaction:
+            await self.submission.show(owner,chat_id,identifier,tx=transaction)
+            return
         for key,label in [('account_number','Cuenta'),('folio','Folio'),('store_number','Tienda'),('reference_number','Referencia'),('billing_code','Código de facturación')]:
             if ticket.get(key):
                 text+='\n'+label+': '+ticket[key]
@@ -332,6 +338,8 @@ class TelegramBridge:
             text+='\n'+('Revisión pública disponible; solicitud aún manual.' if self.billing.browser.enabled else 'Portal pendiente de automatizar.')
             buttons.append(('Ver datos para el portal','bp:'+identifier))
             if self.billing.browser.enabled:
+                if hasattr(self.billing.browser,'transaction_view') and (ticket.get('portal_browser') or {}).get('fields'):
+                    buttons.append(('Continuar facturación','lv:'+identifier))
                 if not self.billing.portal_permissions.route_allowed(owner,ticket):
                     permission=self.billing.portal_permissions.request(owner,identifier,route=True)
                     text+='\n¿Permites revisar este portal y seguir su ruta pública de facturación, incluidos proveedores y recursos? Usa IA; sin enviar datos fiscales ni facturar.'
@@ -616,6 +624,8 @@ class TelegramBridge:
         if ready:
             if ticket.get('portal_fill'):
                 buttons.append(('Ver estado del llenado','xs:'+ticket['portal_fill']['review_id']))
+            if hasattr(self.billing.browser,'transaction_view'):
+                buttons.append(('Continuar facturación','lv:'+ticket['id']))
             if not form_missing and form_values and hasattr(self.billing.browser,'fill'):
                 fill_review=preparation.fill_request(owner,ticket['id'],snapshot)
                 if fill_review:
@@ -854,7 +864,7 @@ class TelegramBridge:
         if not separator:
             raise AppError(422,'telegram_callback','Acción no válida.')
         code=None
-        if prefix in {'cu','rf','td','xe','ba','bs'}:
+        if prefix in {'cu','rf','td','xe','ba','bs','lm'}:
             identifier,_,code=identifier.partition(':')
         try:
             uuid.UUID(identifier)
@@ -862,7 +872,9 @@ class TelegramBridge:
             raise AppError(422,'telegram_callback','Acción no válida.') from None
         if await self.workflow.guard(owner,chat_id,prefix,identifier):
             return
-        if prefix in {'td','xe'}:
+        if prefix in {'lv','lr','ls','lq','lm','la','lu'}:
+            await self.submission.callback(owner,chat_id,prefix,identifier,code)
+        elif prefix in {'td','xe'}:
             ticket=self.billing.store.get('ticket',owner,identifier)
             allowed=set(pending_receipt_fields(ticket))|set(browser_missing_fields(ticket))
             if prefix=='xe':
@@ -912,7 +924,8 @@ class TelegramBridge:
                     [('Ver estado del llenado','xs:'+identifier)])
                 return
             await self.client.send(chat_id,'Formulario llenado en el navegador. No se envió ni se solicitó la factura.',
-                [('Ver estado del llenado','xs:'+review['id'])]+self.workflow.navigation(owner))
+                [('Ver estado del llenado','xs:'+review['id'])]+
+                ([('Solicitar factura en el portal','lv:'+review['ticket_id'])] if hasattr(self.billing.browser,'transaction_view') else [])+self.workflow.navigation(owner))
         elif prefix=='xs':
             try:
                 result=await self.billing.portal_preparation.fill_status(owner,identifier)
@@ -1083,6 +1096,8 @@ class TelegramBridge:
 
     async def _message(self,owner,chat_id,message):
         if await self.workflow.message(owner,chat_id,message):
+            return
+        if await self.submission.message(owner,chat_id,message):
             return
         text=message.get('text','').strip()
         declaration=text.casefold().strip(' .!¡?¿')

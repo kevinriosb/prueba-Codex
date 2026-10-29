@@ -9,10 +9,12 @@ from .telegram_profiles import normalized
 
 TERMINAL = {'FACTURACION_COMPLETADA'}
 TICKET_ACTIONS = {'td','xe','xu','xr','ts','bd','bp','bn','ba','bs','bm','bo','ve','vc','ec','pr','tr','sa','sv','po','on','of'}
+TICKET_ACTIONS.update({'lv','lr','lq'})
 REVIEW_ACTIONS = {'xa':'portal_data_review','xg':'portal_fill_review','xs':'portal_fill_review',
     'er':'email_approval','se':'email_approval','no':'email_approval','wa':'portal_permission','wx':'portal_permission'}
+REVIEW_ACTIONS.update({'ls':'portal_send_review','lm':'portal_transaction','la':'portal_field_photo','lu':'portal_field_photo'})
 TRANSIENT = ('last_ticket_id','browser_ticket_id','last_document_id','portal_upload_ticket','ticket_input','browser_choice',
-    'expected_upload','replace_profile_id','profile_input')
+    'expected_upload','replace_profile_id','profile_input','portal_field_input')
 
 
 class TelegramWorkflow:
@@ -65,6 +67,10 @@ class TelegramWorkflow:
     def stage(self, ticket):
         if ticket['status'] in TERMINAL:
             return 'Completada: factura recibida y validada.'
+        if ticket.get('portal_delivery'):
+            if ticket['portal_delivery']['state']=='unknown':return 'Envío al portal sin confirmar. No lo repitas.'
+            if ticket.get('validation'):return 'Factura recibida y cotejada. Falta vigencia SAT.'
+            return 'Solicitud enviada al portal. Esperando XML y PDF.'
         if ticket.get('delivery'):
             return 'Solicitud enviada. Esperando la factura.'
         if (ticket.get('portal_fill') or {}).get('state')=='complete':
@@ -120,7 +126,8 @@ class TelegramWorkflow:
             return None
 
     def uncertain(self, owner, ticket):
-        return any(item['ticket_id'] == ticket['id'] and item['_state'] in {'claimed','unknown'}
+        tx=self.billing.portal_submission.current(owner,ticket['id'])
+        return bool(tx and tx['state']=='unknown') or any(item['ticket_id'] == ticket['id'] and item['_state'] in {'claimed','unknown'}
             for item in self.store.list('email_approval', owner))
 
     async def menu(self, owner, chat_id):
@@ -179,9 +186,9 @@ class TelegramWorkflow:
             if choice['kind'] != 'stop':
                 buttons.append(('Pausar anterior y '+next_label, key+'pause'))
             if active and not self.uncertain(owner, active):
-                label = 'Detener seguimiento' if active.get('delivery') else 'Cancelar solicitud'
+                label = 'Detener seguimiento' if active.get('delivery') or active.get('portal_delivery') else 'Cancelar solicitud'
                 buttons.append((label + (' y '+next_label if choice['kind']!='stop' else ''), key+'cancel'))
-            if active and active.get('delivery'):
+            if active and (active.get('delivery') or active.get('portal_delivery')):
                 text += '\nLo ya enviado al comercio no se anula.'
             elif active and self.uncertain(owner, active):
                 text += '\nEnvío sin confirmar: consulta su estado antes de cancelarlo.'
@@ -213,7 +220,7 @@ class TelegramWorkflow:
         if cancel:
             if self.uncertain(owner, ticket):
                 raise AppError(409, 'workflow_uncertain', 'Envío sin confirmar. Revisa su estado; puedes pausarlo.')
-            for kind in ('email_approval','portal_permission','portal_data_review','portal_fill_review'):
+            for kind in ('email_approval','portal_permission','portal_data_review','portal_fill_review','portal_send_review','portal_field_photo'):
                 for review in self.store.list(kind, owner):
                     if review.get('ticket_id') == ticket['id'] and review['_state']=='pending':
                         self.store.update(kind, owner, review['id'], review, state='rejected')

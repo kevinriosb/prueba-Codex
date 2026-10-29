@@ -145,7 +145,14 @@ class PublicFetcher:
         async with asyncio.timeout(FETCH_TIMEOUT):
             return await self._fetch_limited(url,headers,on_bytes=on_bytes)
 
-    async def _fetch_limited(self,url,headers,*,on_bytes=None):
+    async def request_limited(self,method,url,headers,body=None,*,on_bytes=None):
+        """Transporte privado: solo lo llama un paso de formulario autorizado."""
+        if method not in {'GET','POST'} or body is not None and len(body)>131072:
+            raise BrowserError('browser_submission','Petición del formulario no admitida.',422)
+        async with asyncio.timeout(FETCH_TIMEOUT):
+            return await self._fetch_limited(url,headers,on_bytes=on_bytes,method=method,body=body,private=True)
+
+    async def _fetch_limited(self,url,headers,*,on_bytes=None,method='GET',body=None,private=False):
         uri=urlsplit(https_url(url))
         addresses=await self.resolver(uri.hostname)
         if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
@@ -158,7 +165,12 @@ class PublicFetcher:
         for name in ('accept-language','origin','referer','sec-fetch-site','sec-fetch-mode','sec-fetch-dest'):
             if name in headers:
                 forwarded[name]=headers[name]
-        async with self.client.stream('GET',pinned,headers=forwarded,
+        if method=='POST' and 'content-type' in headers:
+            forwarded['content-type']=headers['content-type']
+        if private:
+            for name in ('authorization','x-csrf-token','x-xsrf-token','requestverificationtoken','x-requested-with'):
+                if name in headers:forwarded[name]=headers[name]
+        async with self.client.stream(method,pinned,headers=forwarded,**({'content':body} if body is not None else {}),
                 extensions={'sni_hostname':uri.hostname},follow_redirects=False) as response:
             chunks,size=[],0
             async for chunk in response.aiter_bytes(chunk_size=65536):

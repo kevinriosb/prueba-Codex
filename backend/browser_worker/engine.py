@@ -129,6 +129,8 @@ class Session:
     captcha:bool=False
     login_required:bool=False
     request_pages:dict=field(default_factory=dict)
+    transaction:dict=field(default_factory=dict)
+    public_resources:set=field(default_factory=set)
 
 
 class BrowserManager:
@@ -166,6 +168,8 @@ class BrowserManager:
         session.closed=True
         session.cache.clear()
         session.request_pages.clear()
+        getattr(session,'transaction',{}).clear()
+        getattr(session,'public_resources',set()).clear()
         await session.context.close()
 
     async def close(self):
@@ -186,6 +190,9 @@ class BrowserManager:
         if first_error is not None:raise first_error
 
     async def _route(self,session,route):
+        if session.transaction.get('network'):
+            from .submission import transaction_route
+            return await transaction_route(self,session,route)
         request=route.request
         main_document=False
         page=session.resources
@@ -250,6 +257,9 @@ class BrowserManager:
                         raise BrowserError('browser_response_size','Archivo demasiado grande.')
                 if not cached and cacheable:
                     session.cache.put(url,forwarded,status,headers,body)
+                if cacheable and status==200:
+                    session.public_resources.add(url)
+                    session.public_resources.add(request.url)
                 if status>=400:
                     self._issue(page,request.resource_type,url,'http_error',status=status)
                     if main_document:
@@ -459,8 +469,8 @@ class BrowserManager:
         async with session.lock:
             return await self._observe(identifier,session)
 
-    async def _observe(self,identifier,session):
-        if session.private:
+    async def _observe(self,identifier,session,*,transaction=False):
+        if session.private and not transaction:
             raise BrowserError('browser_private','El llenado es privado; no se devuelve al modelo ni a la navegación pública.')
         session.observation=secrets.token_hex(4)
         session.actions={}
@@ -566,7 +576,7 @@ class BrowserManager:
             'requests_remaining':max(0,(ROUTE_REQUEST_LIMIT if session.public_route else PAGE_REQUEST_LIMIT)-session.requests),
             'page_requests_remaining':max(0,PAGE_REQUEST_LIMIT-session.page_requests),
             'steps_remaining':max(0,self.max_steps-session.steps),
-            'public_only':True,'purchase_validated':False,'submitted':False,
+            'public_only':not session.private,'purchase_validated':False,'submitted':False,
             'diagnostics':{'requests':session.requests,'page_requests':session.resources.requests,
                 'transferred_bytes':session.size,'page_bytes':session.resources.size,
                 'cache_hits':session.cache_hits,'cache_bytes':session.cache.size,'issues':list(session.resources.issues)}}
@@ -659,3 +669,24 @@ class BrowserManager:
 
     async def filled(self,owner,identifier):
         return await fill_status(self,owner,identifier)
+
+    async def transaction_view(self,owner,identifier):
+        from .submission import transaction_view
+        session=await self.get(owner,identifier)
+        async with session.lock:
+            return await transaction_view(self,identifier,session)
+
+    async def transaction_send(self,owner,identifier,**payload):
+        from .submission import transaction_send
+        return await transaction_send(self,owner,identifier,**payload)
+
+    async def transaction_file(self,owner,identifier,reference):
+        session=await self.get(owner,identifier)
+        async with session.lock:
+            item=session.transaction.get('files',{}).get(reference)
+            if not item:raise BrowserError('browser_session','Archivo no disponible.',404)
+            return item
+
+    async def transaction_status(self,owner,identifier,operation_id):
+        from .submission import transaction_status
+        return await transaction_status(self,owner,identifier,operation_id)

@@ -25,6 +25,7 @@ from .portal_permissions import PortalPermissions,PortalPermissionRequired,porta
 from .portal_memory import PortalMemory,public_form_ready,stable_form_bookmark
 from .store import BillingStore
 from .portal_preparation import PortalPreparation
+from .portal_submission import PortalSubmission
 
 
 def public(record):
@@ -50,6 +51,7 @@ class BillingService:
             self.portal_permissions=PortalPermissions(self)
             self.portal_memory=PortalMemory(self)
             self.portal_preparation=PortalPreparation(self)
+            self.portal_submission=PortalSubmission(self)
             self.contacts=official_contacts(settings.billing_verified_contacts_json)
             self.store.purge()
 
@@ -420,6 +422,9 @@ class BillingService:
         self.require_enabled()
         ticket=self.resolve_ticket(owner,ticket_id)
         ticket_id=ticket['id']
+        tx=self.portal_submission.current(owner,ticket_id)
+        if tx and tx.get('private'):
+            raise AppError(409,'portal_private_step','Continúa el formulario privado desde /estado. No se reiniciará su sesión.')
         if not ticket.get('billing_url'):
             raise AppError(409,'billing_portal','Primero se necesita una página de facturación identificada.')
         self.portal_permissions.require(owner,ticket)
@@ -568,6 +573,9 @@ class BillingService:
     def retry_ticket_after_update(self,owner,document_id):
         source=self.document(owner,document_id)
         ticket=self.store.get('ticket',owner,source.get('ticket_id',''))
+        tx=self.portal_submission.current(owner,ticket['id'])
+        if tx and (tx.get('private') or tx['state'] in {'unknown','submitted'}):
+            raise AppError(409,'analysis_retry','El formulario del portal está en curso. Continúa desde /estado.')
         needs_reference=bool(set(pending_receipt_fields(ticket)) & {'account_number','reference_number','billing_code','web_id','toll_station','lane','purchase_time'}) or bool(browser_missing_fields(ticket))
         if source['purpose']!='ticket' or source.get('superseded_by') or ticket.get('delivery') or (ticket['status'] not in {Status.ERROR,Status.REQUIERE_INTERVENCION} and not needs_reference):
             raise AppError(409,'analysis_retry','Este archivo ya se procesó. Consulta /tickets.')
@@ -585,6 +593,9 @@ class BillingService:
 
     def complete_ticket_field(self,owner,ticket_id,field,value,*,correction=False):
         ticket=self.store.get('ticket',owner,ticket_id)
+        tx=self.portal_submission.current(owner,ticket_id)
+        if tx and tx['state'] in {'unknown','submitted'}:
+            raise AppError(409,'already_requested','Hay un envío al portal registrado. Revisa su estado antes de cambiar los datos.')
         try:
             document=self.document(owner,ticket['document_id'])
             analyzed=(document.get('extracted') or {}).get('is_ticket') or (document.get('portal_replacement') and ticket.get('is_ticket') is True)
@@ -658,6 +669,9 @@ class BillingService:
     def prepare_invoice_request_email(self,owner,ticket_id,*,include_csf=False,authorize_csf=False,user_requested_csf=False):
         self.require_enabled()
         ticket=self.store.get('ticket',owner,ticket_id)
+        tx=self.portal_submission.current(owner,ticket_id)
+        if ticket.get('portal_delivery') or tx and tx['state'] in {'unknown','submitted'}:
+            raise AppError(409,'already_requested','Hay un envío al portal registrado. Consulta su estado antes de usar otro canal.')
         profile=self.store.get('profile',owner,ticket['profile_id'])
         if self.detect_billing_channels(owner,ticket_id)['method']=='portal':
             raise AppError(409,'portal_has_priority','Existe un portal compatible autorizado; utiliza primero ese canal.')
@@ -744,6 +758,9 @@ Saludos.'''
             raise AppError(409,'email_confirmation','Confirma expresamente el destinatario, los datos, el mensaje y los adjuntos.')
         approval=self.store.get('email_approval',owner,approval_id)
         ticket=self.store.get('ticket',owner,approval['ticket_id'])
+        tx=self.portal_submission.current(owner,ticket['id'])
+        if ticket.get('portal_delivery') or tx and tx['state'] in {'unknown','submitted'}:
+            raise AppError(409,'already_requested','Hay un envío al portal registrado. No se duplicará por correo.')
         profile=self.store.get('profile',owner,approval['profile_id'])
         if approval.get('purchase_fingerprint') and approval['purchase_fingerprint']!=self._purchase_fingerprint(ticket):
             raise AppError(409,'approval_changed','Los datos de compra cambiaron. Revisa un correo nuevo.')
@@ -973,7 +990,8 @@ Saludos.'''
     def delete_profile(self,owner,profile_id):
         profile=self.store.get('profile',owner,profile_id)
         related={ticket['id'] for ticket in self.store.list('ticket',owner) if ticket['profile_id']==profile_id}
-        if any(record['ticket_id'] in related and record['_state']=='claimed' for record in self.store.list('email_approval',owner)):
+        if any(record['ticket_id'] in related and record['_state']=='claimed'
+                for kind in ('email_approval','portal_send_review') for record in self.store.list(kind,owner)):
             raise AppError(409,'send_in_progress','Espera a que termine el envío antes de eliminar el perfil.')
         for ticket in self.store.list('ticket',owner):
             if ticket['profile_id']==profile_id:
@@ -991,7 +1009,10 @@ Saludos.'''
 
     def delete_ticket(self,owner,ticket_id):
         ticket=self.store.get('ticket',owner,ticket_id)
-        for kind in ('email_approval','mail_reply','invoice_uuid','portal_permission','portal_grant','browser_review','portal_data','portal_data_review','portal_fill_review'):
+        if any(record['ticket_id']==ticket_id and record['_state']=='claimed'
+                for record in self.store.list('portal_send_review',owner)):
+            raise AppError(409,'send_in_progress','Espera a que termine el envío antes de eliminar el ticket.')
+        for kind in ('email_approval','mail_reply','invoice_uuid','portal_permission','portal_grant','browser_review','portal_data','portal_data_review','portal_fill_review','portal_transaction','portal_send_review','portal_field_photo'):
             for record in self.store.list(kind,owner):
                 if record['ticket_id']==ticket_id:
                     if kind=='email_approval' and record['_state']=='claimed':
