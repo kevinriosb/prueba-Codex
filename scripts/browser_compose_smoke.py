@@ -52,6 +52,13 @@ def main():
             if result.returncode:
                 raise RuntimeError('Falló la comunicación privada de prueba; no se muestran credenciales.')
             print(result.stdout.strip())
+            original_browser=compose('ps','-q','browser')
+            compose('up','-d','--no-build','--no-deps','--force-recreate','--wait','--wait-timeout','120','agent')
+            assert compose('ps','-q','browser')==original_browser
+            repeated=subprocess.run(command+['exec','-T','agent','python','-'],input=PROBE,text=True,capture_output=True)
+            if repeated.returncode:
+                raise RuntimeError('Falló la comunicación después de recrear solo el agente.')
+            print('PASS: agente recreado conservando el mismo navegador y la comunicación privada.')
             diagnostic=(root/'scripts/check_browser.py').read_text()
             internal=subprocess.run(command+['exec','-T','agent','python','-','--component','connection'],
                 input=diagnostic,text=True,capture_output=True)

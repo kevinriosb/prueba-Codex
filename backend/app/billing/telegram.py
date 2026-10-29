@@ -232,9 +232,9 @@ class TelegramBridge:
             profile=self.billing.store.get('profile',owner,profile_id)
             profile_text=' Perfil: '+profile['name']+'.'
             if hasattr(self.billing.extractor,'extract_routing'):
-                current['analysis_scope_offered']='portal-fields-v1'
+                current['analysis_scope_offered']='portal-fields-v2'
                 self.billing.store.update('document',owner,current['id'],current)
-                await self.client.send(chat_id,'Analizaré este ticket con OpenAI: primero portal, luego campos requeridos. Dos lecturas; usa tokens. Sin solicitar factura.',
+                await self.client.send(chat_id,'Leeré este ticket con OpenAI: portal y campos necesarios. Cada lectura usa tokens; no solicita factura.',
                     [('Autorizar análisis','an:'+current['id'])])
                 return
         await self.client.send(chat_id,label+' recibido.'+profile_text+
@@ -493,7 +493,7 @@ class TelegramBridge:
         self._save_state(owner,state)
         await self._browser(owner,chat_id,ticket['id'])
 
-    async def _browser(self,owner,chat_id,identifier):
+    async def _browser(self,owner,chat_id,identifier,_alternative_depth=0):
         ticket=self.billing.resolve_ticket(owner,identifier)
         try:
             record=self.billing.browser_review(owner,ticket['id'])
@@ -518,6 +518,11 @@ class TelegramBridge:
                         await self._ticket(owner,chat_id,updated['id'])
                         return
                     ticket=updated
+                if _alternative_depth<2:
+                    alternate=await preparation.advance_alternative(owner,ticket['id'],snapshot)
+                    if alternate:
+                        await self._browser(owner,chat_id,ticket['id'],_alternative_depth+1)
+                        return
             except AppError as error:
                 if error.code not in {'portal_source_expired','billing_daily_limit','billing_busy','extraction_attempted',
                         'portal_not_ticket','portal_source_mismatch','portal_changed','extraction_auth','extraction_quota','extraction_provider','extraction_timeout','extraction_format','extraction_failure'}:
@@ -525,6 +530,7 @@ class TelegramBridge:
                 ticket['portal_data_error']={'code':error.code,'message':error.message}
         profile=self.billing.store.get('profile',owner,ticket['profile_id'])
         form_values,form_missing=preparation.plan(owner,ticket,snapshot) if ready else ([],[])
+        active_fields=preparation.active_fields(ticket,snapshot) if ready else snapshot['fields']
         prepared_values={item['reference']:item['value'] for item in form_values}
         try:
             proposal=self.billing.portal_memory.propose(owner,ticket['id'])
@@ -539,7 +545,7 @@ class TelegramBridge:
             text+='\nEl portal requiere iniciar sesión. Hace falta intervención humana.'
         elif snapshot['fields']:
             text+='\nDatos para el portal:' if ready else '\nCampos visibles; puede haber alternativas:'
-            for item in snapshot['fields']:
+            for item in active_fields:
                 key=item.get('key')
                 value=prepared_values.get(item.get('reference')) or ticket.get(key) or profile.get(key) or 'Pendiente de revisar'
                 text+='\n'+item['label']+': '+str(value)
@@ -579,8 +585,7 @@ class TelegramBridge:
         if needs_resources:
             text+='\n¿Permites cargar estos recursos del sitio?\n'+'\n'.join(pending)
         if ready:
-            missing_labels=list(dict.fromkeys(item['label'].rstrip('* ').strip() for item in snapshot['fields']
-                if item['required'] and not (ticket.get(item.get('key')) or profile.get(item.get('key')))))
+            missing_labels=list(dict.fromkeys(label.rstrip('* ').strip() for label in form_missing))
             if missing_labels:
                 text+='\nFalta: '+', '.join(missing_labels)+'.'
             text+='\nNo se solicitó la factura.'
@@ -595,7 +600,8 @@ class TelegramBridge:
                 if fill_review:
                     text+='\nLlenar copia estos datos al navegador, con la red cerrada y sin enviar.'
                     buttons.append(('Llenar formulario','xg:'+fill_review['id']))
-            if hasattr(self.billing.extractor,'extract_fields') and any(not ticket.get(item['key']) for item in preparation.receipt_fields(snapshot)):
+            if hasattr(self.billing.extractor,'extract_fields') and (preparation.replacement_pending(owner,ticket)
+                    or any(not ticket.get(item['key']) for item in preparation.receipt_fields(snapshot,ticket))):
                 try:
                     analysis=preparation.analysis_request(owner,ticket['id'],snapshot)
                 except AppError as error:
@@ -610,9 +616,11 @@ class TelegramBridge:
             correctable={'web_id':'Web ID','store_number':'Tienda','toll_station':'caseta','lane':'carril','purchase_time':'hora',
                 'account_number':'Cuenta','folio':'ticket/folio','reference_number':'referencia','billing_code':'código',
                 'purchase_date':'fecha','total':'importe'}
-            keys=list(dict.fromkeys(item.get('key') for item in snapshot['fields']))
+            keys=list(dict.fromkeys(item.get('key') for item in active_fields))
             buttons.extend(('Corregir '+correctable[key],'xe:'+ticket['id']+':'+key)
                 for key in keys if key in correctable and ticket.get(key))
+            buttons.extend(('Usar alternativa: '+action['label'][:40],'ba:'+ticket['id']+':'+snapshot['observation_id']+':'+action['reference'])
+                for action in preparation.alternatives(ticket,snapshot)[:4])
         if snapshot['network_blocked'] and not snapshot['captcha'] and not snapshot.get('login_required') and snapshot.get('block_reason') in RESUMABLE_LIMITS and self.billing.portal_resume_url(owner,ticket):
             text+='\nPuedes retomar desde esta página.'
             buttons.append(('Retomar desde esta página','bn:'+ticket['id']))
@@ -859,6 +867,9 @@ class TelegramBridge:
             state['portal_upload_ticket']=ticket['id']
             self._save_state(owner,state)
             await self.client.send(chat_id,'Envía otra foto o PDF de este mismo ticket. Tu perfil se conserva.')
+        elif prefix=='xr':
+            await self.billing.portal_preparation.current(owner,identifier,refresh=True)
+            await self._browser(owner,chat_id,identifier)
         elif prefix=='xg':
             try:
                 review=await self.billing.portal_preparation.fill_approved(owner,identifier)
@@ -867,6 +878,9 @@ class TelegramBridge:
                     saved=self.billing.store.get('portal_fill_review',owner,identifier)
                 except AppError:
                     raise error
+                if saved['_state']=='rejected':
+                    await self.client.send(chat_id,error.message,[('Actualizar formulario','xr:'+saved['ticket_id']),('Ver ticket','ts:'+saved['ticket_id'])])
+                    return
                 if saved['_state']!='unknown':raise
                 await self.client.send(chat_id,'No se confirmó el llenado. Consulta su estado antes de repetir.',
                     [('Ver estado del llenado','xs:'+identifier)])
@@ -881,6 +895,10 @@ class TelegramBridge:
                 review=self.billing.store.get('portal_fill_review',owner,identifier)
                 await self.client.send(chat_id,'La sesión de llenado venció. Los datos se conservan; no se solicitó la factura.',
                     [('Revisar formulario','bn:'+review['ticket_id'])])
+                return
+            if result.get('expired'):
+                await self.client.send(chat_id,'La revisión del llenado venció. Tus datos se conservan; no se solicitó la factura.',
+                    [('Revisar formulario','xr:'+result['ticket_id'])])
                 return
             await self.client.send(chat_id,'Formulario preparado; sesión activa '+str(result['expires_in'])+' s. Sin envío al comercio.')
         elif prefix=='ts':
@@ -933,8 +951,8 @@ class TelegramBridge:
                     raise
                 await self.profiles.show_draft(owner,chat_id,draft['id'])
             else:
-                if document.get('analysis_scope_offered')=='portal-fields-v1':
-                    document['analysis_scope']='portal-fields-v1'
+                if document.get('analysis_scope_offered') in {'portal-fields-v1','portal-fields-v2'}:
+                    document['analysis_scope']=document['analysis_scope_offered']
                     self.billing.store.update('document',owner,identifier,document)
                 ticket=await self.billing.analyze_ticket(owner,identifier,consent=True)
                 state=self._state(owner)

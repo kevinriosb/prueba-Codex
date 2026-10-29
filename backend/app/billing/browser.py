@@ -126,7 +126,8 @@ class PortalBrowserClient:
                         'browser_steps':'Se alcanzó el límite de navegación. Revisa los campos encontrados.',
                         'browser_session':'La revisión venció. Inicia otra revisión.',
                         'browser_navigation':'No se pudo abrir la página pública. Consulta el diagnóstico.',
-                        'browser_fill':'No se completó el llenado; no se envió el formulario. Revisa los datos y el estado.',
+                        'browser_fill':('Un campo no admite el dato revisado. Corrígelo antes de llenar.' if response.status_code==422 else
+                            'No se completó el llenado; no se envió el formulario. Revisa los datos y el estado.'),
                         'browser_private':'La sesión contiene datos privados; no admite más navegación pública.',
                         'browser_intervention':'Se bloqueó una operación de la página. Requiere intervención humana.',
                         'browser_busy':'El navegador está ocupado. Intenta más tarde.'}[data['code']])

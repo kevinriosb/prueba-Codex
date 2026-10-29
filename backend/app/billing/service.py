@@ -205,7 +205,7 @@ class BillingService:
             document.update(analysis_consent=True,extraction_version=EXTRACTION_VERSION,analysis_error=None)
             document=self.store.update('document',owner,identifier,document)
             try:
-                routing=purpose=='ticket' and document.get('analysis_scope')=='portal-fields-v1' and hasattr(self.extractor,'extract_routing')
+                routing=purpose=='ticket' and document.get('analysis_scope') in {'portal-fields-v1','portal-fields-v2'} and hasattr(self.extractor,'extract_routing')
                 if routing:
                     result=await self.extractor.extract_routing(document['mime'],base64.b64decode(document['data']))
                     document['analysis_stage']='routing'
@@ -423,6 +423,8 @@ class BillingService:
         if not ticket.get('billing_url'):
             raise AppError(409,'billing_portal','Primero se necesita una página de facturación identificada.')
         self.portal_permissions.require(owner,ticket)
+        starting_scope=self.portal_permissions.scope(ticket)
+        selected_action=None
         route_options={'public_route':True} if self.portal_permissions.route_allowed(owner,ticket) else {}
         lookup=self.store.digest('browser:'+ticket_id)
         previous=self.store.find('browser_review',owner,lookup)
@@ -471,6 +473,7 @@ class BillingService:
                 if not previous or previous['snapshot']['observation_id']!=observation_id or reference not in {item['reference'] for item in previous['snapshot']['actions']}:
                     raise AppError(409,'browser_stale','La página cambió. Actualiza la revisión.')
                 action=next(item for item in previous['snapshot']['actions'] if item['reference']==reference)
+                selected_action=action
                 if action.get('brand'):
                     brand_label=action['label']
                 if action.get('permission_origin'):
@@ -496,13 +499,19 @@ class BillingService:
             if await discard_exhausted(snapshot):
                 snapshot=await open_current()
         except AppError as error:
+            ticket=self.resolve_ticket(owner,ticket_id)
             ticket['portal_browser_error']={'code':error.code,'message':error.message}
             self.store.update('ticket',owner,ticket_id,ticket)
             if error.code=='browser_session' and previous:
                 self.store.delete('browser_review',owner,previous['id'])
             raise
+        ticket=self.resolve_ticket(owner,ticket_id)
+        if self.portal_permissions.scope(ticket)!=starting_scope:
+            raise AppError(409,'portal_changed','Cambió el perfil o portal durante la revisión. Revisa el ticket.')
+        if selected_action:
+            self.portal_preparation.bind_alternative(ticket,previous['snapshot'],snapshot,selected_action)
         fields=[]
-        for item in snapshot['fields']:
+        for item in self.portal_preparation.active_fields(ticket,snapshot):
             fields.append({'key':item.get('key'),'label':item['label'],'required':item['required'],
                 'matched':bool(ticket.get(item.get('key'))),'options':item['options']})
         ticket['portal_browser']={'page':snapshot['page'],'fields':fields,'checked_at':time.time(),
@@ -604,6 +613,7 @@ class BillingService:
         if not value:
             raise AppError(422,'ticket_field','El dato no tiene un formato válido.')
         ticket[field]=value
+        ticket['portal_data_error']=None
         if ticket.get('portal_inspection'):
             profile=self.store.get('profile',owner,ticket['profile_id'])
             ticket['portal_inspection']=portal_plan(ticket|profile,ticket['portal_inspection'])

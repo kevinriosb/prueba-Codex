@@ -12,12 +12,20 @@ from .models import TicketExtraction,Status
 from .portal_memory import public_form_ready
 from .portal_navigation import next_public_action
 from .receipt import missing_receipt_fields,purchase_reference
+from .portal_inspection import field_key
 
 
 RECEIPT_KEYS={'folio','account_number','reference_number','billing_code','web_id','store_number',
     'toll_station','lane','purchase_date','purchase_time','total','issuer_rfc'}
 PROFILE_KEYS={'rfc','name','postal_code','fiscal_regime','cfdi_use','email'}
 IDENTITY_KEYS={'merchant','issuer_rfc','purchase_date','folio','total','currency'}
+
+
+def alternative_key(label):
+    match=re.search(r'\b(?:no (?:cuento|cuenta|tengo|tiene|dispongo|dispone)|sin|without|don.?t have)\b(.*)',label,re.I)
+    if not match:return None
+    missing=re.split(r'[,;:]|\b(?:ingres\w*|enter|captur\w*|utili[cz]\w*|complete|registra\w*)\b',match.group(1),maxsplit=1,flags=re.I)[0]
+    return field_key(missing)
 
 
 def form_shape(snapshot):
@@ -34,9 +42,12 @@ def portal_value(field,value):
         hint=(field['label']+' '+field.get('placeholder','')).casefold()
         try:
             parsed=datetime.strptime(value,'%Y-%m-%d')
-            if re.search(r'dd\s*[/.-]\s*mm\s*[/.-]\s*(?:aaaa|yyyy)',hint):
-                separator='/' if '/' in hint else '-' if '-' in hint else '.'
-                value=parsed.strftime('%d'+separator+'%m'+separator+'%Y')
+            formats=[(r'dd\s*([/.-])\s*mm\s*\1\s*(?:aaaa|yyyy)',('%d','%m','%Y')),
+                (r'mm\s*([/.-])\s*dd\s*\1\s*(?:aaaa|yyyy)',('%m','%d','%Y')),
+                (r'(?:aaaa|yyyy)\s*([/.-])\s*mm\s*\1\s*dd',('%Y','%m','%d'))]
+            choices={parsed.strftime(match.group(1).join(parts)) for pattern,parts in formats for match in re.finditer(pattern,hint)}
+            if len(choices)>1:return None
+            if choices:value=choices.pop()
         except ValueError:
             return None
     return value or None
@@ -71,8 +82,50 @@ class PortalPreparation:
             record=await self.billing.browse_portal(owner,ticket['id'],observation_id=record['snapshot']['observation_id'],reference=action['reference'])
         return record
 
-    def receipt_fields(self,snapshot):
-        return [item for item in snapshot['fields'] if item.get('key') in RECEIPT_KEYS]
+    def active_fields(self,ticket,snapshot):
+        selected=ticket.get('portal_alternative') or {}
+        valid=(selected.get('document_id')==ticket['document_id'] and selected.get('scope')==self.billing.portal_permissions.scope(ticket)
+            and selected.get('signature')==self.shape_key(snapshot))
+        return [item for item in snapshot['fields'] if not valid or item.get('key')!=selected.get('replaced_key')]
+
+    def receipt_fields(self,snapshot,ticket=None):
+        fields=self.active_fields(ticket,snapshot) if ticket else snapshot['fields']
+        return [item for item in fields if item.get('key') in RECEIPT_KEYS]
+
+    def replacement_pending(self,owner,ticket):
+        if ticket.get('portal_source_pending'):return True
+        if ticket.get('portal_data_document_id')==ticket['document_id']:return False
+        try:document=self.billing.document(owner,ticket['document_id'])
+        except AppError as error:
+            if error.status==404:return False
+            raise
+        return document.get('portal_replacement') is True
+
+    async def advance_alternative(self,owner,ticket_id,snapshot):
+        ticket=self.billing.resolve_ticket(owner,ticket_id)
+        if (not public_form_ready(snapshot) or ticket.get('portal_data_error')
+                or ticket.get('portal_data_document_id')!=ticket['document_id']):return None
+        choices=self.alternatives(ticket,snapshot)
+        if len(choices)!=1:return None
+        action=choices[0]
+        attempt=self.store.digest(ticket['document_id']+snapshot['session_id']+self.shape_key(snapshot)+action['label'])
+        attempts=ticket.get('portal_alternative_attempts',[])
+        if attempt in attempts or len(attempts)>=8:return None
+        ticket['portal_alternative_attempts']=[*attempts,attempt]
+        self.store.update('ticket',owner,ticket['id'],ticket,version=ticket['_version'])
+        return await self.billing.browse_portal(owner,ticket['id'],observation_id=snapshot['observation_id'],reference=action['reference'])
+
+    def alternatives(self,ticket,snapshot):
+        if not public_form_ready(snapshot):return []
+        missing={item['key'] for item in self.receipt_fields(snapshot,ticket) if not ticket.get(item['key'])}
+        return [item for item in snapshot['actions'] if item['kind'] in {'expand','link'} and alternative_key(item['label']) in missing]
+
+    def bind_alternative(self,ticket,previous,current,action):
+        if action not in self.alternatives(ticket,previous):return
+        key=alternative_key(action['label'])
+        if public_form_ready(current) and any(item.get('key') in RECEIPT_KEYS-{key} for item in current['fields']):
+            ticket['portal_alternative']={'document_id':ticket['document_id'],'scope':self.billing.portal_permissions.scope(ticket),
+                'signature':self.shape_key(current),'replaced_key':key,'label':action['label']}
 
     def source(self,owner,ticket):
         try:
@@ -87,7 +140,7 @@ class PortalPreparation:
     def analysis_request(self,owner,ticket_id,snapshot):
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         document=self.source(owner,ticket)
-        fields=self.receipt_fields(snapshot)
+        fields=self.receipt_fields(snapshot,ticket)
         signature=self.shape_key(snapshot)
         # Una lectura fallida o parcial no debe ofrecer otro botón que cobre
         # el mismo archivo y los mismos campos. Se completa el dato o reenvía foto.
@@ -116,7 +169,8 @@ class PortalPreparation:
     async def read_fields(self,owner,ticket_id,snapshot,*,consent=False):
         if not public_form_ready(snapshot):
             raise AppError(409,'portal_form','Primero encuentra un formulario público utilizable.')
-        return await self._read(owner,ticket_id,self.receipt_fields(snapshot),self.shape_key(snapshot),consent=consent)
+        ticket=self.billing.resolve_ticket(owner,ticket_id)
+        return await self._read(owner,ticket_id,self.receipt_fields(snapshot,ticket),self.shape_key(snapshot),consent=consent)
 
     async def read_for_email(self,owner,ticket_id):
         ticket=self.billing.resolve_ticket(owner,ticket_id)
@@ -131,13 +185,22 @@ class PortalPreparation:
         if not fields:return False
         if not consent and ticket.get('portal_data_signature')==signature and ticket.get('portal_data_document_id')==ticket['document_id']:
             return False
+        if (not consent and ticket.get('portal_data_document_id')==ticket['document_id']
+                and all(ticket.get(item['key']) for item in fields)):
+            return False
+        if not consent and all(ticket.get(item['key']) and item['key'] in ticket.get('fields_completed_by_user',[]) for item in fields):
+            return False
         if not consent and not ticket.get('portal_driven') and all(ticket.get(item['key']) for item in fields):
             return False
         document=self.source(owner,ticket)
-        if not consent and document.get('analysis_scope')!='portal-fields-v1':return False
+        scope=document.get('analysis_scope')
+        if not consent and scope not in {'portal-fields-v1','portal-fields-v2'}:return False
         lookup=self.store.digest('portal-data:'+ticket['id']+document['sha256']+signature)
         previous=self.store.find('portal_data',owner,lookup)
         if previous:return False
+        if not consent and scope=='portal-fields-v1' and (ticket.get('portal_data_document_id')==document['id']
+                or any(record.get('ticket_id')==ticket['id'] and record.get('document_id') in {None,document['id']} for record in self.store.list('portal_data',owner))):
+            return False  # El consentimiento anterior prometía dos lecturas.
         if self.billing.analysis_lock.locked():
             raise AppError(429,'billing_busy','Hay otro documento en análisis. Espera unos segundos.')
         async with self.billing.analysis_lock:
@@ -150,7 +213,7 @@ class PortalPreparation:
                 try:conn.execute('INSERT INTO billing_extractions VALUES(?,?,?,?)',(owner,day,attempt,'started'))
                 except sqlite3.IntegrityError:
                     raise AppError(409,'extraction_attempted','Esta lectura ya tuvo un intento; completa solo los campos pendientes.') from None
-            record=self.store.add('portal_data',owner,{'ticket_id':ticket['id'],'signature':signature,'status':'started'},lookup=lookup)
+            record=self.store.add('portal_data',owner,{'ticket_id':ticket['id'],'document_id':document['id'],'signature':signature,'status':'started'},lookup=lookup)
             try:
                 result=await self.billing.extractor.extract_fields(document['mime'],base64.b64decode(document['data']),fields)
                 data=TicketExtraction.model_validate(result).model_dump()
@@ -173,7 +236,10 @@ class PortalPreparation:
                 for key in allowed-protected:
                     if data.get(key) is not None and not (key=='merchant' and ticket.get('merchant')):
                         ticket[key]=data[key]
-                ticket.update(portal_stage='data_read',portal_data_signature=signature,portal_data_document_id=document['id'],portal_data_error=None)
+                ticket.update(portal_stage='data_read',portal_data_signature=signature,portal_data_document_id=document['id'],portal_data_error=None,portal_source_pending=False)
+                selected=ticket.get('portal_alternative') or {}
+                if selected.get('scope')==self.billing.portal_permissions.scope(ticket) and selected.get('signature')==signature:
+                    selected['document_id']=document['id']
                 ticket=self.billing._status(owner,ticket,Status.DATOS_EXTRAIDOS)
                 # Conservar la identidad semántica para no abrir dos trámites del mismo ticket.
                 if not missing_receipt_fields(ticket):
@@ -208,8 +274,9 @@ class PortalPreparation:
         missing=[];values=[]
         if not public_form_ready(snapshot):return [],['Formulario no disponible']
         if snapshot.get('partial'):return [],['Vista parcial del formulario']
+        if self.replacement_pending(owner,ticket):return [],['Foto reenviada pendiente de verificar']
         missing.extend(snapshot.get('unsupported_required',[]))
-        for item in snapshot['fields']:
+        for item in self.active_fields(ticket,snapshot):
             key=item.get('key')
             raw=profile.get(key) if key in PROFILE_KEYS else ticket.get(key) if key in RECEIPT_KEYS else None
             value=portal_value(item,raw)
@@ -258,17 +325,22 @@ class PortalPreparation:
             result=await self.billing.browser.fill(owner,review['session_id'],review['observation_id'],
                 [{'reference':item['reference'],'value':item['value']} for item in values])
         except Exception as error:
+            if isinstance(error,AppError) and (error.code in {'browser_stale','browser_intervention','browser_private'} or error.code=='browser_fill' and error.status==422):
+                self.store.update('portal_fill_review',owner,identifier,review,state='rejected')
+                raise
             self.store.update('portal_fill_review',owner,identifier,review,state='unknown')
             ticket['portal_fill']={'review_id':identifier,'session_id':review['session_id'],'state':'unknown','submitted':False}
             self.store.update('ticket',owner,ticket['id'],ticket)
             raise error
         if result['observation_id']!=review['observation_id'] or set(result['filled_references'])!={item['reference'] for item in values}:
             self.store.update('portal_fill_review',owner,identifier,review,state='unknown')
+            ticket['portal_fill']={'review_id':identifier,'session_id':review['session_id'],'state':'unknown','submitted':False}
+            self.store.update('ticket',owner,ticket['id'],ticket)
             raise AppError(502,'browser_boundary','No se confirmó el llenado completo. Consulta su estado.')
         review.update(result=result,filled_at=time.time())
         self.store.update('portal_fill_review',owner,identifier,review,state='complete')
         ticket=self.billing.resolve_ticket(owner,ticket['id'])
-        ticket['portal_fill']={'review_id':identifier,'session_id':review['session_id'],'filled_at':time.time(),'submitted':False,'network_frozen':True}
+        ticket['portal_fill']={'review_id':identifier,'session_id':review['session_id'],'state':'complete','filled_at':time.time(),'submitted':False,'network_frozen':True}
         self.store.update('ticket',owner,ticket['id'],ticket)
         self.store.audit(owner,ticket['id'],'portal_filled_offline')
         return review
@@ -290,16 +362,45 @@ class PortalPreparation:
                 'profile_id':ticket['profile_id'],'ticket_id':ticket['id'],'sha256':sha,'analysis_consent':False,
                 'extracted':None,'portal_replacement':True},lookup=lookup,
                 expires=time.time()+self.billing.settings.billing_ticket_retention_hours*3600)
-        ticket.update(document_id=document['id'],portal_data_error=None)
+        signature=ticket.get('portal_data_signature')
+        cached=self.store.find('portal_data',owner,self.store.digest('portal-data:'+ticket['id']+sha+signature)) if signature else None
+        verified=bool(cached and cached.get('status')=='complete')
+        ticket.update(document_id=document['id'],portal_data_error=None,portal_source_pending=not verified)
+        if verified:
+            ticket['portal_data_document_id']=document['id']
+            selected=ticket.get('portal_alternative') or {}
+            if selected.get('scope')==self.billing.portal_permissions.scope(ticket):selected['document_id']=document['id']
         self.store.update('ticket',owner,ticket['id'],ticket)
         return document
 
+    def expired_fill(self,owner,identifier,ticket_id=None):
+        for ticket in self.store.list('ticket',owner):
+            saved=ticket.get('portal_fill') or {}
+            if saved.get('review_id')==identifier:
+                ticket['portal_fill']=saved|{'state':'expired'}
+                self.store.update('ticket',owner,ticket['id'],ticket)
+                return {'expired':True,'ticket_id':ticket['id']}
+        if ticket_id:
+            self.store.get('ticket',owner,ticket_id)
+            return {'expired':True,'ticket_id':ticket_id}
+        raise AppError(404,'billing_not_found','Registro no encontrado, eliminado o caducado.')
+
     async def fill_status(self,owner,identifier):
-        review=self.store.get('portal_fill_review',owner,identifier)
-        result=await self.billing.browser.filled(owner,review['session_id'])
+        try:review=self.store.get('portal_fill_review',owner,identifier)
+        except AppError as error:
+            if error.status!=404:raise
+            return self.expired_fill(owner,identifier)
+        try:result=await self.billing.browser.filled(owner,review['session_id'])
+        except AppError as error:
+            if error.code!='browser_session':raise
+            return self.expired_fill(owner,identifier,review['ticket_id'])
         if (result['observation_id']!=review['observation_id']
                 or set(result['filled_references'])!={item['reference'] for item in review['values']}):
             raise AppError(502,'browser_boundary','El estado no corresponde al llenado autorizado.')
         if review['_state'] in {'unknown','claimed'}:
             self.store.update('portal_fill_review',owner,identifier,review|{'result':result},state='complete')
+            ticket=self.billing.resolve_ticket(owner,review['ticket_id'])
+            ticket['portal_fill']={'review_id':identifier,'session_id':review['session_id'],'state':'complete',
+                'filled_at':time.time(),'submitted':False,'network_frozen':True}
+            self.store.update('ticket',owner,ticket['id'],ticket)
         return result

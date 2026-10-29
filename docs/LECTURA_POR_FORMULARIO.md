@@ -2,7 +2,7 @@
 
 Los tickets nuevos en Telegram se procesan en este orden:
 
-1. La autorización de análisis explica las dos lecturas con OpenAI. La primera
+1. La autorización de análisis explica las lecturas con OpenAI. La primera
    identifica únicamente el comercio y su portal o correo impreso de facturación.
 2. Con el permiso público del ticket, el navegador encuentra el formulario real.
    No se fija una secuencia por dominio o marca.
@@ -17,6 +17,12 @@ Los tickets nuevos en Telegram se procesan en este orden:
    Playwright verifica los controles observados, cierra la red antes del primer
    valor, rellena y confirma qué controles se completaron. No pulsa buscar,
    siguiente ni facturar. No se ha consultado o validado la compra en el comercio.
+
+Si falta un identificador y existe una alternativa pública explícita —por ejemplo
+«No cuento con Web ID»—, se abre esa opción y se observan sus campos. Solo se leen
+de nuevo los datos que aún faltan. Una opción única se puede seguir después de una
+lectura autorizada; ante varias opciones se elige en Telegram. No se convierten
+Folio, Cuenta y Referencia entre sí. Véase el [sanity check completo](SANITY_FACTURACION.md).
 
 El formulario se revisa de nuevo al aprobar el llenado. Si cambian su estructura,
 valores, perfil o archivo, hace falta revisar la propuesta nueva. Las referencias
@@ -35,7 +41,7 @@ la siguiente fase y necesitan implementar sus operaciones y aprobación concreta
 ## Archivos, reintentos y costes
 
 Cada lectura real cuenta contra la misma cuota diaria de documentos, incluidos
-fallos. Las dos lecturas consumen tokens; una reapertura del mismo formulario con
+fallos. Las lecturas consumen tokens; una reapertura del mismo formulario con
 el mismo archivo reutiliza los datos y no repite la lectura. La navegación con
 IA conserva su presupuesto separado de chat existente. No se envía el perfil a
 la IA de extracción; solo el ticket y las etiquetas de los campos de compra.
@@ -48,7 +54,10 @@ Una corrección humana nunca se sobrescribe con una lectura posterior.
 
 Las autorizaciones de análisis anteriores no se amplían: **Leer datos que pide
 el portal** autoriza expresamente la lectura dirigida del archivo que ya existe.
-Las nuevas guardan el alcance versionado `portal-fields-v1`. El correo de
+Las nuevas guardan el alcance versionado `portal-fields-v2`, que explica que puede
+haber lecturas adicionales si una alternativa solicita datos nuevos. Los permisos
+`portal-fields-v1` que prometían dos lecturas conservan ese límite: un formulario
+nuevo pide autorización nativa antes de otra lectura. El correo de
 facturación explícito sin portal mantiene su flujo: se leen los datos mínimos de
 compra y se conserva la revisión y aprobación de correo existente.
 

@@ -672,3 +672,25 @@ portales reales. Esta revisión no realizó llamadas de IA de pago ni despliegue
 Pasaron **515 pruebas de la suite completa** (132,21 segundos), sin fallos ni
 omisiones, y la comprobación de sintaxis y espacios del cambio. No se modificaron
 el worker, las dependencias ni los archivos Docker/Compose en esta revisión.
+
+## Sanity check: portal, fotografía y preparación
+
+El diagnóstico más reciente del VPS llegó al formulario y observó RFC, Ticket,
+Tienda y Fecha. Se conserva ese motor de navegación. La investigación y los
+fallos reproducidos se documentan en [SANITY_FACTURACION.md](SANITY_FACTURACION.md).
+
+La suite original pasó 689 pruebas. Tras corregir foto reenviada, formatos de
+fecha, alternativas públicas y recuperación del llenado pasaron 703 pruebas
+completas (335,28 s). Las últimas regresiones de enlaces alternativos y edición
+simultánea quedaron incluidas en otra ejecución de 79 pruebas pasadas (99,59 s).
+La nueva batería contiene 21 casos, sin peticiones de IA de pago ni envíos reales.
+
+También pasaron sintaxis Python/JavaScript, detección de nombres inválidos,
+consistencia de dependencias fijadas, los recorridos web de conversación y
+facturación con Chromium/iPad y la persistencia cifrada al recrear el contenedor
+del agente con la imagen final. El worker, frontend, dependencias y Compose no
+cambiaron. Las pruebas adicionales Docker del navegador y del stack no pudieron
+ejecutarse: el entorno de desarrollo agotó el disco al crear sus contenedores.
+Se retiraron sus recursos temporales; este bloqueo no es una validación pasada
+ni evidencia de un fallo en el VPS. La prueba de recreación de solo `agent`
+se añadió al smoke de Compose para poder repetirla con espacio disponible.
