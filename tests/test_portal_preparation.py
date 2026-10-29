@@ -15,6 +15,7 @@ from .test_billing import billing_client
 from .test_browser_worker import Pages
 from .test_telegram_agent import create,button,owner
 from .test_telegram_documents import confirm_profile
+from .test_telegram_workflow import choice
 
 
 ROOT='https://merchant.example/'
@@ -182,6 +183,7 @@ def test_expired_photo_is_replaced_on_the_same_ticket_without_requesting_a_csf(b
     assert len(extractor.calls)==2 and 'foto temporal venció' in telegram.messages[-1][1]
     chat(data=button(telegram,'xu'))
     telegram.files['again']=image('red');chat(document='again')
+    chat(data=choice(telegram,'same'))
     assert len(extractor.calls)==2
     chat(data=button(telegram,'xa'))
     tickets=app.state.billing.store.list('ticket',owner(app))
@@ -324,13 +326,16 @@ def test_same_purchase_in_different_photos_links_back_to_the_existing_ticket(bil
     values,browser,model=prepared(billing_client)
     client,app,extractor,mail,sat,telegram,chat=values
     billing=app.state.billing;first=billing.store.list('ticket',owner(app))[0]
-    telegram.files['second']=image('blue');chat(document='second');chat(data=button(telegram,'an'))
+    telegram.files['second']=image('blue');chat(document='second')
+    chat(data=choice(telegram,'pause'));chat(data=button(telegram,'an'))
     second=next(t for t in billing.store.list('ticket',owner(app)) if t['id']!=first['id'])
     record=billing.browser_review(owner(app),first['id'])
     review=billing.portal_permissions.request(owner(app),second['id'],route=True)
     billing.portal_permissions.decide(owner(app),review['id'],approve=True)
     assert client.portal.call(billing.portal_preparation.read_fields,owner(app),second['id'],record['snapshot'])
     assert billing.resolve_ticket(owner(app),second['id'])['id']==first['id']
+    assert app.state.telegram.workflow.active(owner(app))['id']==first['id']
+    assert app.state.telegram._state(owner(app))['active_ticket_id']==first['id']
     assert mail.sent==sat.calls==[]
 
 

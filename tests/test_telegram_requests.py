@@ -9,12 +9,15 @@ from .fake_model import ScriptedModel, answer, call
 from .test_billing import billing_client
 from .test_telegram_agent import button, create, owner
 from .test_telegram_documents import confirm_profile
+from .test_telegram_workflow import choice
 
 
 def receipt(app, telegram, chat, *, color='red', folio='TEST-1'):
     app.state.billing.extractor.ticket['folio'] = folio
     telegram.files[color] = image(color)
     chat(document=color)
+    if any(data.startswith('fw:') for _,data in telegram.messages[-1][2] or []):
+        chat(data=choice(telegram,'pause'))
     analyze = button(telegram, 'an')
     chat(data=analyze)
     return app.state.telegram._state(owner(app))['last_ticket_id'], analyze
@@ -46,6 +49,7 @@ def test_new_picture_same_purchase_opens_original_and_preserves_photo_and_old_bu
     original, _ = receipt(app, telegram, chat)
     telegram.files['copy'] = image('green')
     chat(document='copy')
+    chat(data=choice(telegram,'pause'))
     duplicate_button = button(telegram, 'an')
     uploaded = duplicate_button.split(':')[1]
     chat(data=duplicate_button)
@@ -187,7 +191,7 @@ def test_read_only_status_and_limits_remain_available_when_message_budget_exhaus
     confirm_profile(telegram, chat)
     identifier, _ = receipt(app, telegram, chat)
     while app.state.telegram.requests.usage(owner(app))['updates'] < 10:
-        chat('/start')
+        chat('/documentos')
     response, payload = chat('Calcula 5+5')
     assert response.json()['rate_limited']
     assert 'Mensajes y acciones: 10/10' in telegram.messages[-1][1]
@@ -210,8 +214,9 @@ def test_tickets_menu_and_status_buttons_enforce_owner(billing_client):
     first, _ = receipt(app, telegram, chat)
     second, _ = receipt(app, telegram, chat, color='green', folio='TEST-2')
     chat('/tickets')
-    assert len(telegram.messages[-1][2]) == 2
+    assert len([data for _,data in telegram.messages[-1][2] if data.startswith('ts:')]) == 2
     chat(data='ts:' + first)
+    chat(data=choice(telegram,'pause'))
     assert 'TEST-1' in telegram.messages[-1][1]
     chat(data='ts:' + second, user=456)
     assert 'no encontrado' in telegram.messages[-1][1]
@@ -219,7 +224,7 @@ def test_tickets_menu_and_status_buttons_enforce_owner(billing_client):
 
 
 @pytest.mark.parametrize('options,expected', [({'max_daily_runs':1}, 'Chat IA: 1/1'),
-    ({'max_conversation_turns':1}, '/nuevo abre otro')])
+    ({'max_conversation_turns':1}, '/nuevo_chat abre otro')])
 def test_chat_limit_explains_the_correct_budget_and_preserves_profile(billing_client,options,expected):
     model=ScriptedModel([[answer('Hola.')]])
     client,app,extractor,mail,sat,telegram,chat=create(billing_client,model,**options)
@@ -253,6 +258,7 @@ def test_duplicate_photo_is_removed_with_its_ticket_only_after_explicit_deletion
     identifier,_=receipt(app,telegram,chat)
     telegram.files['copy']=image('green')
     chat(document='copy')
+    chat(data=choice(telegram,'pause'))
     action=button(telegram,'an')
     chat(data=action)
     app.state.billing.delete_ticket(owner(app),identifier)

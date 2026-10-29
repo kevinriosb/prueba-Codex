@@ -345,7 +345,7 @@ class PortalPreparation:
         self.store.audit(owner,ticket['id'],'portal_filled_offline')
         return review
 
-    def replace_source(self,owner,ticket_id,data):
+    def replace_source(self,owner,ticket_id,data,*,staged_id=None):
         from .documents import inspect_document
         import hashlib
         ticket=self.billing.resolve_ticket(owner,ticket_id)
@@ -355,6 +355,13 @@ class PortalPreparation:
         sha=hashlib.sha256(content).hexdigest()
         lookup=self.store.digest('portal-source:'+ticket['id']+sha)
         document=self.store.find('document',owner,lookup)
+        staged=self.billing.document(owner,staged_id) if staged_id else None
+        if staged and (staged['purpose']!='unclassified' or staged['sha256']!=sha):
+            raise AppError(409,'portal_source','El archivo recibido cambió. Revisa el ticket.')
+        if not document and staged:
+            document=self.store.update('document',owner,staged['id'],staged|{'purpose':'ticket',
+                'profile_id':ticket['profile_id'],'ticket_id':ticket['id'],'portal_replacement':True,'intended_purpose':None})
+            self.store.change_lookup('document',owner,document['id'],lookup)
         if not document:
             if self.store.count('document',owner)>=self.billing.settings.billing_max_documents:
                 raise AppError(429,'document_limit','Se alcanzó el límite de archivos activos.')

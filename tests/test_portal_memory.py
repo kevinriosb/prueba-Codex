@@ -12,6 +12,7 @@ from .test_adaptive_browser import FakeBrowser,grant,snapshot
 from .test_billing import billing_client,ticket
 from .test_telegram_agent import create,button,owner
 from .test_telegram_documents import confirm_profile
+from .test_telegram_workflow import choice
 
 ROOT='https://group.example/'
 FORM='https://provider.example/form?opc=Dominos'
@@ -88,7 +89,8 @@ def test_next_ticket_reuses_direct_route_only_after_new_permission_and_keeps_ori
     values,browser,model,saved=arrive_and_save(billing_client)
     client,app,extractor,mail,sat,telegram,chat=values
     extractor.ticket.update(merchant="DOMINO'S",folio='NEW-999')
-    telegram.files['second']=image('blue');chat(document='second');chat(data=button(telegram,'an'))
+    telegram.files['second']=image('blue');chat(document='second')
+    chat(data=choice(telegram,'pause'));chat(data=button(telegram,'an'))
     new=app.state.billing.store.list('ticket',owner(app))[0]
     assert new['selected_portal']=={'id':saved['id'],'url':FORM} and new['billing_url']==ROOT
     assert 'Portal guardado: '+FORM in telegram.messages[-1][1]

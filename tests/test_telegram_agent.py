@@ -102,7 +102,7 @@ def test_history_persists_across_restart_and_new_command_keeps_old_conversation(
     assert 'Recuerda mi primera pregunta' in str(model.inputs[0])
     chat2('/historial')
     assert any('Respuesta inicial' in message[1] for message in telegram2.messages)
-    chat2('/nuevo')
+    chat2('/nuevo_chat')
     assert len(app2.state.database.list_conversations(owner(app2))) == 2
     chat2('/conversaciones')
     previous=next(row['id'] for row in app2.state.database.list_conversations(owner(app2))

@@ -18,7 +18,8 @@ class TelegramProfiles:
         self.bridge, self.billing = bridge, bridge.billing
 
     async def send(self, chat_id, text, buttons=None):
-        await self.bridge.client.send(chat_id, text, buttons)
+        owner='tg_'+self.billing.store.digest('telegram:'+str(chat_id))
+        await self.bridge.client.send(chat_id, text, (buttons or [])+self.bridge.workflow.navigation(owner))
 
     def current_draft(self, owner, identifier=None):
         state = self.bridge._state(owner)

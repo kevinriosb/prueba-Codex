@@ -16,6 +16,7 @@ from .receipt import browser_missing_fields, missing_receipt_fields, pending_rec
 from .telegram_agent import TelegramAgent
 from .telegram_profiles import TelegramProfiles, normalized
 from .telegram_requests import REQUEST_TEXTS, TelegramRequests
+from .telegram_workflow import TelegramWorkflow
 from .portal_permissions import PortalPermissionRequired
 from .portal_memory import matching_brand,brand_options,has_billing_form,public_form_ready,unresolved_brand_selector
 
@@ -92,6 +93,7 @@ class TelegramBridge:
         self.agent=TelegramAgent(agent_service,self) if agent_service else None
         self.profiles=TelegramProfiles(self)
         self.requests=TelegramRequests(self)
+        self.workflow=TelegramWorkflow(self)
         self._locks={}
 
     @property
@@ -143,6 +145,7 @@ class TelegramBridge:
         return draft,None
 
     def agent_context(self,owner):
+        active=self.workflow.active(owner)
         state=self._state(owner)
         profiles=self.billing.store.list('profile',owner)
         documents=[item for item in self.billing.store.list('document',owner)
@@ -157,7 +160,9 @@ class TelegramBridge:
                     raise
         draft,csf=self._profile_setup(owner,state,documents)
         return {'profile_confirmed':bool(profiles),'active_profile_id':state.get('active_profile') if any(item['id']==state.get('active_profile') for item in profiles) else None,
-            'browser_ticket_id':state.get('browser_ticket_id'),
+            'active_ticket_id':active['id'] if active else None,
+            'workflow_mode':state.get('workflow_mode'),
+            'browser_ticket_id':state.get('browser_ticket_id') if active and state.get('browser_ticket_id')==active['id'] else None,
             'browser_available':self.billing.browser.enabled,
             'csf_received':bool(profiles or draft or csf),'profile_setup_pending':bool(draft or csf),
             'draft_id':draft['id'] if draft else None,'csf_document_id':csf['id'] if csf else None,
@@ -174,9 +179,9 @@ class TelegramBridge:
             raise AppError(422,'document_purpose','Elige un archivo de CSF o ticket recibido en este chat.')
         await self.client.send(chat_id,(reason+'\n\n' if reason else '')+
             'Archivo guardado. ¿CSF o ticket? Elegir el tipo no usa IA.',
-            [('Es una CSF','dc:'+identifier),('Es un ticket','dt:'+identifier)])
+            [('Es una CSF','dc:'+identifier),('Es un ticket','dt:'+identifier)]+self.workflow.navigation(owner))
 
-    async def _choose_document(self,owner,chat_id,identifier,purpose,*,profile_id=None):
+    async def _choose_document(self,owner,chat_id,identifier,purpose,*,profile_id=None,workflow_confirmed=False):
         document=self.billing.document(owner,identifier)
         if document['purpose'] not in {'csf','ticket','unclassified'}:
             raise AppError(422,'document_purpose','No se puede cambiar el tipo de este archivo.')
@@ -189,6 +194,9 @@ class TelegramBridge:
                 await self.profiles.resume(owner,chat_id)
                 return
         if purpose=='ticket':
+            if not workflow_confirmed and not await self.workflow.admit(owner,chat_id,identifier):
+                return
+            state=self._state(owner)
             if state.get('csf_document_id')==identifier:
                 state['csf_document_id']=None
             profile_id=state.get('active_profile')
@@ -223,6 +231,8 @@ class TelegramBridge:
         if current.get('ticket_id'):
             state['last_ticket_id']=current['ticket_id']
         self._save_state(owner,state)
+        if purpose=='ticket' and current.get('ticket_id'):
+            self.workflow.activate(owner,self.billing.resolve_ticket(owner,current['ticket_id']))
         if purpose=='ticket' and current.get('extracted') is not None:
             await self._ticket(owner,chat_id,current['ticket_id'])
             return
@@ -234,12 +244,12 @@ class TelegramBridge:
             if hasattr(self.billing.extractor,'extract_routing'):
                 current['analysis_scope_offered']='portal-fields-v2'
                 self.billing.store.update('document',owner,current['id'],current)
-                await self.client.send(chat_id,'Leeré este ticket con OpenAI: portal y campos necesarios. Cada lectura usa tokens; no solicita factura.',
-                    [('Autorizar análisis','an:'+current['id'])])
+                await self.client.send(chat_id,'Solicitud '+current['ticket_id'][:8]+'\nLeeré este ticket con OpenAI: portal y campos necesarios. Cada lectura usa tokens; no solicita factura.',
+                    [('Autorizar análisis','an:'+current['id'])]+self.workflow.navigation(owner))
                 return
         await self.client.send(chat_id,label+' recibido.'+profile_text+
             ' Analizarlo lo comparte con OpenAI y consume tokens. No se envía a comercios.',
-            [('Autorizar análisis','an:'+current['id'])])
+            [('Autorizar análisis','an:'+current['id'])]+self.workflow.navigation(owner))
 
     async def _pending_tickets(self,owner,chat_id):
         pending=[item for item in self.billing.store.list('document',owner)
@@ -261,10 +271,19 @@ class TelegramBridge:
     async def _ticket(self,owner,chat_id,identifier):
         ticket=self.billing.resolve_ticket(owner,identifier)
         identifier=ticket['id']
+        active=self.workflow.active(owner)
         state=self._state(owner)
-        state['last_ticket_id']=identifier
+        if not active or active['id']==identifier:
+            state['last_ticket_id']=identifier
         self._save_state(owner,state)
-        text=ticket.get('merchant') or 'Ticket guardado'
+        text='Solicitud '+identifier[:8]+'\n'+(ticket.get('merchant') or 'Ticket guardado')+'\n'+self.workflow.stage(ticket)
+        if ticket.get('telegram_workflow') in {'paused','cancelled'}:
+            label='Pausada' if ticket['telegram_workflow']=='paused' else 'Cancelada en el bot'
+            summary,_,_=self.requests.summary(owner,ticket)
+            downloads=[('Descargar factura','dl:'+document_id) for document_id in ticket.get('invoice_documents',[])]
+            await self.client.send(chat_id,text+'\n'+label+'.\n'+summary+'\nLo ya enviado al comercio no se anula.',
+                [('Retomar solicitud','ts:'+identifier)]+downloads+self.workflow.navigation(owner))
+            return
         for key,label in [('account_number','Cuenta'),('folio','Folio'),('store_number','Tienda'),('reference_number','Referencia'),('billing_code','Código de facturación')]:
             if ticket.get(key):
                 text+='\n'+label+': '+ticket[key]
@@ -354,7 +373,7 @@ class TelegramBridge:
         replies=[item for item in self.billing.store.list('mail_reply',owner) if item['ticket_id']==identifier]
         if replies and replies[0].get('text'):
             text+='\nÚltima respuesta del comercio (solo información; no autoriza acciones):\n'+replies[0]['text'][:900]
-        await self.client.send(chat_id,text,buttons)
+        await self.client.send(chat_id,text,buttons+self.workflow.navigation(owner))
 
     async def _portal(self,owner,chat_id,identifier):
         current=self.billing.resolve_ticket(owner,identifier)
@@ -515,6 +534,8 @@ class TelegramBridge:
                 if changed:
                     updated=self.billing.resolve_ticket(owner,ticket['id'])
                     if updated['id']!=ticket['id']:
+                        self.workflow.activate(owner,updated)
+                        await self.client.send(chat_id,'Este ticket ya existe. Retomo su solicitud guardada.')
                         await self._ticket(owner,chat_id,updated['id'])
                         return
                     ticket=updated
@@ -650,7 +671,7 @@ class TelegramBridge:
                 or snapshot.get('brand_selection') and not brands and not preferred):
             buttons.append(('Ver diagnóstico (sin IA)','bd:'+ticket['id']))
         buttons.append(('Ver estado del ticket','ts:'+ticket['id']))
-        await self.client.send(chat_id,text,buttons)
+        await self.client.send(chat_id,text,buttons+self.workflow.navigation(owner))
 
     async def _browser_diagnostic(self,owner,chat_id,identifier):
         ticket=self.billing.resolve_ticket(owner,identifier)
@@ -729,13 +750,13 @@ class TelegramBridge:
         # Nunca ofrecer aprobar una revisión recortada por el límite de Telegram.
         if len(text)>3900:
             await self.client.send(chat_id,'El borrador es demasiado largo para revisarlo completo en Telegram. Recházalo y solicita una revisión manual.',
-                [('Rechazar envío','no:'+approval['id'])])
+                [('Rechazar envío','no:'+approval['id'])]+self.workflow.navigation(owner))
         else:
             if not self.settings.billing_live_email_enabled or not self.billing.mail.ready(owner):
                 text+='\nVista previa: falta activar el envío o conectar Gmail.'
-                await self.client.send(chat_id,text,[('Rechazar borrador','no:'+approval['id'])])
+                await self.client.send(chat_id,text,[('Rechazar borrador','no:'+approval['id'])]+self.workflow.navigation(owner))
             else:
-                await self.client.send(chat_id,text,[('Confirmar y enviar este correo','se:'+approval['id']),('Rechazar envío','no:'+approval['id'])])
+                await self.client.send(chat_id,text,[('Confirmar y enviar este correo','se:'+approval['id']),('Rechazar envío','no:'+approval['id'])]+self.workflow.navigation(owner))
 
     async def show_review(self,owner,chat_id,review):
         identifier=review.get('id','')
@@ -791,8 +812,9 @@ class TelegramBridge:
     async def _handle_authorized(self,owner,user_id,update_id,lookup,message,callback):
         plain=normalized(message.get('text',''))
         callback_data=callback.get('data','')
+        menu_control=isinstance(callback_data,str) and callback_data.startswith('mn:') and callback_data.rsplit(':',1)[-1] in {'home','list','profile','continue'}
         control=(not callback and not (message.get('document') or message.get('photo'))
-            and plain in REQUEST_TEXTS|{'/tickets','/limites','/portales'}) or (isinstance(callback_data,str) and callback_data.startswith(('ts:','wx:','bf:','bd:')))
+            and plain in REQUEST_TEXTS|{'/tickets','/limites','/portales','/menu','/start','/ayuda','/inicio'}) or menu_control or (isinstance(callback_data,str) and callback_data.startswith(('ts:','wx:','bf:','bd:')))
         kind='channel_control' if control else 'channel_update'
         today=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
         with self.billing.database.connection() as conn:
@@ -826,6 +848,8 @@ class TelegramBridge:
     async def _callback(self,owner,chat_id,data):
         if not isinstance(data,str):
             raise AppError(422,'telegram_callback','Acción no válida.')
+        if await self.workflow.callback(owner,chat_id,data):
+            return
         prefix,separator,identifier=data.partition(':')
         if not separator:
             raise AppError(422,'telegram_callback','Acción no válida.')
@@ -836,6 +860,8 @@ class TelegramBridge:
             uuid.UUID(identifier)
         except ValueError:
             raise AppError(422,'telegram_callback','Acción no válida.') from None
+        if await self.workflow.guard(owner,chat_id,prefix,identifier):
+            return
         if prefix in {'td','xe'}:
             ticket=self.billing.store.get('ticket',owner,identifier)
             allowed=set(pending_receipt_fields(ticket))|set(browser_missing_fields(ticket))
@@ -886,7 +912,7 @@ class TelegramBridge:
                     [('Ver estado del llenado','xs:'+identifier)])
                 return
             await self.client.send(chat_id,'Formulario llenado en el navegador. No se envió ni se solicitó la factura.',
-                [('Ver estado del llenado','xs:'+review['id'])])
+                [('Ver estado del llenado','xs:'+review['id'])]+self.workflow.navigation(owner))
         elif prefix=='xs':
             try:
                 result=await self.billing.portal_preparation.fill_status(owner,identifier)
@@ -900,7 +926,7 @@ class TelegramBridge:
                 await self.client.send(chat_id,'La revisión del llenado venció. Tus datos se conservan; no se solicitó la factura.',
                     [('Revisar formulario','xr:'+result['ticket_id'])])
                 return
-            await self.client.send(chat_id,'Formulario preparado; sesión activa '+str(result['expires_in'])+' s. Sin envío al comercio.')
+            await self.client.send(chat_id,'Formulario preparado; sesión activa '+str(result['expires_in'])+' s. Sin envío al comercio.',self.workflow.navigation(owner))
         elif prefix=='ts':
             await self._ticket(owner,chat_id,identifier)
         elif prefix=='bd':
@@ -955,6 +981,9 @@ class TelegramBridge:
                     document['analysis_scope']=document['analysis_scope_offered']
                     self.billing.store.update('document',owner,identifier,document)
                 ticket=await self.billing.analyze_ticket(owner,identifier,consent=True)
+                self.workflow.activate(owner,self.billing.resolve_ticket(owner,ticket['id']))
+                if ticket.get('duplicate'):
+                    await self.client.send(chat_id,'Este ticket ya existe. Retomo su solicitud guardada.')
                 state=self._state(owner)
                 state['last_ticket_id']=ticket['id']
                 self._save_state(owner,state)
@@ -965,6 +994,7 @@ class TelegramBridge:
             state.update(last_document_id=document['id'],last_ticket_id=self.billing.document(owner,document['id'])['ticket_id'])
             self._save_state(owner,state)
             ticket=await self.billing.analyze_ticket(owner,document['id'],consent=True)
+            self.workflow.activate(owner,self.billing.resolve_ticket(owner,ticket['id']))
             await self._ticket(owner,chat_id,ticket['id'])
         elif prefix=='bp':
             await self._portal(owner,chat_id,identifier)
@@ -1023,10 +1053,11 @@ class TelegramBridge:
             state['last_ticket_id']=approval['ticket_id']
             self._save_state(owner,state)
             ticket=await self.billing.send_invoice_request_email(owner,identifier,confirmed=True)
-            await self.client.send(chat_id,'Solicitud enviada. Estado: '+ticket['status']+'. El envío no significa que la factura esté emitida.')
+            await self.client.send(chat_id,'Solicitud '+ticket['id'][:8]+' enviada. Esperando la factura.',
+                [('Ver solicitud','ts:'+ticket['id'])]+self.workflow.navigation(owner))
         elif prefix=='no':
             self.billing.reject_email(owner,identifier)
-            await self.client.send(chat_id,'Envío rechazado; no se envió el correo.')
+            await self.client.send(chat_id,'Envío rechazado; no se envió el correo.',self.workflow.navigation(owner))
         elif prefix=='tr':
             await self.billing.track_invoice_email(owner,identifier,authorize_sat=False)
             await self._ticket(owner,chat_id,identifier)
@@ -1051,6 +1082,8 @@ class TelegramBridge:
             await self.client.send(chat_id,'Seguimiento '+('activado con la política revisada.' if prefix=='on' else 'detenido.'))
 
     async def _message(self,owner,chat_id,message):
+        if await self.workflow.message(owner,chat_id,message):
+            return
         text=message.get('text','').strip()
         declaration=text.casefold().strip(' .!¡?¿')
         state=self._state(owner)
@@ -1071,7 +1104,7 @@ class TelegramBridge:
                 await self.client.send(chat_id,'No hay portales guardados todavía.')
             for record in records[:50]:
                 await self.client.send(chat_id,record['merchant']+'\n'+record['url'],[('Olvidar enlace','bf:'+record['id'])])
-        elif text=='/nuevo' and self.agent:
+        elif text=='/nuevo_chat' and self.agent:
             self.agent.conversation(owner,new=True)
             await self.client.send(chat_id,'Chat nuevo. Tu perfil y tickets se conservan.')
         elif text=='/historial' and self.agent:
@@ -1131,24 +1164,34 @@ class TelegramBridge:
             parts=text.split(maxsplit=2)
             if len(parts)!=3:
                 raise AppError(422,'csf_request','Usa /requiere_csf ID_TICKET descripción de la petición expresa del comercio.')
+            if await self.workflow.guard(owner,chat_id,'pr',parts[1]):
+                return
             self.billing.mark_certificate_required(owner,parts[1],confirmed=True,evidence=parts[2])
             await self.client.send(chat_id,'Petición de constancia registrada. Solo se adjuntará si autorizas /preparar_con_csf ID_TICKET y luego confirmas el correo completo.')
         elif text.startswith('/preparar_con_csf '):
-            await self._preview(owner,chat_id,text.split(maxsplit=1)[1],csf=True)
+            identifier=text.split(maxsplit=1)[1]
+            if await self.workflow.guard(owner,chat_id,'pr',identifier):
+                return
+            await self._preview(owner,chat_id,identifier,csf=True)
         elif message.get('document') or message.get('photo'):
             caption=message.get('caption','').strip()
             attachment=message.get('document') or message['photo'][-1]
             if attachment.get('file_size',0)>self.settings.billing_max_upload_bytes:
                 raise AppError(413,'document_size','El archivo supera el límite permitido.')
             data=await self.client.download(attachment['file_id'])
+            active=self.workflow.active(owner)
+            state=self._state(owner)
+            if state.get('portal_upload_ticket') and (not active or active['id']!=state['portal_upload_ticket']):
+                state.pop('portal_upload_ticket',None)
+                self._save_state(owner,state)
             if state.get('portal_upload_ticket'):
-                document=self.billing.portal_preparation.replace_source(owner,state['portal_upload_ticket'],data)
+                ticket=self.billing.resolve_ticket(owner,state['portal_upload_ticket'])
+                document=self.billing.receive_document(owner,'unclassified',data,profile_id=ticket['profile_id'])
                 state.pop('portal_upload_ticket',None)
                 state['last_document_id']=document['id']
-                state['last_ticket_id']=document['ticket_id']
+                state['last_received_media']='document'
                 self._save_state(owner,state)
-                record=await self.billing.portal_preparation.current(owner,document['ticket_id'])
-                await self._browser(owner,chat_id,document['ticket_id'])
+                await self.workflow.offer(owner,chat_id,document_id=document['id'],ticket_id=ticket['id'],kind='replace')
                 return
             selected=next((item['id'] for item in profiles if item['id']==state.get('active_profile')),None)
             if not selected and len(profiles)==1:
@@ -1156,6 +1199,7 @@ class TelegramBridge:
             explicit_csf=caption.casefold().startswith('/csf') or state.get('replace_profile_id') or state.get('expected_upload')=='csf'
             document=self.billing.receive_document(owner,'unclassified',data,profile_id=None if explicit_csf else selected)
             state['last_document_id']=document['id']
+            state['last_received_media']='document'
             self._save_state(owner,state)
             if caption.casefold()=='/ticket':
                 await self._choose_document(owner,chat_id,document['id'],'ticket')
@@ -1182,6 +1226,8 @@ class TelegramBridge:
                 await self._document_choice(owner,chat_id,document['id'])
         elif text.startswith('/dato_ticket ') and state.get('ticket_input'):
             pending=state['ticket_input']
+            if await self.workflow.guard(owner,chat_id,'td',pending['id']):
+                return
             ticket=self.billing.complete_ticket_field(owner,pending['id'],pending['field'],text.split(maxsplit=1)[1],correction=pending.get('correction',False))
             state['ticket_input']=None
             self._save_state(owner,state)

@@ -68,8 +68,15 @@ class TelegramRequests:
             'message':'Hay cupo disponible. Pulsa Autorizar análisis.'}
 
     async def show(self, owner, chat_id):
+        pending=self.bridge.workflow.pending(owner)
+        if pending:
+            await self.bridge.workflow.prompt(owner,chat_id,pending)
+            return
+        if self.bridge.workflow.state(owner).get('workflow_mode')=='awaiting_ticket':
+            await self.bridge.workflow.menu(owner,chat_id)
+            return
         state = self.bridge._state(owner)
-        identifier = state.get('last_ticket_id')
+        identifier = state.get('active_ticket_id') or state.get('last_ticket_id')
         if identifier:
             try:
                 await self.bridge._ticket(owner, chat_id, identifier)
@@ -87,20 +94,23 @@ class TelegramRequests:
 
     async def list(self, owner, chat_id):
         tickets = self.tickets(owner)
-        if not tickets:
+        pending=[item for item in self.billing.store.list('document',owner) if item.get('intended_purpose')=='ticket' and not item.get('superseded_by')]
+        if not tickets and not pending:
             await self.bridge.client.send(chat_id, 'No hay tickets guardados. Envía uno aquí.')
             return
         # Mantener el detalle directo cuando solo hay una solicitud.
-        if len(tickets) == 1:
+        if len(tickets) == 1 and not pending:
             await self.bridge._ticket(owner, chat_id, tickets[0]['id'])
             return
         buttons = []
+        buttons.extend(('Ticket por asignar · '+item['id'][:8],'dt:'+item['id']) for item in pending[:10])
         for item in tickets[:20]:
             reference = item.get('account_number') or item.get('folio') or item.get('reference_number') or item['id'][:8]
             label = (item.get('merchant') or 'Ticket')[:22] + ' · ' + str(reference)[:16]
-            label += ' · ' + STATUS_LABELS.get(item['status'], 'Revisar')
+            workflow={'paused':'Pausada','cancelled':'Cancelada en el bot'}.get(item.get('telegram_workflow'))
+            label += ' · ' + (workflow or STATUS_LABELS.get(item['status'], 'Revisar'))
             buttons.append((label[:90], 'ts:' + item['id']))
-        await self.bridge.client.send(chat_id, 'Tus tickets. Elige uno para ver su estado:', buttons)
+        await self.bridge.client.send(chat_id, 'Tus solicitudes. Elige cuál continuar:', buttons+self.bridge.workflow.navigation(owner))
 
     def usage(self, owner):
         now = datetime.now(timezone.utc)
@@ -131,11 +141,13 @@ class TelegramRequests:
         await self.bridge.client.send(chat_id, text)
 
     async def error(self, owner, chat_id, error):
-        if error.code in {'billing_daily_limit', 'daily_limit'}:
+        if error.code.startswith('workflow_'):
+            await self.bridge.client.send(chat_id,error.message,self.bridge.workflow.navigation(owner))
+        elif error.code in {'billing_daily_limit', 'daily_limit'}:
             await self.limits(owner, chat_id, code=error.code)
         elif error.code in {'turn_limit', 'context_limit', 'execution_interrupted'}:
             await self.bridge.client.send(chat_id,
-                'Este chat llegó a su límite o se interrumpió. /nuevo abre otro y conserva tu perfil y tickets. /estado muestra tu solicitud.')
+                'El chat de IA se interrumpió. /nuevo_chat abre otro. Tu solicitud sigue en /menu.',self.bridge.workflow.navigation(owner))
         elif error.code == 'document_limit':
             usage = self.usage(owner)
             expiry=''

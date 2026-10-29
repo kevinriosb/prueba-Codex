@@ -77,12 +77,16 @@ contenedor: no necesitas instalar el SDK en el Python 3.9 del sistema.
 - «Divide 500 pesos con 15 % de propina entre dos personas» usa OpenAI. Haz una
   primera petición únicamente cuando autorices su consumo de tokens.
 - `/historial` recupera los últimos mensajes propios sin llamar al modelo.
-- `/nuevo` inicia otra conversación; conserva las anteriores y los perfiles.
+- `/menu` muestra la solicitud activa y los pasos disponibles. `/nuevo` inicia
+  una solicitud; si hay otra activa, pide pausar, cancelar o conservarla.
+- `/nuevo_chat` inicia otra conversación de IA; conserva solicitudes y perfiles.
+- Las reglas y el recorrido completo están en [FLUJO_TELEGRAM.md](FLUJO_TELEGRAM.md).
 - `/conversaciones` permite volver a una anterior. `/eliminar_conversacion ID`
   solicita un botón de confirmación para borrar solo esa conversación propia.
 - Antes del primer perfil, un archivo desconocido pide elegir **CSF o Ticket**.
   Una vez recibida la CSF o confirmado el perfil, los archivos nuevos se tratan
-  como tickets. No se pide elegir el tipo en cada subida. Para otra constancia,
+  como tickets. Si hay otra solicitud activa, se elige cómo continuar antes de
+  analizarlos. No se pide elegir CSF o ticket en cada subida. Para otra constancia,
   usa `/csf` como descripción; `/ticket` también está disponible.
 - Si envías primero el ticket, se guarda cifrado y queda pendiente hasta confirmar
   el perfil fiscal. Después de guardar el perfil aparece **Continuar con ticket**:
@@ -234,7 +238,7 @@ no es una garantía de capacidad para atenderlas simultáneamente.
   de 150. El recorte de presentación no recupera tokens ya generados. La selección
   de uso, captura de correo y confirmación se resuelven sin generar texto de IA.
 - Instrucciones, herramientas e historial también consumen tokens de entrada.
-  `/nuevo` reduce el contexto de futuras peticiones y conserva perfiles y tickets.
+  `/nuevo_chat` reduce el contexto de futuras peticiones y conserva perfiles y tickets.
   La extracción estructurada de documentos mantiene su presupuesto independiente,
   para no truncar los campos fiscales. Las revisiones de confirmación muestran
   todos los datos necesarios y no solicitan generación de texto por sí solas.

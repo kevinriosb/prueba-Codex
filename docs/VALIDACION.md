@@ -694,3 +694,19 @@ ejecutarse: el entorno de desarrollo agotó el disco al crear sus contenedores.
 Se retiraron sus recursos temporales; este bloqueo no es una validación pasada
 ni evidencia de un fallo en el VPS. La prueba de recreación de solo `agent`
 se añadió al smoke de Compose para poder repetirla con espacio disponible.
+
+## Solicitud activa y menús de principio a fin
+
+Las reglas están en [FLUJO_TELEGRAM.md](FLUJO_TELEGRAM.md). El flujo nativo separa
+archivo, solicitud activa y conversación de IA; otro ticket pide elegir pausar,
+cancelar o conservar la solicitud anterior. Los videos se identifican como tales.
+Se guarda el archivo nuevo para elegir después sin analizarlo ni reenviarlo.
+
+Pasaron **732 pruebas completas** (344,48 s). Después pasaron **23 regresiones
+nativas** (15,44 s), incluyendo recuperación tras reiniciar, permisos y botones
+viejos, sustitución al límite de archivos, caducidad, vídeo citado o no, menús con
+cuota agotada y el recorrido hasta XML/PDF y validación SAT simulados. El modelo
+no puede reutilizar otra solicitud a partir del historial. El motor del navegador,
+frontend, dependencias y Compose se conservan. La comprobación adicional Docker
+permanece pendiente por falta de disco local; no se hicieron envíos reales ni
+llamadas de IA de pago y no se desplegó el VPS desde este entorno.

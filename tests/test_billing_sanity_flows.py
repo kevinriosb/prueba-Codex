@@ -10,6 +10,7 @@ from .test_billing import billing_client
 from .test_portal_preparation import RealBrowser,ScopedExtractor,prepared,ROOT,FORM
 from .test_telegram_agent import create,button,owner
 from .test_telegram_documents import confirm_profile
+from .test_telegram_workflow import choice
 
 
 def test_an_old_upload_button_cannot_fill_using_data_from_the_previous_photo(billing_client):
@@ -18,6 +19,7 @@ def test_an_old_upload_button_cannot_fill_using_data_from_the_previous_photo(bil
     ticket=app.state.billing.store.list('ticket',owner(app))[0]
     chat(data='xu:'+ticket['id'])
     telegram.files['replacement']=image('blue');chat(document='replacement')
+    chat(data=choice(telegram,'same'))
     buttons=telegram.messages[-1][2]
     assert any(data.startswith('xa:') for _,data in buttons)
     assert not any(data.startswith('xg:') for _,data in buttons)
@@ -154,6 +156,7 @@ def test_identical_photo_reupload_preserves_the_alternative_and_does_not_charge_
     ticket=app.state.billing.store.list('ticket',owner(app))[0]
     count=len(extractor.calls)
     chat(data='xu:'+ticket['id']);chat(document='receipt')
+    chat(data=choice(telegram,'same'))
     assert len(extractor.calls)==count and 'xg:' in str(telegram.messages[-1][2])
     assert 'Web ID: Pendiente' not in telegram.messages[-1][1]
 

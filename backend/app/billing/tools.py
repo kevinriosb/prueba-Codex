@@ -29,6 +29,12 @@ OPERATIONS={
 
 
 def build_billing_tools(billing):
+    def require_active(ctx,identifier):
+        if ctx.context.get('channel')!='telegram':return
+        state=billing.store.find('channel_state',ctx.context['user_id'],'telegram') or {}
+        if state.get('workflow_version') and (state.get('workflow_choice_id') or state.get('active_ticket_id')!=identifier):
+            raise AppError(409,'workflow_selection','Selecciona la solicitud con los botones de /menu antes de continuar.')
+
     def review(ctx, kind, identifier):
         if ctx.context.get('channel') == 'telegram':
             ctx.context['events'].append({'tool':'human_review','result':'Revisión humana requerida.',
@@ -76,12 +82,15 @@ def build_billing_tools(billing):
             selected=identifier or ctx.context.get('browser_ticket_id')
         if selected:
             ticket=billing.resolve_ticket(ctx.context['user_id'],selected)
+            require_active(ctx,ticket['id'])
             ctx.context['browser_ticket_id']=ticket['id']
             return ticket
         if ctx.context.get('channel')!='telegram':
             raise ValueError('Selecciona primero un ticket propio mediante portal_browser_observe.')
         state=billing.store.find('channel_state',ctx.context['user_id'],'telegram') or {}
-        return billing.resolve_ticket(ctx.context['user_id'],state.get('browser_ticket_id') or state.get('last_ticket_id',''))
+        ticket=billing.resolve_ticket(ctx.context['user_id'],state.get('active_ticket_id') or state.get('browser_ticket_id') or state.get('last_ticket_id',''))
+        require_active(ctx,ticket['id'])
+        return ticket
 
     def browser_failure(ctx,error):
         try:
@@ -233,6 +242,10 @@ def build_billing_tools(billing):
             owner=ctx.context['user_id']
             billing.require_enabled()
             location='Telegram' if ctx.context.get('channel')=='telegram' else 'Facturación'
+            if name not in {'process_fiscal_certificate','extract_fiscal_profile','confirm_fiscal_profile','analyze_ticket','send_invoice_request_email'}:
+                require_active(ctx,billing.resolve_ticket(owner,identifier)['id'])
+            elif name=='send_invoice_request_email':
+                require_active(ctx,billing.store.get('email_approval',owner,identifier)['ticket_id'])
             if name=='process_fiscal_certificate':
                 document=billing.document(owner,identifier)
                 if ctx.context.get('channel')=='telegram' and any(item.get('document_id')==identifier for item in billing.store.list('profile',owner)):
@@ -257,6 +270,8 @@ def build_billing_tools(billing):
                 return {'confirmation_required':True,'review_in':location,'draft_id':identifier}
             if name=='analyze_ticket':
                 document=billing.document(owner,identifier)
+                if document.get('ticket_id'):
+                    require_active(ctx,billing.resolve_ticket(owner,document['ticket_id'])['id'])
                 if ctx.context.get('channel')=='telegram' and (document['purpose']!='ticket' or not document.get('profile_id') or document.get('intended_purpose') or document.get('superseded_by')):
                     review(ctx,'document_type',identifier)
                     return {'document_id':identifier,'type_confirmation_required':True}

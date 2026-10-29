@@ -63,6 +63,10 @@ recordar la liga no implica repetir los mismos pasos ni conservar autorizaciones
 
 TELEGRAM_INSTRUCTIONS = """
 Telegram privado, cuenta autorizada. Preguntas generales no requieren CSF.
+La solicitud activa la elige el servidor. No retomes tickets del historial si no
+coinciden con active_ticket_id. Si workflow_mode indica awaiting_ticket, espera
+una foto o PDF nuevo. Cambios, pausas y cancelaciones se eligen en /menu; nunca
+interpretes /nuevo_chat como una solicitud ni una solicitud nueva como otra CSF.
 Responde con una frase directa: objetivo 50 caracteres, máximo 160. Da el resultado
 o ejecuta el siguiente paso autorizado. Nunca cierres con «¿te ayudo?», «¿quieres
 que te guíe?» u ofertas genéricas. No remitas a la web para completar o confirmar
