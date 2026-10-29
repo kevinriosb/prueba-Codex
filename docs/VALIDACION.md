@@ -4,6 +4,16 @@ La preparación y las pruebas automatizadas se ejecutaron localmente, sin llamad
 
 ## 28 de octubre: lectura dirigida y llenado sin envío
 
+Corrección posterior del regreso al selector: **689 pruebas completas pasadas en
+324,89 s**; después se verificaron también las expectativas ampliadas del
+diagnóstico y la elección humana ante marcas ambiguas. Ruff, compilación y diff
+sin errores. Las dos imágenes finales pasaron el contenedor (incluido selector
+sin imágenes) y el stack Compose. Los recursos de prueba fueron retirados.
+Se reprodujeron cuatro fallos antes del cambio y se conservan permisos, cuotas,
+propietarios y exclusión de envíos. El HTML real del portal fue inaccesible desde
+este entorno por un 403 del proxy: el diagnóstico del VPS sigue pendiente para
+confirmar su causa concreta. Véase [recuperación del selector](RECUPERACION_SELECTOR.md).
+
 La suite completa pasó **680 pruebas en 320,80 s**. Después pasó una regresión
 adicional del canal por correo sin portal. Ruff (F821/F822/F823/E9), compilación y
 comprobación del diff sin errores. Se construyeron las imágenes finales de agent

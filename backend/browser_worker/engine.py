@@ -26,13 +26,16 @@ SNAPSHOT = r'''() => {
  }
  const all=selector=>roots.flatMap(root=>Array.from(root.querySelectorAll(selector))).slice(0,2000);
  const visible=e=>!!(e.getClientRects().length)&&getComputedStyle(e).visibility!=='hidden';
+ const text=roots.map(root=>root===document?(document.body?.innerText||''):(root.textContent||'')).join(' ').slice(0,40000).replace(/\s+/g,' ');
+ const brand_selection=/(?:seleccion\w*|elige|elija|choose|select)\s+(?:[\p{L}\p{N}]+\s+){0,6}(?:marcas?|brands?|restaurantes?|establecimientos?|cadenas?|restaurants?|chains?)\b/iu.test(text);
  const labelText=e=>{const c=e.cloneNode(true);c.querySelectorAll('input,select,textarea,script,style').forEach(x=>x.remove());return c.textContent;};
  const label=e=>((e.labels&&Array.from(e.labels).map(labelText).join(' '))||e.getAttribute('aria-label')||e.innerText||e.getAttribute('placeholder')||e.getAttribute('name')||e.id||'').replace(/\s+/g,' ').trim().slice(0,100);
  const navigationLabel=e=>{
-  const img=e.tagName==='IMG'?e:e.querySelector('img');
+  const img=e.tagName==='IMG'||e.tagName==='INPUT'&&e.type==='image'?e:e.querySelector('img');
   let filename='';
-  if(img){try{filename=decodeURIComponent(new URL(img.getAttribute('src')||'',document.baseURI).pathname.split('/').pop()).replace(/\.(?:png|svg|jpe?g|gif|webp)$/i,'').replace(/[_-]+/g,' ');}catch{}}
-  return (e.getAttribute('aria-label')||e.getAttribute('title')||labelText(e).trim()||(img&&(img.alt||img.title))||filename||'').replace(/\s+/g,' ').trim().slice(0,100);
+  const src=img&&(img.getAttribute('src')||img.getAttribute('data-src'));
+  if(src){try{filename=decodeURIComponent(new URL(src,document.baseURI).pathname.split('/').pop()).replace(/\.(?:png|svg|jpe?g|gif|webp)$/i,'').replace(/[_-]+/g,' ');}catch{}}
+  return (e.getAttribute('aria-label')||e.getAttribute('title')||e.getAttribute('data-brand')||e.getAttribute('data-marca')||labelText(e).trim()||(img&&(img.alt||img.title))||filename||publicBrand(e)||'').replace(/\s+/g,' ').trim().slice(0,100);
  };
  const literalNavigation=e=>{
   const code=(e.getAttribute('onclick')||'').trim();
@@ -41,6 +44,17 @@ SNAPSHOT = r'''() => {
    /^(?:window\.)?location\.(?:assign|replace)\(\s*(['"])([^'"\\]+)\1\s*\)\s*;?$/];
   for(const pattern of patterns){const match=code.match(pattern);if(match){try{return new URL(match[2],document.baseURI).href;}catch{return null;}}}
   return null;
+ };
+ const publicBrand=e=>{
+  if(!brand_selection)return '';
+  try{
+   const href=literalNavigation(e)||e.getAttribute('href');
+   if(!href||href.startsWith('#'))return '';
+   const url=new URL(href,document.baseURI);
+   const names=new Set(['brand','marca','cadena','opc','opcion']);
+   const values=Array.from(url.searchParams).filter(([key,value])=>names.has(key.toLowerCase())&&/^[a-z][a-z0-9 .’'-]{2,69}$/i.test(value)).map(([,value])=>value);
+   return new Set(values).size===1?values[0]:'';
+  }catch{return '';}
  };
  const inputs=all('input,select,textarea').filter(e=>visible(e)&&!e.disabled&&!['hidden','password','file','submit','button','reset','checkbox','radio'].includes(e.type));
  const fields=inputs.slice(0,24).map(e=>{
@@ -54,18 +68,18 @@ SNAPSHOT = r'''() => {
  const signature=e=>JSON.stringify(['href','onclick','aria-expanded','aria-selected','role','data-bs-toggle','data-toggle','data-bs-target','data-target'].map(name=>e.getAttribute(name)));
  const candidates=[];
  let scanned=0;
- for(const e of all('a[href],a[onclick],img[onclick],button[onclick],[role="link"][onclick],[role="button"][onclick],summary,[aria-expanded],[role="tab"],[data-bs-toggle="collapse"],[data-toggle="collapse"],[data-bs-toggle="tab"],[data-toggle="tab"],[data-bs-toggle="pill"],[data-toggle="pill"]')) {
+ for(const e of all('a[href],a[onclick],img[onclick],button[onclick],input[type=button][onclick],input[type=image][onclick],[role="link"][onclick],[role="button"][onclick],summary,[aria-expanded],[role="tab"],[data-bs-toggle="collapse"],[data-toggle="collapse"],[data-bs-toggle="tab"],[data-toggle="tab"],[data-bs-toggle="pill"],[data-toggle="pill"]')) {
   if(++scanned>800) break;
   if(!visible(e)||e.disabled) continue;
   const inForm=e.closest('form')||e.form;
-  const literal=inForm?null:literalNavigation(e);
+  const literal=!inForm||e.tagName==='A'||e.type==='button'?literalNavigation(e):null;
   const href=literal||(e.tagName==='A'?e.getAttribute('href'):null);
   const expand=e.tagName==='SUMMARY'||e.hasAttribute('aria-expanded')||e.getAttribute('role')==='tab'||['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))||['collapse','tab','pill'].includes(e.getAttribute('data-toggle'));
-  if(inForm&&!expand&&e.tagName!=='A') continue;
+  if(inForm&&!expand&&!literal&&e.tagName!=='A') continue;
   if(!expand&&(!href||href.startsWith('#'))) continue;
   if(expand&&(e.getAttribute('aria-selected')==='true'||e.getAttribute('aria-expanded')==='true')) continue;
   const text=navigationLabel(e);
-  const brand=e.tagName==='IMG'||!!e.querySelector('img');
+  const brand=e.tagName==='IMG'||e.tagName==='INPUT'&&e.type==='image'||!!e.querySelector('img,svg')||!!e.getAttribute('data-brand')||!!e.getAttribute('data-marca')||!!publicBrand(e);
   const priority=/factur|invoic|billing|cfdi/i.test(text+' '+(href||''))?3:(brand?2:0);
   candidates.push({e,label:text,kind:expand?'expand':'link',url:expand?null:(literal||e.href),brand,priority});
  }
@@ -76,8 +90,6 @@ SNAPSHOT = r'''() => {
   e.setAttribute('data-public-nav-ref',id);
   actions.push({selector:id,label:item.label,kind:item.kind,url:item.url,brand:item.brand,signature:signature(e)});
  }
- const text=roots.map(root=>root===document?(document.body?.innerText||''):(root.textContent||'')).join(' ').slice(0,40000).replace(/\s+/g,' ');
- const brand_selection=/(?:seleccion\w*|elige|elija|choose|select)\s+(?:[\p{L}\p{N}]+\s+){0,6}(?:marcas?|brands?|restaurantes?|establecimientos?|cadenas?|restaurants?|chains?)\b/iu.test(text);
  const login_required=all('input[type=password]').some(e=>visible(e)&&/iniciar sesi[oó]n|sign in|log in|login|contrase[nñ]a|password/i.test((e.closest('form')?.innerText||'')+' '+label(e)));
  return {title:document.title.slice(0,120),fields,actions,brand_selection,login_required,unsupported_required,partial:traversalPartial||inputs.length>24||candidates.length>48||scanned>800,
   captcha:all('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],[class*="g-recaptcha"],[class*="h-captcha"]').some(visible)};
@@ -475,9 +487,20 @@ class BrowserManager:
                         continue
                 eligible.append((frame,source))
             partial=partial or len(eligible)>8
+            selector_waited=False
             for frame,source in eligible[:8]:
                 try:
                     result=await frame.evaluate(SNAPSHOT)
+                    if (not selector_waited and result['brand_selection'] and not result['fields']
+                            and len({item['label'].casefold() for item in result['actions'] if item['brand'] and item['label']})<2):
+                        selector_waited=True
+                        # Una sola espera DOM acotada, sin otra ejecución de IA.
+                        try:
+                            await frame.wait_for_function('() => {const s=('+SNAPSHOT+')();return s.fields.length || new Set(s.actions.filter(a=>a.brand&&a.label).map(a=>a.label.toLowerCase())).size>=2;}',polling=100,timeout=1200)
+                        except PlaywrightTimeout:
+                            pass
+                        # La espera renueva marcadores; conservar solo los últimos.
+                        result=await frame.evaluate(SNAPSHOT)
                 except PlaywrightError:
                     partial=True
                     continue

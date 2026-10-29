@@ -22,7 +22,7 @@ from .receipt import browser_missing_fields, missing_receipt_fields, pending_rec
 from .portal_inspection import PortalInspector, portal_plan
 from .browser import PortalBrowserClient
 from .portal_permissions import PortalPermissions,PortalPermissionRequired,portal_origin
-from .portal_memory import PortalMemory,public_form_ready
+from .portal_memory import PortalMemory,public_form_ready,stable_form_bookmark
 from .store import BillingStore
 from .portal_preparation import PortalPreparation
 
@@ -389,6 +389,8 @@ class BillingService:
         return record
 
     def portal_resume_url(self,owner,ticket):
+        form=self.portal_form_url(owner,ticket)
+        if form:return form
         saved=ticket.get('portal_checkpoint') or {}
         url=saved.get('url')
         if (not url or saved.get('expires',0)<=time.time() or saved.get('scope')!=self.portal_permissions.scope(ticket)
@@ -396,7 +398,19 @@ class BillingService:
             return None
         return url
 
+    def portal_form_url(self,owner,ticket):
+        saved=ticket.get('portal_form_checkpoint') or {}
+        url=saved.get('url')
+        if (not url or saved.get('expires',0)<=time.time() or saved.get('scope')!=self.portal_permissions.scope(ticket)
+                or not self.portal_permissions.route_allowed(owner,ticket) or bookmark_url(url)!=url):
+            return None
+        return url
+
     def _save_portal_checkpoint(self,owner,ticket,snapshot,brand_label):
+        form=stable_form_bookmark(ticket,snapshot)
+        if form and self.portal_permissions.route_allowed(owner,ticket):
+            ticket['portal_form_checkpoint']={'url':form,'scope':self.portal_permissions.scope(ticket),
+                'brand_label':brand_label,'expires':time.time()+self.settings.billing_ticket_retention_hours*3600}
         url=snapshot.get('bookmark_url')
         if url and bookmark_url(url)==url and not snapshot['captcha'] and not snapshot.get('login_required') and self.portal_permissions.route_allowed(owner,ticket):
             ticket['portal_checkpoint']={'url':url,'scope':self.portal_permissions.scope(ticket),
@@ -422,7 +436,8 @@ class BillingService:
             nonlocal brand_label
             resume=self.portal_resume_url(owner,ticket)
             if resume:
-                brand_label=ticket['portal_checkpoint'].get('brand_label')
+                saved=ticket['portal_form_checkpoint'] if self.portal_form_url(owner,ticket)==resume else ticket['portal_checkpoint']
+                brand_label=saved.get('brand_label')
             else:
                 brand_label=None
             allowed=[portal_origin(resume)] if resume else self.portal_permissions.allowed(owner,ticket)

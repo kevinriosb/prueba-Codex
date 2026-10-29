@@ -18,11 +18,16 @@ import asyncio,os
 from pathlib import Path
 from backend.browser_worker.engine import BrowserManager
 from backend.browser_worker.policy import BrowserError
+from backend.app.billing.portal_navigation import next_public_action
 assert os.getuid()==10001
 assert not any(os.environ.get(key) for key in ('AI_API_KEY','OPENAI_API_KEY','BILLING_ENCRYPTION_KEY','APP_LOGIN_PASSWORD'))
 assert not Path('/app/.env').exists() and not Path('/data/agent.sqlite3').exists()
 class Pages:
  async def fetch(self,url,headers):
+  if url.endswith('/selector'):
+   return 200,{'content-type':'text/html; charset=utf-8'},('<h2>Selecciona la marca</h2>'
+    '<a href="https://provider.example/form?brand=Marca%20Demo" style="display:block;width:80px;height:50px;background:#888"></a>'
+    '<footer><a href="https://fixture.example/">Facturación Electrónica</a></footer>').encode()
   content=('<script src="https://www.googletagmanager.com/gtm.js"></script>'
    +''.join('<a href="/info/'+str(index)+'">Información</a>' for index in range(32))
    +'<footer><a href="https://provider.example/form?brand=Demo" target="_blank"><img alt="Marca Demo"></a>'
@@ -52,9 +57,14 @@ async def run():
   try:await manager.observe('test-owner',before)
   except BrowserError as error:assert error.code=='browser_private'
   else:raise AssertionError('La observación pública expuso la sesión llenada.')
+  selector=await manager.open('second-owner','https://fixture.example/selector',['https://fixture.example'],public_route=True)
+  action=next_public_action({'merchant':'Marca Demo'},selector)
+  assert action and action['label']=='Marca Demo'
+  form=await manager.act('second-owner',selector['session_id'],selector['observation_id'],action['reference'])
+  assert form['fields'][0]['label']=='Cuenta'
  finally:await manager.close()
 asyncio.run(run())
-print('PASS: Chromium sin privilegios, navegación y llenado sin red con datos ficticios; sin IA.')
+print('PASS: Chromium sin privilegios, selector sin imágenes y llenado sin red con datos ficticios; sin IA.')
 '''
 
 

@@ -106,6 +106,8 @@ async def finish_public_form(context,_results):
     # Solo lo marca una observación validada del servidor, no texto del modelo.
     if context.context.get('purpose')=='portal_review' and context.context.get('browser_form_found'):
         return ToolsToFinalOutputResult(is_final_output=True,final_output='Formulario encontrado.')
+    if context.context.get('purpose')=='portal_review' and context.context.get('browser_brand_pending'):
+        return ToolsToFinalOutputResult(is_final_output=True,final_output='Selector de marcas pendiente de revisar.')
     return ToolsToFinalOutputResult(is_final_output=False)
 
 

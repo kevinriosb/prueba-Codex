@@ -10,13 +10,13 @@ from backend.app.billing.portal_navigation import next_public_action
 from backend.app.billing.portal_memory import has_billing_form
 
 
-LAYOUT=r'''() => Array.from(document.querySelectorAll('a:has(img),img[onclick],input[type=image]')).slice(0,50).map(e=>{
+LAYOUT=r'''() => Array.from(document.querySelectorAll('a[href],a[onclick],img[onclick],button[onclick],input[type=image],input[type=button][onclick],[role="link"][onclick]')).slice(0,80).map(e=>{
     const img=e.tagName==='IMG'||e.tagName==='INPUT'?e:e.querySelector('img');
     let image='';try{if(img?.getAttribute('src'))image=new URL(img.getAttribute('src'),document.baseURI).pathname.split('/').pop().slice(0,100);}catch{}
     const hidden=[];for(let p=e,i=0;p&&i<30;p=p.parentElement,i++){
         const s=getComputedStyle(p);if(s.display==='none'||s.visibility==='hidden'||p.hidden)hidden.push({tag:p.tagName,display:s.display,visibility:s.visibility});
     }
-    return {tag:e.tagName,form:!!(e.closest('form')||e.form),label:(e.getAttribute('aria-label')||img?.alt||e.title||'').slice(0,100),
+    return {tag:e.tagName,form:!!(e.closest('form')||e.form),label:(e.getAttribute('aria-label')||e.getAttribute('data-brand')||e.getAttribute('data-marca')||img?.alt||e.title||'').slice(0,100),
         image,rects:e.getClientRects().length,display:getComputedStyle(e).display,visibility:getComputedStyle(e).visibility,
         hiddenAncestors:hidden.slice(0,4),hasLink:!!e.getAttribute('href'),hasHandler:!!e.getAttribute('onclick'),
         imageComplete:!!img?.complete,imageWidth:img?.naturalWidth||0};

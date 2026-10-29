@@ -178,7 +178,8 @@ async def test_combined_diagnostic_follows_observed_route_without_ai_or_private_
     assert 'never-print-fiscal' not in '\n'.join(output)
     assert 'never-print-token' not in '\n'.join(output) and 'never-print-query' not in '\n'.join(output)
     if layout:
-        assert reports[0]['layout'][0]['image']=='hidden-logo.svg'
-        assert reports[0]['layout'][0]['rects']==0 and reports[0]['layout'][0]['hiddenAncestors']
+        hidden=next(item for item in reports[0]['layout'] if item['image']=='hidden-logo.svg')
+        assert hidden['rects']==0 and hidden['hiddenAncestors']
+        assert any(item['hasLink'] and not item['image'] for item in reports[0]['layout'])
     else:
         assert 'layout' not in reports[0]

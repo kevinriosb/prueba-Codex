@@ -17,7 +17,7 @@ from .telegram_agent import TelegramAgent
 from .telegram_profiles import TelegramProfiles, normalized
 from .telegram_requests import REQUEST_TEXTS, TelegramRequests
 from .portal_permissions import PortalPermissionRequired
-from .portal_memory import matching_brand,brand_options,has_billing_form,public_form_ready
+from .portal_memory import matching_brand,brand_options,has_billing_form,public_form_ready,unresolved_brand_selector
 
 
 class TelegramClient:
@@ -441,7 +441,8 @@ class TelegramBridge:
             if error.code not in {'agent_turn_limit','tool_limit','run_timeout','context_limit'}:
                 raise
             try:
-                ready=public_form_ready(self.billing.browser_review(owner,ticket['id'])['snapshot'])
+                snapshot=self.billing.browser_review(owner,ticket['id'])['snapshot']
+                ready=public_form_ready(snapshot) or unresolved_brand_selector(ticket,snapshot)
             except AppError as saved_error:
                 if saved_error.status!=404:
                     raise
@@ -635,7 +636,7 @@ class TelegramBridge:
                 source=None
             if source and source.get('extraction_version')!=EXTRACTION_VERSION:
                 buttons.append(('Autorizar lectura de datos faltantes','ra:'+source['id']))
-        if not ready and snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot.get('login_required') and not snapshot['network_blocked']:
+        if not ready and not unresolved_brand_selector(ticket,snapshot) and snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot.get('login_required') and not snapshot['network_blocked']:
             buttons.append(('Continuar revisión con IA','bn:'+ticket['id']))
         if (snapshot.get('partial') or snapshot.get('block_reason') or (snapshot.get('diagnostics') or {}).get('issues')
                 or snapshot.get('brand_selection') and not brands and not preferred):
@@ -658,6 +659,8 @@ class TelegramBridge:
         text='Diagnóstico guardado · sin IA\n'
         text+=f"Descargado: {report['transferred_bytes']/1048576:.2f} MiB. Página: {report['page_bytes']/1048576:.2f} MiB.\n"
         text+=f"Peticiones: {report['requests']}. Recursos reutilizados: {report['cache_hits']}."
+        if saved.get('brand_selection') and 'actions' in saved:
+            text+='\nSelector: '+str(len(brand_options(saved)))+' opciones de marca; '+str(len(saved['actions']))+' controles públicos.'
         if saved.get('omitted_writes'):
             text+='\nSolicitudes de envío bloqueadas: '+str(saved['omitted_writes'])+'.'
         if saved.get('partial'):

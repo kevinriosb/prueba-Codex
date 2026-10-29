@@ -21,6 +21,9 @@ Los botones de revisión usan un contexto público limpio, independiente del
 historial y límite de turnos del chat general. Las cuotas diarias se comparten.
 Una referencia antigua se actualiza sin repetir el clic; los permisos vencidos
 se solicitan de nuevo. Véase [recuperación del portal](RECUPERACION_PORTAL.md).
+El formulario estable encontrado se conserva para el mismo ticket aunque venza
+la sesión o el permiso; abrirlo exige un permiso vigente. Un selector sin opciones
+no reemplaza ese avance. Véase [recuperación del selector](RECUPERACION_SELECTOR.md).
 
 Después de observar el formulario, Telegram puede extraer del ticket los campos
 que este solicita y proponer un llenado con Playwright. **Llenar formulario** es

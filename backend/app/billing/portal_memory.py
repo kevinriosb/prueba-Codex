@@ -43,6 +43,26 @@ def public_form_ready(snapshot):
         and not snapshot.get('submitted') and not snapshot.get('purchase_validated'))
 
 
+def unresolved_brand_selector(ticket,snapshot):
+    return (snapshot.get('brand_selection') and not has_billing_form(snapshot)
+        and not snapshot['network_blocked'] and not snapshot['captcha'] and not snapshot.get('login_required')
+        and not matching_brand(ticket,snapshot) and not any(item['kind']=='expand' for item in snapshot['actions']))
+
+
+def stable_form_bookmark(ticket,snapshot):
+    """URL de un formulario realmente observado; sin referencias de la compra."""
+    if not public_form_ready(snapshot):return None
+    sources=[item.get('source_url') for item in snapshot['fields'] if item.get('key') in FORM_KEYS]
+    if not sources or not all(sources) or len(set(sources))!=1:return None
+    url=sources[0]
+    if bookmark_url(url)!=url:return None
+    decoded=unquote(url).casefold()
+    for name in ('folio','account_number','reference_number','billing_code','web_id'):
+        value=str(ticket.get(name) or '').strip().casefold()
+        if len(value)>=5 and value in decoded:return None
+    return url
+
+
 def brand_options(snapshot):
     options=[item for item in snapshot['actions'] if item.get('brand') and brand_key(item.get('label')) not in
         {'','facebook','instagram','twitter','x','youtube','linkedin','tiktok','inicio','home'}]

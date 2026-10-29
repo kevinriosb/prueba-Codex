@@ -8,7 +8,7 @@ from agents.exceptions import ModelBehaviorError
 from ..errors import AppError
 from .models import validate_fiscal
 from .portal_permissions import PortalPermissionRequired
-from .portal_memory import has_billing_form,matching_brand,public_form_ready
+from .portal_memory import has_billing_form,matching_brand,public_form_ready,unresolved_brand_selector
 from .portal_navigation import next_public_action
 
 OPERATIONS={
@@ -133,6 +133,7 @@ def build_billing_tools(billing):
     def remember_observation(ctx,ticket,record):
         snapshot=record['snapshot']
         ctx.context['browser_form_found']=public_form_ready(snapshot)
+        ctx.context['browser_brand_pending']=unresolved_brand_selector(ticket,snapshot)
         ctx.context['browser_observation']={'ticket_id':ticket['id'],'id':snapshot['observation_id'],
             'references':[item['reference'] for item in snapshot['actions']]}
         review(ctx,'browser',ticket['id'])

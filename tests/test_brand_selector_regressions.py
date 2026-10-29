@@ -106,8 +106,10 @@ def test_model_cannot_follow_footer_in_explicit_brand_selector_without_options(b
     telegram.files['receipt']=image('red');chat(document='receipt');chat(data=button(telegram,'an'))
     chat(data=button(telegram,'wa'))
     assert [item[0] for item in browser.calls]==['open']
-    assert 'brand_selection_pending' in str(model.inputs[-1])
+    assert len(model.inputs)==1  # Cierre del servidor antes de intentar el pie.
     assert 'no se detectaron sus opciones' in telegram.messages[-1][1]
+    assert 'pausada' not in telegram.messages[-1][1].casefold()
+    assert not any('Continuar revisión' in label for label,_ in telegram.messages[-1][2])
     assert mail.sent==sat.calls==[]
 
 
