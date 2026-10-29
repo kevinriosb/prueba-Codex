@@ -711,3 +711,12 @@ no puede reutilizar otra solicitud a partir del historial. El motor del navegado
 frontend, dependencias y Compose se conservan. La comprobación adicional Docker
 permanece pendiente por falta de disco local; no se hicieron envíos reales ni
 llamadas de IA de pago y no se desplegó el VPS desde este entorno.
+
+Las anotaciones de CI permitieron aislar una expectativa de preparación inicial
+y un controlador de navegador sin cerrar. Tres regresiones con arranque fallido,
+arranque cancelado y cierre de contexto fallido demostraron la fuga. La limpieza
+se completa antes de propagar el error, conservando selección, permisos, límites
+y red del navegador. Pasaron 48 pruebas de esta revisión (46,71 s), además de una
+repetición completa previa de 734 casos (353,23 s). La entrega requiere actualizar
+`agent` y `browser`, conservando datos y credenciales. Las advertencias siguen
+siendo errores en pytest; el reporte JUnit los publica en las anotaciones de CI.

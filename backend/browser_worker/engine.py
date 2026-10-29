@@ -144,12 +144,17 @@ class BrowserManager:
         async with self.start_lock:
             if self.browser:
                 return
-            self.playwright=await async_playwright().start()
-            self.browser=await self.playwright.chromium.launch(executable_path=self.executable,headless=True,
-                env={name:os.environ[name] for name in ('PATH','LANG') if name in os.environ}|{'HOME':'/tmp','TMPDIR':'/tmp'},
-                args=['--proxy-server=http://127.0.0.1:9','--proxy-bypass-list=<-loopback>','--disable-dev-shm-usage',
-                    '--disable-background-networking','--disable-quic','--disable-extensions',
-                    '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'])
+            driver=await async_playwright().start()
+            try:
+                browser=await driver.chromium.launch(executable_path=self.executable,headless=True,
+                    env={name:os.environ[name] for name in ('PATH','LANG') if name in os.environ}|{'HOME':'/tmp','TMPDIR':'/tmp'},
+                    args=['--proxy-server=http://127.0.0.1:9','--proxy-bypass-list=<-loopback>','--disable-dev-shm-usage',
+                        '--disable-background-networking','--disable-quic','--disable-extensions',
+                        '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'])
+            except BaseException:
+                await driver.stop()
+                raise
+            self.playwright,self.browser=driver,browser
 
     async def purge(self):
         for identifier,session in list(self.sessions.items()):
@@ -164,14 +169,21 @@ class BrowserManager:
         await session.context.close()
 
     async def close(self):
-        for session in list(self.sessions.values()):
-            await self._dispose(session)
+        sessions=list(self.sessions.values())
         self.sessions.clear()
-        if self.browser:
-            await self.browser.close()
-        if self.playwright:
-            await self.playwright.stop()
-        await self.fetcher.close()
+        browser,driver=self.browser,self.playwright
+        self.browser=self.playwright=None
+        closers=[lambda session=session:self._dispose(session) for session in sessions]
+        if browser:closers.append(browser.close)
+        if driver:closers.append(driver.stop)
+        closers.append(self.fetcher.close)
+        first_error=None
+        for close in closers:
+            try:
+                await close()
+            except BaseException as error:
+                if first_error is None:first_error=error
+        if first_error is not None:raise first_error
 
     async def _route(self,session,route):
         request=route.request

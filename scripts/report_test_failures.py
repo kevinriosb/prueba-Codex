@@ -20,7 +20,9 @@ def main(path):
                 title = case.get('classname', '') + '::' + case.get('name', 'pytest')
                 title = escaped(title).replace(',', '%2C').replace(':', '%3A')
                 detail = failure.text or failure.get('message', 'Fallo sin detalle.')
-                print('::error title=' + title + '::' + escaped(detail[-6000:]))
+                if len(detail)>6000:
+                    detail=detail[:2000]+'\n[... detalle intermedio omitido ...]\n'+detail[-4000:]
+                print('::error title=' + title + '::' + escaped(detail))
                 count += 1
                 if count >= 10:
                     return

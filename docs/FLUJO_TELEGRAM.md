@@ -108,23 +108,35 @@ inválidos y comprobación de espacios. Las pruebas previas de fotos diferentes 
 portales guardados incorporan ahora la elección humana, conservando sus controles
 sobre permisos, datos, cuotas, duplicados y ausencia de envío.
 
-Se conservan el motor Playwright, frontend, dependencias, claves, esquema y
-archivos Docker/Compose. La foto temporal de la captura llegó como video; ahora
+Se conservan navegación Playwright, frontend, dependencias, claves, esquema y
+archivos Docker/Compose. Se corrigió el ciclo de recursos del navegador: un
+arranque fallido o cancelado cierra su controlador, y un error al cerrar un
+contexto no impide cerrar navegador, controlador y transporte. Tres pruebas
+con fallos provocados demostraron la fuga anterior y comprobaron el cierre.
+La prueba de foto reenviada exige datos anteriores ya leídos; admite una sola
+continuación nativa de preparación si el recorrido inicial se pausó. La foto temporal de la captura llegó como video; ahora
 se explica el formato admitido antes de consultar al modelo. La prueba adicional
 Docker sigue limitada por el disco del entorno de desarrollo, sin desplegar ni
 alterar contenedores del VPS desde aquí.
 
-Actualizar únicamente el agente deja el navegador existente funcionando:
+Actualizar ambos servicios existentes aplica los menús y la corrección de cierre,
+conservando sus volúmenes y credenciales:
 
 ```bash
 (
   set -e
   cd /opt/lilyapp-agent
   git pull --ff-only
-  docker compose -f compose.hostinger.yaml -f compose.browser.yaml build agent
-  docker compose -f compose.hostinger.yaml -f compose.browser.yaml up -d --no-deps --wait --wait-timeout 180 agent
+  docker compose -f compose.hostinger.yaml -f compose.browser.yaml build agent browser
+  docker compose -f compose.hostinger.yaml -f compose.browser.yaml up -d --no-deps --wait --wait-timeout 180 agent browser
   curl --fail --silent --show-error --max-time 20 https://agente.lilyapp.mx/health
 )
 ```
 
 Después, `/start` o `/menu`. No se borra ni reinicia la información existente.
+
+La repetición completa posterior pasó 734 pruebas (353,23 s). Las 48 pruebas
+posteriores de ciclo de recursos, reemplazo y flujo nativo pasaron (46,71 s).
+GitHub publica ahora el nombre y detalle de cada fallo como anotación a partir
+del informe JUnit; la descarga de logs no estuvo disponible en este entorno.
+No se silencian advertencias de recursos ni se cambian los límites del portal.

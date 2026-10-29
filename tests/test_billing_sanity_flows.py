@@ -14,9 +14,17 @@ from .test_telegram_workflow import choice
 
 
 def test_an_old_upload_button_cannot_fill_using_data_from_the_previous_photo(billing_client):
-    values,browser,_=prepared(billing_client)
+    values,browser,model=prepared(billing_client)
     client,app,extractor,mail,sat,telegram,chat=values
     ticket=app.state.billing.store.list('ticket',owner(app))[0]
+    # El escenario requiere datos anteriores verificados. Si la navegación se
+    # pausó antes de leerlos, usar una continuación nativa acotada como el usuario.
+    if ticket.get('portal_data_document_id')!=ticket['document_id']:
+        model.outputs=[[call('portal_browser_observe')]]
+        client.portal.call(app.state.telegram._run_browser,owner(app),123,ticket['id'])
+        ticket=app.state.billing.resolve_ticket(owner(app),ticket['id'])
+    assert ticket.get('portal_data_document_id')==ticket['document_id'], {
+        'calls':extractor.calls,'browser':browser.calls,'messages':[message[1] for message in telegram.messages[-2:]]}
     chat(data='xu:'+ticket['id'])
     telegram.files['replacement']=image('blue');chat(document='replacement')
     chat(data=choice(telegram,'same'))
