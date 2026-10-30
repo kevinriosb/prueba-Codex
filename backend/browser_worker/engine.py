@@ -113,6 +113,7 @@ class Session:
     page:object
     allowed:set
     public_route:bool=False
+    document_allowed:set=field(default_factory=set)
     created:float=field(default_factory=time.monotonic)
     observation:str=''
     actions:dict=field(default_factory=dict)
@@ -249,7 +250,8 @@ class BrowserManager:
                     return
                 target=origin(url)
                 self._count_request(session,page)
-                if target not in session.allowed and not self._route_origin(session,target,document=request.resource_type=='document'):
+                permitted=session.document_allowed if request.resource_type=='document' else session.allowed
+                if target not in permitted and not self._route_origin(session,target,document=request.resource_type=='document'):
                     await self._permission_block(session,route,url,main_document=main_document)
                     return
                 cacheable=request.resource_type in {'script','stylesheet'}
@@ -296,7 +298,8 @@ class BrowserManager:
                 if not main_document and tracking_url(target_url):
                     await route.abort('blockedbyclient')
                     return
-                if origin(target_url) not in session.allowed and not self._route_origin(session,origin(target_url),document=request.resource_type=='document'):
+                permitted=session.document_allowed if request.resource_type=='document' else session.allowed
+                if origin(target_url) not in permitted and not self._route_origin(session,origin(target_url),document=request.resource_type=='document'):
                     await self._permission_block(session,route,target_url,main_document=main_document,headers=headers)
                     return
                 # Los documentos pasan por una referencia observada. Los recursos
@@ -380,14 +383,16 @@ class BrowserManager:
             raise BrowserError('browser_requests','Se alcanzó el límite de peticiones públicas.')
 
     def _route_origin(self,session,target,*,document=False):
-        # El permiso de recorrido habilita el presupuesto, nunca nuevos dominios.
-        # Documentos, iframes y recursos deben proceder de permisos explícitos.
-        if not session.public_route:return False
+        # Solo los recursos auxiliares heredan el permiso de recorrido. Que un
+        # CDN esté permitido no autoriza navegar a sus documentos o iframes.
+        if document or not session.public_route:return False
+        if target in session.allowed:return True
         if len(session.allowed)>=12:
             session.unsafe_blocked=True
             session.block_reason='origin_limit'
             raise BrowserError('browser_origin','Se alcanzó el límite de destinos del recorrido público.')
-        return False
+        session.allowed.add(target)
+        return True
 
     async def _permission_block(self,session,route,url,*,main_document,headers=None):
         session.blocked.add(origin(url))
@@ -428,7 +433,8 @@ class BrowserManager:
         await context.route_web_socket('**/*',lambda socket:socket.close())
         page=await context.new_page()
         context.on('page',lambda popup:popup.close())
-        session=Session(owner,context,page,allowed,public_route=public_route,last_public_page=public_page(url))
+        session=Session(owner,context,page,allowed,public_route=public_route,
+            document_allowed=set(allowed),last_public_page=public_page(url))
         def finished(request):
             session.request_pages.pop(id(request),None)
         def failed(request):
@@ -506,7 +512,7 @@ class BrowserManager:
                     ancestor=ancestor.parent_frame
                     source=ancestor.url
                 try:
-                    approved=origin(source) in session.allowed
+                    approved=origin(source) in session.document_allowed
                 except BrowserError:
                     approved=False
                 if not approved:
@@ -557,7 +563,7 @@ class BrowserManager:
                                 continue
                             if url==secure_link(source):
                                 continue
-                            if origin(url) not in session.allowed:
+                            if origin(url) not in session.document_allowed:
                                 permission_origin=origin(url)
                             item['url']=url
                         except BrowserError:
@@ -583,6 +589,7 @@ class BrowserManager:
             'login_required':login_required,'partial':partial or len(fields)>24 or len(actions)>48,
             'unsupported_required':unsupported_required[:10],
             'blocked_origins':sorted(session.blocked)[:12],'network_blocked':session.network_blocked,
+            'blocked_document_origins':sorted(session.blocked_documents)[:12],
             'block_reason':session.block_reason,'omitted_writes':session.omitted_writes,'brand_selection':brand_selection,
             'requests_remaining':max(0,(ROUTE_REQUEST_LIMIT if session.public_route else PAGE_REQUEST_LIMIT)-session.requests),
             'page_requests_remaining':max(0,PAGE_REQUEST_LIMIT-session.page_requests),
@@ -620,7 +627,7 @@ class BrowserManager:
             if session.steps>=self.max_steps:
                 raise BrowserError('browser_steps','La revisión alcanzó su límite de navegación. Requiere revisión humana.')
             frame,item=session.actions[reference]
-            if item['kind']=='link' and origin(item['url']) not in session.allowed:
+            if item['kind']=='link' and origin(item['url']) not in session.document_allowed:
                 raise BrowserError('browser_origin','Autoriza el nuevo dominio antes de abrirlo.',403)
             session.actions.pop(reference)
             session.observation=''
@@ -650,17 +657,23 @@ class BrowserManager:
         async with session.lock:
             if session.private:
                 raise BrowserError('browser_private','La sesión de llenado conserva la red cerrada.')
-            allowed={origin(value) for value in allowed}
+            approved_documents={origin(value) for value in allowed}
+            allowed=set(approved_documents)
             if public_route:
                 allowed|=session.allowed
             if not allowed or len(allowed)>12 or not session.allowed<=allowed:
                 raise BrowserError('browser_origin','Permisos de revisión no válidos.',403)
             session.allowed=allowed
+            session.document_allowed.update(approved_documents)
             session.public_route=session.public_route or public_route
-            newly_allowed=session.blocked & allowed
-            session.blocked.difference_update(allowed)
-            session.blocked_documents.difference_update(allowed)
-            main_allowed=not session.main_permission_origin or session.main_permission_origin in allowed
+            if session.public_route:
+                for target in sorted(session.blocked-session.blocked_documents):
+                    if len(session.allowed)>=12:break
+                    self._route_origin(session,target)
+            newly_allowed=((session.blocked-session.blocked_documents) & session.allowed) | (session.blocked_documents & session.document_allowed)
+            session.blocked.difference_update(newly_allowed)
+            session.blocked_documents.difference_update(session.document_allowed)
+            main_allowed=not session.main_permission_origin or session.main_permission_origin in session.document_allowed
             if newly_allowed and main_allowed and not session.unsafe_blocked:
                 session.network_blocked=False
                 session.block_reason=None

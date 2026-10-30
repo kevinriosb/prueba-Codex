@@ -359,7 +359,7 @@ class TelegramBridge:
                     buttons.append(('Continuar facturación','lv:'+identifier))
                 if not self.billing.portal_permissions.route_allowed(owner,ticket):
                     permission=self.billing.portal_permissions.request(owner,identifier,route=True)
-                    text+='\n¿Permites revisar este portal y seguir su ruta pública de facturación, confirmando cada nuevo dominio? Usa IA; sin enviar datos fiscales ni facturar.'
+                    text+='\n¿Permites revisar este portal y seguir su ruta pública de facturación, confirmando nuevos dominios de navegación? Usa IA; sin enviar datos fiscales ni facturar.'
                     buttons.extend(self._permission_buttons(permission))
                 else:
                     buttons.append(('Revisar portal con IA','bn:'+identifier))
@@ -448,7 +448,7 @@ class TelegramBridge:
         for target in targets:
             text+='\nRuta: '+' → '.join(urlsplit(value).hostname for value in [*chain,target])
         if permission.get('route_version')==1:
-            text+='\nIncluye recorrer este dominio. Cada nuevo dominio, también para recursos, pedirá confirmación.'
+            text+='\nLos cambios de dominio de páginas o marcos pedirán confirmación. Sus recursos auxiliares admitidos se cargan dentro de los límites del recorrido.'
         text+='\nSolo navegación pública; sin enviar datos fiscales ni facturar.'
         if permission['intent']=='browse':
             text+=' La revisión con IA consume tokens.'
@@ -620,7 +620,9 @@ class TelegramBridge:
             text+='\nPuedes elegir la marca o continuar la revisión con IA.'
         if snapshot['captcha']:
             text+='\nEl sitio requiere CAPTCHA; intervención humana.'
-        needs_resources=bool(pending) and (awaiting_form or snapshot['network_blocked'] or not (snapshot['fields'] or snapshot['actions']))
+        documents=snapshot.get('blocked_document_origins') or (pending if snapshot.get('block_reason')=='permission' else [])
+        targets=[value for value in documents if value in pending] if self.billing.portal_permissions.route_allowed(owner,ticket) else pending
+        needs_resources=bool(targets) and (bool(documents) or awaiting_form or snapshot['network_blocked'] or not (snapshot['fields'] or snapshot['actions']))
         if snapshot['network_blocked']:
             reasons={'unsupported_request':'El sitio intentó enviar una solicitud no habilitada.',
                 'unsupported_document':'El destino es un archivo o respuesta sin formulario HTML.',
@@ -640,7 +642,12 @@ class TelegramBridge:
                 'permission':'Falta autorizar el destino de navegación.'}
             text+='\n'+reasons.get(snapshot.get('block_reason'),'Se bloqueó la carga del destino; revisa el diagnóstico.')
         if needs_resources:
-            text+='\n¿Permites cargar estos recursos del sitio?\n'+'\n'.join(pending)
+            if documents:
+                text+='\n¿Permites revisar estos dominios de navegación?'
+                chain=ticket.get('portal_domain_chain') or [portal_origin(snapshot['page'])]
+                for target in targets:text+='\nRuta: '+' → '.join(urlsplit(value).hostname for value in [*chain,target])
+            else:
+                text+='\n¿Permites cargar estos recursos del sitio?\n'+'\n'.join(targets)
         if ready:
             missing_labels=list(dict.fromkeys(label.rstrip('* ').strip() for label in form_missing))
             if missing_labels:
@@ -690,7 +697,7 @@ class TelegramBridge:
         if proposal:
             buttons.append(('Guardar portal de '+proposal['merchant'][:35],'bs:'+ticket['id']+':'+snapshot['observation_id']))
         if needs_resources:
-            permission=self.billing.portal_permissions.request(owner,ticket['id'],origins=pending)
+            permission=self.billing.portal_permissions.request(owner,ticket['id'],origins=targets)
             buttons.extend(self._permission_buttons(permission))
         missing=browser_missing_fields(ticket)
         if missing and not ticket.get('delivery'):

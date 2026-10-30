@@ -75,6 +75,7 @@ class Observation(BaseModel):
     actions:list[PublicAction]=Field(max_length=48)
     captcha:bool
     blocked_origins:list[str]=Field(max_length=12)
+    blocked_document_origins:list[str]=Field(default_factory=list,max_length=12)
     network_blocked:bool
     block_reason:str|None=Field(default=None,pattern=r'^(unsupported_request|unsupported_document|request_limit|page_request_limit|size_limit|page_size_limit|response_size_limit|origin_limit|navigation_failed|permission|timeout|network_error|dns_error|tls_error|private_address|http_error)$')
     omitted_writes:int=Field(default=0,ge=0)
