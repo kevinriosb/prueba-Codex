@@ -2,6 +2,7 @@
 import re
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
+from typing import Literal
 
 import httpx2
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -23,6 +24,15 @@ class PublicField(BaseModel):
     editable:bool=True
     placeholder:str=Field(default='',max_length=100)
     max_length:int|None=Field(default=None,ge=0)
+
+
+class FieldMeaning(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    reference:str=Field(pattern=r'^[a-f0-9]{8}$')
+    key:Literal['rfc','name','postal_code','email','fiscal_regime','cfdi_use',
+        'folio','account_number','reference_number','billing_code','web_id','store_number',
+        'register_number','toll_station','lane','purchase_date','purchase_time','total','issuer_rfc']|None
+
 
 
 class PublicAction(BaseModel):
