@@ -37,6 +37,7 @@ class PortalDiscovery:
         return self.store.update('ticket',owner,ticket['id'],ticket)
 
     async def find(self,owner,ticket_id):
+        self.billing.require_enabled()
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         ticket=self.repair(owner,ticket)
         if ticket.get('billing_url') or ticket.get('email_explicitly_for_billing') and ticket.get('billing_email'):return ticket

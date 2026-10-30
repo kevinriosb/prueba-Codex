@@ -209,3 +209,33 @@ def test_an_officially_linked_provider_opened_by_web_search_counts_as_a_real_sou
     extractor=DocumentExtractor(app.state.service,app.state.settings)
     result=client.portal.call(extractor.discover_official_site,'Restaurante ejemplo')
     assert result['url']==provider
+
+
+def test_expired_official_cache_does_not_block_a_new_lookup_for_the_same_business(billing_client):
+    values,browser=modern(billing_client)
+    client,app,extractor,mail,sat,telegram,chat=values
+    chat(data=button(telegram,'an'))
+    ticket=app.state.billing.store.list('ticket',owner(app))[0]
+    cached=app.state.billing.store.list('portal_discovery',owner(app))[0]
+    with app.state.database.connection(True) as conn:
+        conn.execute('UPDATE billing_records SET expires=0 WHERE id=?',(cached['id'],))
+    app.state.billing.store.update('ticket',owner(app),ticket['id'],ticket|{'billing_url':None})
+    result=client.portal.call(app.state.billing.portal_discovery.find,owner(app),ticket['id'])
+    assert result['billing_url']==ROOT and len(extractor.searches)==2
+    assert len(app.state.billing.store.list('portal_discovery',owner(app)))==1
+
+
+def test_known_first_read_values_do_not_need_the_expired_original_photo(billing_client):
+    values,browser=modern(billing_client)
+    client,app,extractor,mail,sat,telegram,chat=values
+    browser.pages.pages[FORM]='''<form><label>RFC<input required></label><label>Ticket<input required></label><label>Fecha<input type=date required></label></form>'''
+    chat(data=button(telegram,'an'))
+    ticket=app.state.billing.store.list('ticket',owner(app))[0]
+    assert not ticket.get('portal_data_document_id')
+    with app.state.database.connection(True) as conn:
+        conn.execute('UPDATE billing_records SET expires=0 WHERE id=?',(ticket['document_id'],))
+    calls=len(extractor.calls)
+    chat(data='bn:'+ticket['id'])
+    assert 'Reenvía' not in telegram.messages[-1][1]
+    assert app.state.billing.resolve_ticket(owner(app),ticket['id']).get('portal_data_error') is None
+    assert len(extractor.calls)==calls

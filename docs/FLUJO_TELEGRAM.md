@@ -142,6 +142,11 @@ manual de la web y ahorro de una segunda lectura si todos los datos ya existen.
 El SDK, el webhook, el almacenamiento y Chromium son reales; las páginas, el
 modelo, correo y SAT son simulados. Las pruebas no emiten facturas reales.
 
+Otras **65 regresiones** (90,30 s) comprueban también la caducidad: una caché
+vencida permite consultar de nuevo el mismo comercio y los datos de la primera
+lectura siguen utilizables después de vencer la foto, sin pedir otra subida.
+Una foto de reemplazo pendiente de verificar mantiene su protección original.
+
 Esta revisión conserva el motor Playwright, frontend, dependencias, claves,
 esquema y archivos Docker/Compose. No despliega ni altera contenedores del VPS.
 

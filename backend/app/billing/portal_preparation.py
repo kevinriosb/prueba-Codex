@@ -192,10 +192,10 @@ class PortalPreparation:
             return False
         if not consent and not ticket.get('portal_driven') and all(ticket.get(item['key']) for item in fields):
             return False
+        if not consent and ticket.get('receipt_summary_read') and not self.replacement_pending(owner,ticket) and all(ticket.get(item['key']) for item in fields):
+            return False
         document=self.source(owner,ticket)
         scope=document.get('analysis_scope')
-        if not consent and scope=='portal-fields-v3' and not self.replacement_pending(owner,ticket) and all(ticket.get(item['key']) for item in fields):
-            return False
         if not consent and scope not in {'portal-fields-v1','portal-fields-v2','portal-fields-v3'}:return False
         lookup=self.store.digest('portal-data:'+ticket['id']+document['sha256']+signature)
         previous=self.store.find('portal_data',owner,lookup)
