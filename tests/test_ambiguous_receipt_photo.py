@@ -98,7 +98,9 @@ def test_requested_field_photo_keeps_its_recorded_expectation_and_applies_withou
         ticket = app.state.telegram.workflow.active(owner(app))
         app.state.billing.store.update('ticket',owner(app),ticket['id'],ticket|{'store_number':None})
         chat(data='lv:'+ticket['id'])
-        expectation = app.state.telegram._state(owner(app))['portal_field_input']
+        state_now = app.state.telegram._state(owner(app))
+        assert 'portal_field_input' in state_now, 'DIAGNOSTICO ultimo mensaje: '+repr(telegram.messages[-1][1])[:600]+' botones: '+repr(telegram.messages[-1][2])[:400]
+        expectation = state_now['portal_field_input']
         assert expectation['ticket_id']==ticket['id'] and expectation['transaction_id']
     telegram.files['field'] = image('yellow'); chat(document='field')
     assert app.state.telegram.workflow.pending(owner(app)) is None
