@@ -19,6 +19,7 @@ from .telegram_requests import REQUEST_TEXTS, TelegramRequests
 from .telegram_workflow import TelegramWorkflow
 from .telegram_submission import TelegramSubmission
 from .telegram_discovery import TelegramDiscovery
+from .telegram_receipts import TelegramReceipts
 from .portal_permissions import PortalPermissionRequired
 from .portal_memory import matching_brand,brand_options,has_billing_form,public_form_ready,unresolved_brand_selector
 
@@ -98,6 +99,7 @@ class TelegramBridge:
         self.workflow=TelegramWorkflow(self)
         self.submission=TelegramSubmission(self)
         self.discovery=TelegramDiscovery(self)
+        self.receipts=TelegramReceipts(self)
         self._locks={}
 
     @property
@@ -908,6 +910,9 @@ class TelegramBridge:
         elif prefix=='xa':
             await self.billing.portal_preparation.read_approved(owner,identifier)
             review=self.billing.store.get('portal_data_review',owner,identifier)
+            if review.get('receipt_update'):
+                await self.receipts.after_read(owner,chat_id,review)
+                return
             ticket=self.billing.resolve_ticket(owner,review['ticket_id'])
             try:
                 await self.billing.portal_preparation.current(owner,ticket['id'])
@@ -1115,6 +1120,7 @@ class TelegramBridge:
             await self.client.send(chat_id,'Seguimiento '+('activado con la política revisada.' if prefix=='on' else 'detenido.'))
 
     async def _message(self,owner,chat_id,message):
+        if await self.receipts.before(owner,chat_id,message):return
         if await self.workflow.message(owner,chat_id,message):
             return
         if await self.discovery.message(owner,chat_id,message):return
@@ -1218,6 +1224,7 @@ class TelegramBridge:
             active=self.workflow.active(owner)
             state=self._state(owner)
             explicit_csf=caption.casefold().startswith('/csf') or state.get('replace_profile_id') or state.get('expected_upload')=='csf'
+            if await self.receipts.receive(owner,chat_id,message,data,explicit_csf=explicit_csf):return
             if state.get('portal_upload_ticket') and (explicit_csf or not active or active['id']!=state['portal_upload_ticket']):
                 state.pop('portal_upload_ticket',None)
                 self._save_state(owner,state)

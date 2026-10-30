@@ -15,7 +15,6 @@ from .test_billing import billing_client
 from .test_browser_worker import Pages
 from .test_telegram_agent import create,button,owner
 from .test_telegram_documents import confirm_profile
-from .test_telegram_workflow import choice
 
 
 ROOT='https://merchant.example/'
@@ -183,7 +182,7 @@ def test_expired_photo_is_replaced_on_the_same_ticket_without_requesting_a_csf(b
     assert len(extractor.calls)==2 and 'foto temporal venció' in telegram.messages[-1][1]
     chat(data=button(telegram,'xu'))
     telegram.files['again']=image('red');chat(document='again')
-    chat(data=choice(telegram,'same'))
+    assert app.state.telegram.workflow.pending(owner(app)) is None
     assert len(extractor.calls)==2
     chat(data=button(telegram,'xa'))
     tickets=app.state.billing.store.list('ticket',owner(app))

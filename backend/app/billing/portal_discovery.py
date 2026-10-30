@@ -36,7 +36,7 @@ class PortalDiscovery:
             portal_discovery={'source':source,'url':url,'evidence':str(evidence or '')[:500]},portal_discovery_error=None)
         return self.store.update('ticket',owner,ticket['id'],ticket)
 
-    async def find(self,owner,ticket_id):
+    async def find(self,owner,ticket_id,*,refresh=False):
         self.billing.require_enabled()
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         ticket=self.repair(owner,ticket)
@@ -49,7 +49,7 @@ class PortalDiscovery:
             return self.assign(owner,ticket,printed,'printed',evidence)
         lookup=self.store.digest('official-site:'+ticket['merchant'].strip().casefold())
         old=self.store.find('portal_discovery',owner,lookup)
-        if old:
+        if old and (not refresh or old.get('url')):
             if old.get('url'):return self.assign(owner,ticket,old['url'],'web_search',old.get('evidence'))
             return self.store.update('ticket',owner,ticket['id'],ticket|{'portal_discovery_error':old.get('message') or 'No encontré una web oficial verificable. Escríbela.'})
         if not hasattr(self.billing.extractor,'discover_official_site'):
@@ -60,6 +60,10 @@ class PortalDiscovery:
             return self.store.update('ticket',owner,ticket['id'],ticket|{'portal_discovery_error':'Alcanzaste el límite de búsquedas. Puedes escribir la web oficial.'})
         if self.billing.analysis_lock.locked():raise AppError(429,'billing_busy','Hay otra lectura en curso. Espera unos segundos.')
         async with self.billing.analysis_lock:
+            if old:
+                # El botón solicita otro intento real. Conservar el anterior
+                # para que los fallos también cuenten en la cuota diaria.
+                self.store.change_lookup('portal_discovery',owner,old['id'],self.store.digest('previous-official:'+old['id']))
             record=self.store.add('portal_discovery',owner,{'day':day,'merchant':ticket['merchant']},lookup=lookup,
                 state='pending',expires=time.time()+86400)
             self.store.claim('portal_discovery',owner,record['id'])

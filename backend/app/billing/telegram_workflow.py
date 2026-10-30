@@ -14,7 +14,7 @@ REVIEW_ACTIONS = {'xa':'portal_data_review','xg':'portal_fill_review','xs':'port
     'er':'email_approval','se':'email_approval','no':'email_approval','wa':'portal_permission','wx':'portal_permission'}
 REVIEW_ACTIONS.update({'ls':'portal_send_review','lm':'portal_transaction','la':'portal_field_photo','lu':'portal_field_photo'})
 TRANSIENT = ('last_ticket_id','browser_ticket_id','last_document_id','portal_upload_ticket','ticket_input','browser_choice',
-    'expected_upload','replace_profile_id','profile_input','portal_field_input','portal_site_input')
+    'expected_upload','replace_profile_id','profile_input','portal_field_input','portal_site_input','receipt_update_ticket')
 
 
 class TelegramWorkflow:

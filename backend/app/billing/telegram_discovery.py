@@ -33,7 +33,8 @@ class TelegramDiscovery:
     async def search(self,owner,chat_id,ticket_id):
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         self.billing.portal_submission.guard(owner,ticket)
-        ticket=await self.billing.portal_discovery.find(owner,ticket['id'])
+        await self.bridge.client.send(chat_id,'Buscando facturación en la web oficial…')
+        ticket=await self.billing.portal_discovery.find(owner,ticket['id'],refresh=True)
         await self.open(owner,chat_id,ticket,'official_search_button')
 
     async def ask_site(self,owner,chat_id,ticket_id):

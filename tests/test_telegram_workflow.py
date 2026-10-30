@@ -312,13 +312,16 @@ def test_confirmed_replacement_reuses_staged_file_at_storage_limit(billing_clien
     app.state.billing.settings.billing_max_documents=count+1
     chat(data='xu:'+ticket['id'])
     telegram.files['replacement']=image('yellow');chat(document='replacement')
-    staged=app.state.telegram.workflow.pending(owner(app))['document_id']
+    staged=app.state.telegram.workflow.active(owner(app))['document_id']
     expiry=app.state.billing.document(owner(app),staged)['_expires']
-    chat(data=choice(telegram,'same'))
+    assert app.state.telegram.workflow.pending(owner(app)) is None
     assert app.state.billing.resolve_ticket(owner(app),ticket['id'])['document_id']==staged
     assert app.state.billing.store.count('document',owner(app))==count+1
     assert app.state.billing.document(owner(app),staged)['_expires']==expiry
     assert 'xa:' in str(telegram.messages[-1][2]) and 'xg:' not in str(telegram.messages[-1][2])
+    chat(data=button(telegram,'xa'))
+    assert app.state.billing.store.count('document',owner(app))==count+1
+    assert app.state.billing.document(owner(app),staged)['_expires']==expiry
 
 
 def test_expired_new_file_preserves_request_and_allows_starting_another_without_cancelling(billing_client):
@@ -347,15 +350,16 @@ def test_replacing_an_expired_replacement_does_not_collide_with_its_old_lookup(b
     with app.state.database.connection(True) as conn:
         conn.execute('UPDATE billing_records SET expires=0 WHERE id=?',(expired['id'],))
     chat(data='xu:'+ticket['id']);telegram.files['again']=image('yellow');chat(document='again')
-    staged=app.state.telegram.workflow.pending(who)['document_id']
-    chat(data=choice(telegram,'same'))
+    staged=app.state.telegram.workflow.active(who)['document_id']
+    assert app.state.telegram.workflow.pending(who) is None
     assert app.state.billing.resolve_ticket(who,ticket['id'])['document_id']==staged
     assert 'xa:' in str(telegram.messages[-1][2]) and len(extractor.calls)==3
 
 
 def test_replacement_uses_validated_photo_bytes_without_recompressing_it(billing_client):
-    import io,random
+    import base64,io,random
     from PIL import Image
+    from backend.app.billing.documents import inspect_document
     from .test_portal_preparation import prepared
     result,browser,_=prepared(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
@@ -363,12 +367,10 @@ def test_replacement_uses_validated_photo_bytes_without_recompressing_it(billing
     picture=Image.frombytes('RGB',(96,96),random.Random(42).randbytes(96*96*3))
     original=io.BytesIO();picture.save(original,format='PNG')
     chat(data='xu:'+ticket['id']);telegram.files['detail']=original.getvalue();chat(document='detail')
-    staged=app.state.telegram.workflow.pending(who)['document_id']
-    source=app.state.billing.document(who,staged)
-    chat(data=choice(telegram,'same'))
+    staged=app.state.telegram.workflow.active(who)['document_id']
     saved=app.state.billing.document(who,staged)
     assert app.state.billing.resolve_ticket(who,ticket['id'])['document_id']==staged
-    assert saved['sha256']==source['sha256'] and saved['data']==source['data']
+    assert base64.b64decode(saved['data'])==inspect_document(original.getvalue(),app.state.settings.billing_max_upload_bytes)[1]
     assert 'xa:' in str(telegram.messages[-1][2]) and len(extractor.calls)==3
 
 

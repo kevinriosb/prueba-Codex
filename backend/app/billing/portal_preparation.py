@@ -155,10 +155,33 @@ class PortalPreparation:
             'fields':[{'key':item['key'],'label':item['label']} for item in fields]},
             lookup=lookup,state='pending',expires=time.time()+self.billing.settings.approval_ttl_seconds)
 
+    def receipt_update_request(self,owner,ticket_id):
+        ticket=self.billing.resolve_ticket(owner,ticket_id)
+        document=self.source(owner,ticket)
+        fields=[{'key':key,'label':label} for key,label in [('folio','Folio'),('purchase_date','Fecha'),('total','Importe')]]
+        for item in (ticket.get('portal_browser') or {}).get('fields',[]):
+            if item.get('key') in RECEIPT_KEYS and not any(field['key']==item['key'] for field in fields):
+                fields.append({'key':item['key'],'label':item['label']})
+        signature=self.store.digest('receipt-update-v1:'+json.dumps(fields,sort_keys=True))
+        scope=self.billing.portal_permissions.scope(ticket)
+        lookup=self.store.digest('receipt-update:'+ticket['id']+document['id']+signature+scope)
+        old=self.store.find('portal_data_review',owner,lookup)
+        if old:return old
+        return self.store.add('portal_data_review',owner,{'ticket_id':ticket['id'],'document_id':document['id'],
+            'sha256':document['sha256'],'signature':signature,'scope':scope,
+            'fields':fields,'receipt_update':True},lookup=lookup,state='pending',
+            expires=time.time()+self.billing.settings.approval_ttl_seconds)
+
     async def read_approved(self,owner,identifier):
         review=self.store.get('portal_data_review',owner,identifier)
         ticket=self.billing.resolve_ticket(owner,review['ticket_id'])
         document=self.source(owner,ticket)
+        if review.get('receipt_update'):
+            if (review['document_id']!=document['id'] or review['sha256']!=document['sha256']
+                    or review['scope']!=self.billing.portal_permissions.scope(ticket)):
+                raise AppError(409,'portal_changed','Cambió la foto o solicitud. Usa la revisión actual.')
+            self.store.claim('portal_data_review',owner,identifier)
+            return await self._read(owner,ticket['id'],review['fields'],review['signature'],consent=True)
         record=await self.current(owner,ticket['id'])
         if (review['document_id']!=document['id'] or review['sha256']!=document['sha256']
                 or review['signature']!=self.shape_key(record['snapshot']) or review['scope']!=self.billing.portal_permissions.scope(ticket)):
@@ -359,7 +382,9 @@ class PortalPreparation:
             # receive_document ya verificó y normalizó estos bytes. Repetir la
             # compresión JPEG cambia la huella y degrada una foto con detalle.
             content=base64.b64decode(staged['data'],validate=True)
-            if (staged['purpose']!='unclassified' or content!=data
+            same_ticket=(staged['purpose']=='ticket' and staged.get('ticket_id')==ticket['id']
+                and staged.get('profile_id')==ticket['profile_id'])
+            if (staged['purpose']!='unclassified' and not same_ticket or content!=data
                     or hashlib.sha256(content).hexdigest()!=staged['sha256']):
                 raise AppError(409,'portal_source','El archivo recibido cambió. Revisa el ticket.')
             mime=staged['mime']
@@ -368,6 +393,8 @@ class PortalPreparation:
         sha=hashlib.sha256(content).hexdigest()
         lookup=self.store.digest('portal-source:'+ticket['id']+sha)
         document=self.store.find('document',owner,lookup)
+        if not document and staged and staged['purpose']=='ticket':
+            document=self.store.update('document',owner,staged['id'],staged|{'portal_replacement':True})
         if not document and staged:
             document=self.store.update('document',owner,staged['id'],staged|{'purpose':'ticket',
                 'profile_id':ticket['profile_id'],'ticket_id':ticket['id'],'portal_replacement':True,'intended_purpose':None})

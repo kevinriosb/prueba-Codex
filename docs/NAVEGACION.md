@@ -290,3 +290,17 @@ Con autenticación y CSRF para mutaciones:
 - `DELETE /api/billing/portals/{id}` con `confirmed: true`: olvida un enlace propio.
 
 No hay herramienta del modelo que confirme o guarde el enlace por el usuario.
+
+### Fotos de corrección y reintentos de búsqueda
+
+Una foto reenviada con «el mismo ticket», «la foto nuevamente», tras pedir una
+foto nueva o mientras faltan campos continúa la solicitud activa. Conserva su
+perfil y formulario y ofrece leer la foto actualizada. Las fotos ya verificadas
+se reutilizan. Un campo pedido expresamente sigue admitiendo texto o un recorte.
+«Otro ticket» en la foto o «Nueva solicitud» abre otra y pausa la anterior.
+
+«Buscar facturación oficial con IA» hace un intento nuevo si el anterior no
+encontró una web. El intento anterior se conserva en la cuota; consultar el
+estado no repite búsquedas. Se exige una búsqueda web real y una fuente del
+sitio elegido, admitiendo su variante con `www`. Una búsqueda sin resultado
+muestra el motivo y permite escribir la web. No autoriza emitir la factura.

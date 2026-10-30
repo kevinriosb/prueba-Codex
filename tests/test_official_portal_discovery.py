@@ -74,6 +74,8 @@ def test_basic_visible_values_are_read_in_the_first_real_sdk_call(billing_client
     (True,ROOT,ROOT,False,ROOT),
     (False,ROOT,ROOT,False,None),
     (True,ROOT,'https://directory.example/',False,None),
+    (True,'https://www.merchant.example/',ROOT,False,'https://www.merchant.example/'),
+    (True,ROOT,'https://other.merchant.example/',False,None),
     (True,ROOT,ROOT,True,None),
     (True,'https://survey.example/encuesta', 'https://survey.example/encuesta',False,None),
 ])
@@ -86,11 +88,13 @@ def test_official_lookup_requires_actual_search_sources_and_never_accepts_an_inv
     class SearchModel(ScriptedModel):
         async def get_response(self,*args,**kwargs):
             self.requested_tools=args[3] if len(args)>3 else kwargs.get('tools')
+            self.requested_settings=args[2] if len(args)>2 else kwargs.get('model_settings')
             return await super().get_response(*args,**kwargs)
     model=SearchModel([outputs]);client,app,*_=billing_client(model=model)
     extractor=DocumentExtractor(app.state.service,app.state.settings)
     result=client.portal.call(extractor.discover_official_site,'Restaurante ejemplo')
     assert result['url']==expected
+    assert model.requested_settings.tool_choice=='required'
     assert 'Restaurante ejemplo' in str(model.inputs) and FISCAL['rfc'] not in str(model.inputs)
 
 

@@ -720,3 +720,16 @@ y red del navegador. Pasaron 48 pruebas de esta revisión (46,71 s), además de 
 repetición completa previa de 734 casos (353,23 s). La entrega requiere actualizar
 `agent` y `browser`, conservando datos y credenciales. Las advertencias siguen
 siendo errores en pytest; el reporte JUnit los publica en las anotaciones de CI.
+
+## Continuidad de fotos y búsqueda oficial
+
+Las regresiones de `test_receipt_conversation_recovery.py` reproducen la foto
+reenviada tratada como otra solicitud y el botón de búsqueda que solo recuperaba
+un fallo guardado. Cubren adjuntos y fotos nativas de Telegram, corrección sin
+botón previo, aviso en texto antes de subir la foto, cambio explícito de ticket
+con un campo pendiente, aislamiento de propietario, botones antiguos y repetidos,
+reutilización de una foto anterior y reintentos contabilizados sin borrar la cuota.
+Se amplían las fuentes de búsqueda para verificar `www` sin aceptar otros
+subdominios, y se comprueba que la búsqueda hospedada sea obligatoria. Se usan
+modelo, fuentes y comercios simulados; no se hacen lecturas de pago ni facturas
+reales y el VPS se actualiza por separado.
