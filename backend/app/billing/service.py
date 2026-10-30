@@ -462,7 +462,8 @@ class BillingService:
                 brand_label=saved.get('brand_label')
             else:
                 brand_label=None
-            allowed=approved
+            # Al reanudar solo se abre el dominio de la página guardada (mínimo privilegio).
+            allowed=[portal_origin(resume)] if resume else approved
             return await self.browser.open(owner,resume or self.portal_memory.entry_url(owner,ticket),allowed=allowed,**route_options)
 
         async def discard_exhausted(snapshot):
