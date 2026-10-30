@@ -3,6 +3,7 @@ import json
 import logging
 import time
 import uuid
+from dataclasses import replace
 
 from agents import Agent, ModelSettings, RunConfig, RunHooks, Runner, RunState, set_tracing_disabled
 from agents.agent import ToolsToFinalOutputResult
@@ -194,6 +195,14 @@ class AgentService:
             started = time.monotonic()
             context = {'user_id': owner, 'purpose':existing['purpose'], 'channel': channel, 'channel_context':channel_context if channel=='telegram' and isinstance(channel_context,dict) else {}, 'allowed_tools': [tool.name for tool in available], 'tool_calls': 0, 'events': [], 'input_tokens': 0, 'output_tokens': 0}
             audit('run_started', run_id=run_id)
+            usage_at_call, input_estimate = None, 0
+
+            def account_model_input(data):
+                nonlocal usage_at_call, input_estimate
+                usage_at_call = context['input_tokens'] + context['output_tokens']
+                input_estimate = len(json.dumps(data.model_data.input, ensure_ascii=False).encode()) // 3
+                return data.model_data
+
             try:
                 async with asyncio.timeout(self.settings.run_timeout_seconds):
                     if approval_id:
@@ -216,6 +225,7 @@ class AgentService:
                         config = RunConfig(tracing_disabled=True, trace_include_sensitive_data=False,
                             model_settings=ModelSettings(max_tokens=min(100, self.settings.max_output_tokens),
                                 **({'parallel_tool_calls':False} if portal_review else {})))
+                    config = replace(config, call_model_input_filter=account_model_input)
                     result = await Runner.run(agent, agent_input, context=context, max_turns=self.settings.max_agent_turns, hooks=self.hooks, run_config=config)
                 next_pending = None
                 output = str(result.final_output or '')
@@ -252,8 +262,12 @@ class AgentService:
                     public_error = AppError(429, 'agent_turn_limit', 'El agente alcanzó el límite de pasos. Prueba con una petición más concreta.')
                 else:
                     public_error = AppError(502, 'agent_error', 'El proveedor de IA no pudo completar la solicitud. Revisa la configuración o inténtalo más tarde.')
-                # Si no se conoce el consumo final, se conserva la reserva completa.
-                self.database.finish_run(identifier, run_id, user_text=text, assistant_text=public_error.message, failed=True, block=bool(approval_id))
+                known = context['input_tokens'] + context['output_tokens']
+                # Solo estimar la llamada que aún no devolvió usage; no contar dos veces una ya medida.
+                estimate = input_estimate if usage_at_call == known else 0
+                actual = min(self.settings.token_reservation, known + estimate if known else max(self.settings.failed_run_floor_tokens, estimate))
+                self.database.finish_run(identifier, run_id, user_text=text, assistant_text=public_error.message,
+                    failed=True, block=bool(approval_id), actual=actual)
                 audit('run_failed', run_id=run_id, code=public_error.code)
                 if isinstance(error, asyncio.CancelledError):
                     raise
