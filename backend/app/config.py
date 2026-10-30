@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     tool_timeout_seconds: int = Field(default=3, ge=1, le=10)
     max_daily_runs: int = Field(default=30, ge=1, le=200)
     max_daily_tokens: int = Field(default=250000, ge=1000, le=2000000)
+    failed_run_floor_tokens: int = Field(default=2000, ge=0, le=100000)
     max_conversation_turns: int = Field(default=20, ge=1, le=50)
     max_conversations: int = Field(default=30, ge=1, le=100)
     approval_ttl_seconds: int = Field(default=900, ge=60, le=3600)

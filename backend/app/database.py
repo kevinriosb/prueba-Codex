@@ -12,7 +12,7 @@ from .errors import AppError
 
 
 class Database:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, failed_run_floor_tokens: int = 2000):
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as conn:
@@ -45,6 +45,8 @@ class Database:
             # Una ejecución interrumpida no se reanuda automáticamente: puede haber efectos externos.
             conn.execute("UPDATE conversations SET blocked=1 WHERE id IN (SELECT conversation_id FROM runs WHERE status='running')")
             conn.execute("UPDATE runs SET status='interrupted' WHERE status='running'")
+            conn.execute("UPDATE runs SET actual=MIN(reserved,MAX(0,?)) WHERE actual IS NULL AND status IN ('failed','interrupted')",
+                         (failed_run_floor_tokens,))
             conn.execute("UPDATE conversations SET busy=0")
         os.chmod(path, 0o600)
 

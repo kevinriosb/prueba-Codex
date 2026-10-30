@@ -54,7 +54,7 @@ def create_app(settings=None, *, model=None, extra_tools=(), billing_extractor=N
 
     @asynccontextmanager
     async def lifespan(app):
-        database = await asyncio.to_thread(Database, settings.app_database_path)
+        database = await asyncio.to_thread(Database, settings.app_database_path, failed_run_floor_tokens=settings.failed_run_floor_tokens)
         auth = await asyncio.to_thread(Auth, database, settings)
         service = AgentService(settings, database, model=model, extra_tools=extra_tools)
         app.state.database, app.state.auth, app.state.service = database, auth, service

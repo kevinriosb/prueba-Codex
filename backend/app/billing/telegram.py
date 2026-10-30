@@ -1,4 +1,5 @@
 import asyncio
+import json
 import secrets
 import time
 import uuid
@@ -837,12 +838,48 @@ class TelegramBridge:
         async with lock:
             return await self._handle_authorized(owner,user_id,update_id,lookup,message,callback)
 
+    def _pending_review_control(self,owner,data):
+        """Solo resolver una revisión propia ya guardada usa la cuota de controles."""
+        if not isinstance(data,str):return False
+        prefix,separator,tail=data.partition(':')
+        identifier,_,action=tail.partition(':')
+        if not separator or (action and prefix!='fw'):return False
+        try:
+            uuid.UUID(identifier)
+            if prefix in {'ga','gr'}:
+                state=self.billing.store.find('channel_state',owner,'telegram') or {}
+                if not state.get('conversation_id'):return False
+                row=self.billing.database.get_conversation(state['conversation_id'],owner)
+                pending=json.loads(row['pending'] or 'null')
+                return bool(pending and pending['id']==identifier and pending['expires']>time.time())
+            if prefix=='pd':
+                self.billing.store.get('profile_draft',owner,identifier)
+                return any(review['_state']=='pending' and review.get('draft_id')==identifier
+                    for review in self.billing.store.list('profile_review',owner))
+            if prefix=='sv':
+                # SAT no tiene un registro de aprobación separado: la revisión está en el ticket.
+                ticket=self.billing.store.get('ticket',owner,identifier)
+                validation=ticket.get('validation')
+                return bool(validation and not validation.get('sat_verified'))
+            kinds={'ls':'portal_send_review','se':'email_approval','no':'email_approval',
+                'pf':'profile_review','xa':'portal_data_review','xg':'portal_fill_review',
+                'la':'portal_field_photo','lu':'portal_field_photo','wa':'portal_permission','fw':'workflow_choice'}
+            if prefix not in kinds:return False
+            review=self.billing.store.get(kinds[prefix],owner,identifier)
+            if prefix=='lu':return review['_state']=='read' and bool(review.get('value'))
+            if prefix=='fw' and action not in {'same','other','keep','pause','cancel','resume'}:return False
+            return review['_state']=='pending'
+        except (AppError,ValueError,TypeError,KeyError):
+            return False
+
     async def _handle_authorized(self,owner,user_id,update_id,lookup,message,callback):
         plain=normalized(message.get('text',''))
         callback_data=callback.get('data','')
         menu_control=isinstance(callback_data,str) and callback_data.startswith('mn:') and callback_data.rsplit(':',1)[-1] in {'home','list','profile','continue'}
         control=(not callback and not (message.get('document') or message.get('photo'))
             and plain in REQUEST_TEXTS|{'/tickets','/limites','/portales','/menu','/start','/ayuda','/inicio'}) or menu_control or (isinstance(callback_data,str) and callback_data.startswith(('ts:','wx:','bf:','bd:')))
+        if callback and not control:
+            control=self._pending_review_control(owner,callback_data)
         kind='channel_control' if control else 'channel_update'
         today=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
         with self.billing.database.connection() as conn:
