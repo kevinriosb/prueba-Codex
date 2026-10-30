@@ -73,7 +73,8 @@ SNAPSHOT = r'''() => {
   if(!visible(e)||e.disabled) continue;
   const inForm=e.closest('form')||e.form;
   const literal=!inForm||e.tagName==='A'||e.type==='button'?literalNavigation(e):null;
-  if(e.tagName==='BUTTON'&&e.type==='submit'&&!literal&&!e.hasAttribute('aria-expanded')&&e.getAttribute('role')!=='tab')continue;
+  if(e.tagName==='BUTTON'&&e.type==='submit'&&!literal&&!e.hasAttribute('aria-expanded')&&e.getAttribute('role')!=='tab'
+    &&!['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))&&!['collapse','tab','pill'].includes(e.getAttribute('data-toggle')))continue;
   const href=literal||(['A','AREA'].includes(e.tagName)?e.getAttribute('href'):null);
   const expand=(!href&&(e.tagName==='BUTTON'||e.type==='button'||e.getAttribute('role')==='button')&&(!inForm||e.type==='button'))||e.tagName==='SUMMARY'||e.hasAttribute('aria-expanded')||e.getAttribute('role')==='tab'||['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))||['collapse','tab','pill'].includes(e.getAttribute('data-toggle'));
   if(inForm&&!expand&&!literal&&e.tagName!=='A') continue;

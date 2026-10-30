@@ -34,19 +34,25 @@ class PortalDiscovery:
             self.store.audit(owner,ticket['id'],'survey_link_ignored')
         return ticket
 
-    async def checked(self,owner,ticket,url,source,evidence):
-        printed_url=portal_url(url) if source=='ticket' else None
+    async def check_response(self,url):
         url=self.canonical(url)
-        if not url:return None
+        if not url:return {'url':None,'reachable':False,'reason':'invalid_url','status':None,'checked_at':time.time()}
         # No sigue redirecciones ni observa el formulario antes del permiso.
         try:
             async with asyncio.timeout(5):result=await self.probe(url)
         except TimeoutError:result={'url':url,'reachable':False,'reason':'timeout','status':None}
-        ticket['portal_entry_check']=result|{'checked_at':time.time()}
+        return result|{'checked_at':time.time()}
+
+    async def checked(self,owner,ticket,url,source,evidence):
+        printed_url=portal_url(url) if source=='ticket' else None
+        result=await self.check_response(url)
+        url=result['url']
         if not result['reachable']:
+            ticket['portal_last_entry_failure']=result
             ticket.setdefault('portal_rejected_addresses',[]).append({'url':url,'reason':result['reason']})
             self.store.update('ticket',owner,ticket['id'],ticket)
             return None
+        ticket['portal_entry_check']=result
         ticket.update(billing_url=printed_url or url,portal_driven=True,portal_stage='awaiting_form',
             portal_discovery={'source':source,'url':url,'evidence':str(evidence or '')[:500]},portal_discovery_error=None)
         return self.store.update('ticket',owner,ticket['id'],ticket)

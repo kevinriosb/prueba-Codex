@@ -454,12 +454,15 @@ class BillingService:
         async def open_current():
             nonlocal brand_label
             resume=self.portal_resume_url(owner,ticket)
+            approved=self.portal_permissions.allowed(owner,ticket)
+            if resume and portal_origin(resume) not in approved:
+                resume=None  # Un checkpoint antiguo no concede un dominio nuevo.
             if resume:
                 saved=ticket['portal_form_checkpoint'] if self.portal_form_url(owner,ticket)==resume else ticket['portal_checkpoint']
                 brand_label=saved.get('brand_label')
             else:
                 brand_label=None
-            allowed=[portal_origin(resume)] if resume else self.portal_permissions.allowed(owner,ticket)
+            allowed=approved
             return await self.browser.open(owner,resume or self.portal_memory.entry_url(owner,ticket),allowed=allowed,**route_options)
 
         async def discard_exhausted(snapshot):

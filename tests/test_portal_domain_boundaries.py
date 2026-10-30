@@ -118,3 +118,20 @@ async def test_existing_twelve_origin_limit_still_stops_an_unapproved_thirteenth
         assert len(session.allowed)==12 and session.network_blocked and session.unsafe_blocked
         assert result['block_reason']=='origin_limit' and [url for url,_ in pages.calls]==[ROOT]
     finally:await manager.close()
+
+
+def test_checkpoint_from_an_old_broad_grant_cannot_authorize_an_ungranted_resume_host(billing_client):
+    class Recorder(FakeBrowser):
+        async def open(self,user,url,**kwargs):
+            self.allowed=kwargs['allowed'];return await super().open(user,url,**kwargs)
+    from .test_billing import ticket
+    browser=Recorder();client,app,extractor,*_=billing_client(browser=browser)
+    extractor.ticket['billing_url']=ROOT;item=ticket(client)
+    permissions=app.state.billing.portal_permissions
+    review=permissions.request('owner',item['id'],route=True)
+    permissions.decide('owner',review['id'],approve=True)
+    item=app.state.billing.resolve_ticket('owner',item['id'])
+    item['portal_checkpoint']={'url':DEST,'scope':permissions.scope(item),'expires':time.time()+600,'brand_label':None}
+    app.state.billing.store.update('ticket','owner',item['id'],item)
+    client.portal.call(app.state.billing.browse_portal,'owner',item['id'])
+    assert browser.calls[0][2]==ROOT and browser.allowed==['https://hub.example']

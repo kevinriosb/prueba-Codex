@@ -163,3 +163,38 @@ def test_semantic_qr_context_and_printed_official_site_are_preserved_without_key
     result=TicketExtraction.model_validate(raw)
     assert result.billing_url is None and result.billing_url_evidence=='Scansiona per ottenere il documento tributario'
     assert result.merchant_website==HUB
+
+
+async def test_legacy_static_inspection_never_follows_another_domain_even_if_operator_configured_it():
+    from backend.app.billing.portal_inspection import PortalInspector
+    from backend.app.config import Settings
+    from .conftest import TEST_PASSWORD
+    calls=[]
+    async def resolver(host):return ['93.184.216.34']
+    def respond(request):
+        calls.append(request.headers['host'])
+        return httpx2.Response(302,headers={'location':'https://second.example/form'})
+    settings=Settings(_env_file=None,app_login_password=TEST_PASSWORD,
+        billing_portal_inspection_urls=HUB+',https://second.example/form')
+    inspector=PortalInspector(settings,client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),resolver=resolver)
+    try:
+        result=await inspector.inspect(HUB)
+        assert result['status']=='unavailable' and result['fields']==[]
+        assert calls==['hub.example.com.mx']
+    finally:await inspector.close()
+
+
+def test_explicit_saved_portal_selection_is_checked_and_a_dead_target_cannot_replace_the_current_entry(billing_client):
+    client,app,extractor,*_=billing_client();extractor.ticket['billing_url']='https://previous-entry.example'
+    item=ticket(client);saved=saved_portal(app,item)
+    before=item['portal_entry_check']
+    checked=[]
+    async def dead(url):
+        checked.append(url);return {'url':url,'reachable':False,'reason':'dns_error','status':None}
+    app.state.billing.portal_discovery.probe=dead
+    response=client.post('/api/billing/tickets/'+item['id']+'/portal-selection',json={'confirmed':True,'use_saved':True})
+    assert response.status_code==422 and checked==[saved['url']]
+    current=app.state.billing.resolve_ticket('owner',item['id'])
+    assert not current.get('selected_portal') and current['billing_url']==item['billing_url']
+    assert current['portal_entry_check']==before
+    assert current['portal_last_entry_failure']['reason']=='dns_error'

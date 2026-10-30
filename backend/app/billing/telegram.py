@@ -1099,7 +1099,7 @@ class TelegramBridge:
             saved=self.billing.portal_memory.save(owner,identifier,code)
             await self.client.send(chat_id,'Portal de '+saved['merchant']+' guardado para próximos tickets.')
         elif prefix in {'bm','bo'}:
-            ticket=self.billing.portal_memory.select(owner,identifier,remembered=prefix=='bm')
+            ticket=await self.billing.portal_memory.select_checked(owner,identifier,remembered=prefix=='bm')
             await self._ticket(owner,chat_id,ticket['id'])
         elif prefix=='bf':
             self.billing.portal_memory.forget(owner,identifier)

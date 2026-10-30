@@ -149,7 +149,7 @@ def create_billing_router(payload_base):
     async def select_portal(identifier:uuid.UUID,payload:PortalSelection,request:Request,user=Depends(authenticated)):
         if not payload.confirmed:
             raise AppError(409,'portal_memory_confirmation','Confirma el enlace que deseas utilizar.')
-        return public(service(request).portal_memory.select(user['id'],str(identifier),remembered=payload.use_saved))
+        return public(await service(request).portal_memory.select_checked(user['id'],str(identifier),remembered=payload.use_saved))
 
     @router.delete('/portals/{identifier}',dependencies=[Depends(check_csrf)])
     async def forget_portal(identifier:uuid.UUID,payload:Confirm,request:Request,user=Depends(authenticated)):

@@ -120,7 +120,7 @@ class PortalInspector:
                 extensions={'sni_hostname':uri.hostname},follow_redirects=False) as response:
             if response.status_code in {301,302,303,307,308}:
                 target = urljoin(page,response.headers.get('location',''))
-                if canonical_page(target) not in self.allowed:
+                if canonical_page(target) not in self.allowed or urlsplit(target).hostname!=uri.hostname:
                     raise ValueError('Redirección fuera de las páginas aprobadas.')
                 target_uri=urlsplit(target)
                 redirected=urlunsplit(('https',target_uri.hostname,target_uri.path,'',''))

@@ -141,6 +141,20 @@ class PortalMemory:
                 ticket.pop(key,None)
         return self.store.update('ticket',owner,ticket['id'],ticket)
 
+    async def select_checked(self,owner,ticket_id,*,remembered=True):
+        ticket=self.billing.resolve_ticket(owner,ticket_id)
+        record=self.suggestion(owner,ticket) if remembered else None
+        if remembered and not record:
+            raise AppError(404,'portal_memory','No hay un portal guardado vigente para este comercio.')
+        check=await self.billing.portal_discovery.check_response(record['url'] if record else ticket.get('billing_url'))
+        if not check['reachable']:
+            ticket['portal_last_entry_failure']=check
+            ticket.setdefault('portal_rejected_addresses',[]).append({'url':check['url'],'reason':check['reason']})
+            self.store.update('ticket',owner,ticket['id'],ticket)
+            raise AppError(422,'portal_unavailable','Ese enlace no respondió. Escribe la dirección de facturación para continuar.')
+        self.store.update('ticket',owner,ticket['id'],ticket|{'portal_entry_check':check})
+        return self.select(owner,ticket['id'],remembered=remembered)
+
     def propose(self,owner,ticket_id,observation_id=None):
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         record=self.billing.browser_review(owner,ticket['id'])
