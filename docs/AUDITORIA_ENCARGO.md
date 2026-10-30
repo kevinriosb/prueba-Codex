@@ -215,3 +215,72 @@ Orden por impacto y evidencia disponible, sin atribuir incidentes de producción
 5. **La cadena de localización de facturación no respeta el orden solicitado.** La memoria guardada exige URL de entrada; cuando no está, no sirve como recurso por comercio. Un correo explícito evita buscar primero un portal oficial. La búsqueda oficial y Playwright sí existen: el problema es la selección de caminos, no falta total de herramientas. Evidencia: `backend/app/billing/portal_memory.py:92`, `backend/app/billing/portal_discovery.py:43`, `backend/app/billing/extraction.py:86`. Prioridad propuesta: definir un único orden verificable de resolución y mantener la distinción entre encuesta, web oficial, portal y correo.
 
 Estas prioridades son recomendaciones de auditoría. No se implementó ninguna corrección en este encargo.
+
+## Estado de correcciones
+
+2026-10-30. Encargo posterior de corrección, en `mejoras-flujo`, partiendo de `16a35e3`. La auditoría anterior conserva sus filas y evidencias históricas sin modificaciones. Se corrigieron exclusivamente L1, L5 y F7; no se desplegó el servicio.
+
+### Commits y pruebas que los cubren
+
+| Punto | Estado | Commit de prueba, confirmado en rojo antes de corregir | Commit de corrección | Pruebas principales |
+| --- | --- | --- | --- | --- |
+| L1 | **CORREGIDO** | `18089c123e8b989626d290b48e5363505715fc15` | `132f857647a6aae6a5fe8faceca4c6bc327cb4b4` | `tests/test_failed_run_accounting.py::test_three_partially_measured_failures_allow_a_fourth_run`; `test_large_successful_usage_is_not_capped_and_still_blocks_admission`; `test_unmeasured_failure_uses_utf8_input_estimate_and_capped_floor`; `test_restart_accounts_unmeasured_runs_at_floor_and_preserves_actual_usage`; `test_limits_show_the_accounted_failed_run_cost`; `test_failed_run_floor_setting_has_default_and_bounds`. |
+| L5 | **CORREGIDO** | `2cc1f428cfc6e300de253d9982c13a33b86e81d3` | `186bbd2cb94caca58f15ebceced5e129ace61b8f` | `tests/test_prepared_approval_quota.py::test_prepared_portal_approval_works_at_message_limit_and_never_sends_twice`; `test_pending_email_can_be_approved_or_rejected_at_message_limit`; `test_sat_confirmation_for_a_validated_invoice_works_at_message_limit`; `test_sdk_pending_approval_or_rejection_uses_control_quota`; `test_prepared_fiscal_review_can_be_confirmed_or_discarded_at_message_limit`; `test_only_an_owned_pending_review_can_use_control_quota`; `test_prepared_approval_still_respects_the_separate_500_control_limit`. |
+| F7 | **CORREGIDO** | `633f25b50a574e69444a243943edf0e6d752148c` | `c31eb0925f1e66c34ce87c121af84c04b1b64e1f` | `tests/test_ambiguous_receipt_photo.py::test_unknown_photo_is_saved_without_replacing_or_reading_and_asks_two_choices`; `test_same_choice_replaces_source_once_even_when_the_photo_consumed_update_100`; `test_other_choice_pauses_previous_and_opens_a_new_request_without_mixing_data`; `test_requested_field_photo_keeps_its_recorded_expectation_and_applies_without_a_ticket_choice`; `test_expired_foreign_or_superseded_decision_never_changes_the_active_source`; `test_pending_photo_counts_once_at_document_limit_and_decisions_reuse_it`; `test_identical_bytes_keep_the_same_ticket_without_an_ambiguity_prompt_or_new_read`. |
+
+### Ejecuciones de verificación
+
+Dependencias comprobadas con `uv sync --frozen --group browser`. Suites completas ejecutadas con `uv run --frozen --group browser pytest -q -r a`, guardando XML JUnit y logs temporales fuera del repositorio:
+
+| Etapa | Aprobadas | Fallidas/errores/omitidas | Tiempo de pytest |
+| --- | ---: | --- | --- |
+| Línea base del nuevo encargo, `16a35e3` | 798 | 0 / 0 / 0 | 416,32 s |
+| Después de L1, `132f857` | 815 | 0 / 0 / 0 | 432,04 s |
+| Después de L5, `186bbd2` | 827 | 0 / 0 / 0 | 435,91 s |
+| Después de F7, suite final, `c31eb09` | **838** | **0 / 0 / 0** | **447,93 s** |
+
+Antes de cada corrección se ejecutaron las pruebas del problema con la implementación anterior y se guardó el commit de prueba antes del commit de código:
+
+| Punto | Resultado en rojo | Comprobación focalizada después de corregir |
+| --- | --- | --- |
+| L1 | 17 fallidas y 2 aprobadas en 14,45 s; la cuarta ejecución seguía devolviendo `daily_limit`. Incluye las dos aserciones antiguas autorizadas. | 49 aprobadas en 26,56 s: archivo nuevo más `tests/test_limits.py` y `tests/test_api.py`. |
+| L5 | 8 fallidas y 4 aprobadas en 15,28 s; los botones preparados quedaban bloqueados por la cuota normal. | 12 aprobadas en 15,91 s. |
+| F7 | 9 fallidas y 5 aprobadas en 9,22 s; la fuente cambiaba antes de pedir intención. Incluye el caso antiguo `[None]`. | 52 aprobadas en 58,48 s: archivo nuevo más recuperación de conversación y workflow. |
+
+Las pruebas positivas de regresión que ya pasaban antes se conservaron. Los 40 casos adicionales explican el aumento de 798 a 838; no se eliminó ninguna prueba ni parámetro existente. Evidencias temporales: `/tmp/lilyapp-fixes-baseline.xml`, `/tmp/lilyapp-l1-suite.xml`, `/tmp/lilyapp-l5-suite.xml`, `/tmp/lilyapp-fixes-final.xml` y logs `/tmp/lilyapp-l1-red.log`, `/tmp/lilyapp-l5-red.log`, `/tmp/lilyapp-f7-red.log`.
+
+### Decisiones de implementación
+
+**L1.** La reserva sigue utilizándose para admitir una ejecución. Se añadió `failed_run_floor_tokens`, default 2000, rango 0–100000. En un fallo se suman tokens conocidos y la estimación UTF-8 de la entrada de la llamada en vuelo (`bytes // 3`), con tope en la reserva. Cuando no hay consumo conocido se aplica como mínimo el piso, también acotado. Un observador de entrada del SDK devuelve intacto el input y permite distinguir una llamada aún sin `usage` de una ya medida, sin modificar `SafetyHooks` (`backend/app/config.py:35`, `backend/app/agent_service.py:200`, `backend/app/agent_service.py:265`).
+
+Al arrancar se aplica el mismo piso a filas `interrupted` con `actual=NULL`, incluidas las que se convierten desde `running`; también se regularizan fallos históricos `failed` sin consumo conocido. Filas con `actual` informado mantienen su valor. Se conserva el bloqueo de conversaciones interrumpidas para no repetir efectos inciertos (`backend/app/database.py:15`, `backend/app/database.py:45`). El consumo real de una ejecución exitosa no se recorta: el ensayo de 250001 tokens lo contabiliza íntegro y rechaza la siguiente admisión. `/limites` consulta ese mismo ledger actualizado (`tests/test_failed_run_accounting.py:47`, `tests/test_failed_run_accounting.py:101`). Este contador no es una conciliación de la factura del proveedor.
+
+**L5.** Los siguientes callbacks resuelven revisiones guardadas y pasan al presupuesto de controles, sujeto al máximo existente de 500. El propietario y la vigencia se comprueban al consultar los registros; los servicios conservan sus comprobaciones y consumos de aprobación. La clasificación está en `backend/app/billing/telegram.py:841`; su aplicación al contador, en `backend/app/billing/telegram.py:881`.
+
+| Prefijo | Evidencia de revisión ya existente y motivo de clasificación |
+| --- | --- |
+| `ls` | `portal_send_review` pendiente; aprueba un paso privado. Manejador: `backend/app/billing/telegram_submission.py:67`. |
+| `se`, `no` | `email_approval` pendiente; enviar o rechazar el correo revisado. Manejadores: `backend/app/billing/telegram.py:1125`, `backend/app/billing/telegram.py:1133`. |
+| `ga`, `gr` | Aprobación SDK persistida en la conversación del propietario, con ID coincidente y vigencia. Manejador: `backend/app/billing/telegram.py:1025`; validación existente: `backend/app/billing/telegram_agent.py:98`. |
+| `pf`, `pd` | Confirmación de `profile_review` pendiente o descarte de su borrador propio. La creación y consumo de la revisión están en `backend/app/billing/telegram_profiles.py:139`, `backend/app/billing/telegram_profiles.py:155`; descarte: `backend/app/billing/telegram.py:1109`. |
+| `xa`, `xg` | `portal_data_review` o `portal_fill_review` pendientes: autorizan lectura dirigida o llenado ya revisados. Manejadores: `backend/app/billing/telegram.py:947`, `backend/app/billing/telegram.py:969`. Sus cuotas de lectura y validaciones propias permanecen. |
+| `la`, `lu` | `portal_field_photo` pendiente para leer, o estado `read` con valor para confirmar. `read` representa una confirmación aún pendiente de la persona. Manejadores: `backend/app/billing/telegram_submission.py:86`, `backend/app/billing/telegram_submission.py:90`. |
+| `wa` | `portal_permission` pendiente; la decisión sigue en el manejador original. `wx` ya era un control y se conservó sin cambiar la lógica de permisos (`backend/app/billing/telegram.py:880`, `backend/app/billing/telegram.py:1094`). |
+| `sv` | No existe un registro separado de aprobación SAT: la revisión se representa mediante la validación XML guardada en el ticket, todavía sin `sat_verified`. Se clasifica solo ese caso. La autorización explícita continúa en el callback y servicio existentes (`backend/app/billing/telegram.py:859`, `backend/app/billing/telegram.py:1142`, `backend/app/billing/service.py:981`). No se añadió una supuesta garantía de `claim` SAT inexistente. |
+| `fw` | `workflow_choice` pendiente del propietario y una acción de decisión válida: permite resolver el menú preparado, incluido F7. El consumo continúa en `TelegramWorkflow.choose` (`backend/app/billing/telegram_workflow.py:243`). |
+
+Crear una revisión, comenzar búsquedas o iniciar análisis nuevos no recibe por ello una exención general. Texto libre y fotos nuevas siguen en la cuota normal de 100; la deduplicación por `update_id` sigue antes de efectos y reconoce ambos tipos de registros. El presupuesto separado de 500 sigue aplicándose. Las cuotas de lecturas y la admisión SDK no se han eliminado (`backend/app/billing/telegram.py:830`, `backend/app/billing/telegram.py:875`, `tests/test_prepared_approval_quota.py:40`, `tests/test_prepared_approval_quota.py:141`).
+
+**F7.** Una foto desconocida, sin intención ni expectativa, cuando hay campos pendientes, se guarda sin extraer y ofrece exactamente «Corrige este mismo ticket» / «Es otro ticket». Se reutiliza `workflow_choice`, propietario, vencimiento de 1800 s y consumo de uso único existentes; los callbacks tienen menos de 64 bytes. La opción de mismo ticket usa `replace_source`; la otra pausa y abre una solicitud limpia utilizando el mismo documento guardado (`backend/app/billing/telegram_receipts.py:60`, `backend/app/billing/telegram_workflow.py:157`, `backend/app/billing/telegram_workflow.py:243`). El archivo cuenta una sola vez para el límite, incluso después de elegir cualquiera de las opciones (`tests/test_ambiguous_receipt_photo.py:134`).
+
+No fue necesario añadir expectativas de fotos de campo: ya se registran como `ticket_input` o `portal_field_input` antes de pedirlas, y el manejador de campo se ejecuta antes de la recepción genérica. Se comprobó tanto el dato del ticket como el campo del formulario privado, incluso aprobando lectura y valor después de agotar los 100 mensajes (`backend/app/billing/telegram.py:941`, `backend/app/billing/telegram_submission.py:37`, `backend/app/billing/telegram_submission.py:81`, `backend/app/billing/telegram_submission.py:126`, `tests/test_ambiguous_receipt_photo.py:82`). Las fotos conocidas conservan su deduplicación; la intención explícita de otro ticket y las comprobaciones posteriores de identidad siguen en sus caminos existentes.
+
+### Pruebas existentes modificadas y protección del alcance
+
+- `tests/test_limits.py::test_timeout_releases_conversation_and_accounts_uncertain_usage`: cambió exclusivamente su antigua igualdad con la reserva completa. La nueva única línea comprueba `piso <= tokens_accounted == min(reserva, max(piso, bytes_del_input // 3)) < reserva`, calculando el input `Hola` dentro de la propia prueba. El 504 y la liberación de `busy` quedaron idénticos.
+- `tests/test_api.py::test_errors_and_audit_never_echo_credentials_or_prompts`: cambió exclusivamente esa misma igualdad antigua, usando su variable `prompt` para calcular la estimación. Conserva idénticas todas las comprobaciones de no filtrar secretos, contraseña o prompt.
+- `tests/test_receipt_conversation_recovery.py::test_a_new_photo_after_missing_data_updates_the_same_request[None]`: se añadieron tres líneas para comprobar que la fuente anterior permanece hasta elegir «Corrige este mismo ticket». Antes codificaba precisamente la sustitución automática que F7 corrige. Se mantuvieron el parámetro `None`, los otros captions y todas las comprobaciones posteriores de propietario, lectura y reutilización del perfil.
+
+Se verificó mediante comparación de código/AST contra `16a35e3`: `SafetyHooks`, `needs_approval`, `store.claim`, AES-GCM/digest, permisos de portales, retención, `token_reservation`, default de `max_daily_tokens`, `Database.reserve_run`, `finish_run` y `usage` permanecen intactos. Los archivos `tests/test_limits.py` y `tests/test_api.py` tienen exactamente una línea sustituida cada uno; el resto coincide con la base. No se modificaron dependencias, Compose ni workflows.
+
+**NO VERIFICADO:** despliegue/configuración del VPS, interacción real con Telegram/OpenAI, OCR de fotos reales, coste efectivamente facturado, emisión ante comercios reales, entrega real por correo y consulta real al SAT. Las pruebas verifican el SDK y, para los pasos del portal, Chromium real con transporte/proveedores simulados. No se realizaron envíos ni despliegues reales.
