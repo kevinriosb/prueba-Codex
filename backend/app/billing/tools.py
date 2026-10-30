@@ -147,7 +147,7 @@ def build_billing_tools(billing):
             'references':[item['reference'] for item in snapshot['actions']]}
         review(ctx,'browser',ticket['id'])
         return browser_metadata(record)|{'ticket_fields_available':[key for key in
-            ('account_number','folio','reference_number','billing_code','web_id','store_number','toll_station','lane','purchase_date','purchase_time','total') if ticket.get(key)],
+            ('account_number','folio','reference_number','billing_code','web_id','store_number','register_number','toll_station','lane','purchase_date','purchase_time','total') if ticket.get(key)],
             'merchant_hint':(ticket.get('merchant') or '')[:120]}
 
     async def advance_public_route(ctx,ticket,record):

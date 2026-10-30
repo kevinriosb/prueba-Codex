@@ -617,7 +617,7 @@ class BillingService:
         allowed=set(pending_receipt_fields(ticket))|set(browser_missing_fields(ticket))
         if correction:
             allowed={item['key'] for item in (ticket.get('portal_browser') or {}).get('fields',[])} & {
-                'account_number','folio','reference_number','billing_code','web_id','store_number','toll_station','lane','purchase_time','purchase_date','total'}
+                'account_number','folio','reference_number','billing_code','web_id','store_number','register_number','toll_station','lane','purchase_time','purchase_date','total'}
         if ticket.get('delivery') or not analyzed or field not in allowed:
             raise AppError(409,'ticket_field','Ese dato no está pendiente. Consulta /tickets.')
         value=value.strip()
@@ -627,7 +627,7 @@ class BillingService:
             value=purchase_date(value)
         elif field=='total':
             value=purchase_total(value)
-        elif field in {'folio','account_number','store_number'} and len(value)>100:
+        elif field in {'folio','account_number','store_number','register_number'} and len(value)>100:
             value=None
         elif field=='lane' and len(value)>40 or field=='purchase_time' and len(value)>20:
             value=None

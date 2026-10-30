@@ -15,7 +15,7 @@ from .receipt import missing_receipt_fields,purchase_reference
 from .portal_inspection import field_key
 
 
-RECEIPT_KEYS={'folio','account_number','reference_number','billing_code','web_id','store_number',
+RECEIPT_KEYS={'folio','account_number','reference_number','billing_code','web_id','store_number','register_number',
     'toll_station','lane','purchase_date','purchase_time','total','issuer_rfc'}
 PROFILE_KEYS={'rfc','name','postal_code','fiscal_regime','cfdi_use','email'}
 IDENTITY_KEYS={'merchant','issuer_rfc','purchase_date','folio','total','currency'}

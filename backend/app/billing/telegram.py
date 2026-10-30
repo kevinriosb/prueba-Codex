@@ -333,7 +333,7 @@ class TelegramBridge:
         elif pending_receipt_fields(ticket):
             labels={'merchant':'comercio','purchase_date':'fecha','folio':'folio','total':'importe',
                 'account_number':'Cuenta','reference_number':'referencia','billing_code':'código de facturación',
-                'web_id':'Web ID','store_number':'Tienda','toll_station':'caseta','lane':'carril','purchase_time':'hora'}
+                'web_id':'Web ID','store_number':'Tienda','register_number':'Caja','toll_station':'caseta','lane':'carril','purchase_time':'hora'}
             text+='\nNo leí: '+', '.join(labels[key] for key in pending_receipt_fields(ticket))+'. Escríbelo o envía foto de ese campo.'
             if ticket.get('is_ticket') is True or document and (document.get('extracted') or {}).get('is_ticket'):
                 buttons.extend(('Completar '+labels[key],'td:'+identifier+':'+key) for key in pending_receipt_fields(ticket))
@@ -663,7 +663,7 @@ class TelegramBridge:
                     buttons.append(('Leer datos que pide el portal','xa:'+analysis['id']))
                 elif not any(action.startswith('xu:') for _,action in buttons):
                     buttons.append(('Reenviar foto de este ticket','xu:'+ticket['id']))
-            correctable={'web_id':'Web ID','store_number':'Tienda','toll_station':'caseta','lane':'carril','purchase_time':'hora',
+            correctable={'web_id':'Web ID','store_number':'Tienda','register_number':'Caja','toll_station':'caseta','lane':'carril','purchase_time':'hora',
                 'account_number':'Cuenta','folio':'ticket/folio','reference_number':'referencia','billing_code':'código',
                 'purchase_date':'fecha','total':'importe'}
             keys=list(dict.fromkeys(item.get('key') for item in active_fields))
@@ -684,7 +684,7 @@ class TelegramBridge:
             buttons.extend(self._permission_buttons(permission))
         missing=browser_missing_fields(ticket)
         if missing and not ticket.get('delivery'):
-            labels={'web_id':'Web ID','store_number':'Tienda','toll_station':'caseta','lane':'carril','purchase_time':'hora',
+            labels={'web_id':'Web ID','store_number':'Tienda','register_number':'Caja','toll_station':'caseta','lane':'carril','purchase_time':'hora',
                 'account_number':'Cuenta','folio':'folio','reference_number':'referencia','billing_code':'código',
                 'purchase_date':'fecha','total':'importe'}
             buttons.extend(('Completar '+labels[key],'td:'+ticket['id']+':'+key) for key in missing[:6])
@@ -934,7 +934,7 @@ class TelegramBridge:
             allowed=set(pending_receipt_fields(ticket))|set(browser_missing_fields(ticket))
             if prefix=='xe':
                 allowed={item['key'] for item in (ticket.get('portal_browser') or {}).get('fields',[])} & {
-                    'account_number','folio','reference_number','billing_code','web_id','store_number','toll_station','lane','purchase_time','purchase_date','total'}
+                    'account_number','folio','reference_number','billing_code','web_id','store_number','register_number','toll_station','lane','purchase_time','purchase_date','total'}
             if code not in allowed or ticket.get('delivery'):
                 raise AppError(409,'ticket_field','Ese dato no está pendiente.')
             state=self._state(owner)
@@ -942,7 +942,7 @@ class TelegramBridge:
             self._save_state(owner,state)
             examples={'merchant':'COMERCIO','purchase_date':'AAAA-MM-DD','folio':'FOLIO','total':'IMPORTE',
                 'account_number':'CUENTA','reference_number':'REFERENCIA','billing_code':'CODIGO',
-                'web_id':'WEB_ID','store_number':'TIENDA','toll_station':'CASETA','lane':'CARRIL','purchase_time':'HORA'}
+                'web_id':'WEB_ID','store_number':'TIENDA','register_number':'CAJA','toll_station':'CASETA','lane':'CARRIL','purchase_time':'HORA'}
             await self.client.send(chat_id,'No leí '+examples[code]+'. Escríbelo o envía una foto de ese campo.')
         elif prefix=='xa':
             await self.billing.portal_preparation.read_approved(owner,identifier)

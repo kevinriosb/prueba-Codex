@@ -44,7 +44,8 @@ Si figuran, extrae Web ID en web_id, caseta en toll_station, carril en lane y ho
 en purchase_time. Son campos independientes. No uses folio como Web ID, ni deduzcas
 una caseta o carril de otra información; deja null si no aparecen legibles.
 Si está impreso el número o código de tienda, cópialo en store_number como texto,
-conservando ceros iniciales. Es distinto del folio y del nombre de sucursal (branch).
+conservando ceros iniciales. El número de Caja, si está impreso, va en register_number;
+no lo sustituyas por una terminal bancaria. Es distinto del folio y del nombre de sucursal (branch).
 No deduzcas store_number del nombre, dirección o marca; deja null si no se lee.
 No confundas consumo/total con propina. Un ticket con algunos campos claros es parcialmente legible.
 No rechaces todo por una URL sin https://. Copia la URL visible y la indicación de facturación
