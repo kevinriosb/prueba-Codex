@@ -298,6 +298,8 @@ foto nueva o mientras faltan campos continúa la solicitud activa. Conserva su
 perfil y formulario y ofrece leer la foto actualizada. Las fotos ya verificadas
 se reutilizan. Un campo pedido expresamente sigue admitiendo texto o un recorte.
 «Otro ticket» en la foto o «Nueva solicitud» abre otra y pausa la anterior.
+Una corrección o búsqueda de la solicitud activa también deja atrás cualquier
+menú de cambio o cierre que se hubiera abierto sin terminarlo.
 
 «Buscar facturación oficial con IA» hace un intento nuevo si el anterior no
 encontró una web. El intento anterior se conserva en la cuota; consultar el

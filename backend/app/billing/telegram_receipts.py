@@ -57,6 +57,7 @@ class TelegramReceipts:
         document=self.billing.document(owner,received['id'])
         if document.get('ticket_id') and document['ticket_id']!=ticket['id']:
             return False  # Un archivo conocido de otra solicitud conserva su identidad.
+        self.bridge.workflow.activate(owner,ticket)
         if document['id']==ticket['document_id']:
             self.clear_expectation(owner)
             await self.bridge.submission.receipt_done(owner,chat_id,ticket)

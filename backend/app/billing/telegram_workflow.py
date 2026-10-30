@@ -355,8 +355,14 @@ class TelegramWorkflow:
             return False
         pending=self.pending(owner)
         if pending:
-            await self.prompt(owner,chat_id,pending)
-            return True
+            active=self.active(owner)
+            if prefix=='df' and active and active['id']==ticket_id:
+                # Buscar en la tarjeta activa también expresa continuarla;
+                # no volver a mostrar un menú de cambio/cierre abandonado.
+                self.activate(owner,active)
+            else:
+                await self.prompt(owner,chat_id,pending)
+                return True
         ticket = self.billing.resolve_ticket(owner, ticket_id)
         active = self.active(owner)
         if active and active['id'] != ticket['id']:

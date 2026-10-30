@@ -127,6 +127,36 @@ def test_promising_the_full_receipt_clears_an_old_single_field_prompt(billing_cl
     assert mail.sent==sat.calls==[]
 
 
+def test_a_corrective_photo_supersedes_a_previous_menu_for_the_active_request(billing_client):
+    extractor=Modern();extractor.found=None
+    values,browser=modern(billing_client,extractor)
+    client,app,extractor,mail,sat,telegram,chat=values
+    chat(data=button(telegram,'an'))
+    ticket=app.state.telegram.workflow.active(owner(app))
+    chat('/cancelar')
+    assert app.state.telegram.workflow.pending(owner(app)) is not None
+    telegram.files['clearer']=image('blue');chat(document='clearer',caption='Te subo la foto nuevamente')
+    count=sum(call[0]=='fields' for call in extractor.calls)
+    chat(data=button(telegram,'xa'))
+    assert app.state.telegram.workflow.pending(owner(app)) is None
+    assert sum(call[0]=='fields' for call in extractor.calls)==count+1
+    assert app.state.telegram.workflow.active(owner(app))['id']==ticket['id']
+    assert mail.sent==sat.calls==[]
+
+
+def test_search_on_the_active_request_supersedes_a_previous_menu(billing_client):
+    extractor=Modern();extractor.found=None
+    values,browser=modern(billing_client,extractor)
+    client,app,extractor,mail,sat,telegram,chat=values
+    chat(data=button(telegram,'an'));search=button(telegram,'df')
+    chat('/cancelar')
+    assert app.state.telegram.workflow.pending(owner(app)) is not None
+    extractor.found=ROOT;chat(data=search)
+    assert len(extractor.searches)==2 and browser.calls==['open','act']
+    assert app.state.telegram.workflow.pending(owner(app)) is None
+    assert mail.sent==sat.calls==[]
+
+
 def test_search_button_retries_a_cached_failure_and_then_opens_the_form(billing_client):
     extractor=Modern();extractor.found=None
     values,browser=modern(billing_client,extractor)

@@ -733,3 +733,7 @@ Se amplían las fuentes de búsqueda para verificar `www` sin aceptar otros
 subdominios, y se comprueba que la búsqueda hospedada sea obligatoria. Se usan
 modelo, fuentes y comercios simulados; no se hacen lecturas de pago ni facturas
 reales y el VPS se actualiza por separado.
+Dos casos adicionales reproducen un menú de cierre pendiente que interceptaba
+la corrección y el botón de búsqueda. La elección actual de continuar la
+solicitud activa deja ese menú atrás; los botones de otra solicitud conservan
+la selección explícita y el aislamiento de propietario.
