@@ -87,24 +87,30 @@ def test_native_permission_displays_the_domain_chain_and_only_then_navigates(bil
     assert len(browser.calls)==count and mail.sent==sat.calls==[]
 
 
-async def test_external_functional_resources_are_not_fetched_or_auto_granted_until_approved():
+async def test_external_functional_resources_load_automatically_without_authorizing_documents_or_iframes():
     asset='https://assets.example/widget.js'
     class Assets(Pages):
         async def fetch(self,url,headers):
             if url==asset:
                 self.calls.append((url,headers))
-                return 200,{'content-type':'application/javascript'},b'document.body.innerHTML="<label>RFC<input></label>"'
+                return 200,{'content-type':'application/javascript'},b'document.body.insertAdjacentHTML("beforeend","<label>RFC<input></label>")'
             return await super().fetch(url,headers)
-    pages=Assets({ROOT:'<body><script src="'+asset+'"></script>'});manager=BrowserManager(fetcher=pages)
+    document='https://assets.example/form'
+    frame='https://assets.example/frame'
+    pages=Assets({ROOT:'<body><script src="'+asset+'"></script><a href="'+document+'">Continuar</a><iframe src="'+frame+'"></iframe>'})
+    manager=BrowserManager(fetcher=pages)
     try:
         first=await manager.open('owner',ROOT,['https://hub.example'],public_route=True)
-        assert first['fields']==[] and first['blocked_origins']==['https://assets.example']
-        assert [url for url,_ in pages.calls]==[ROOT]
-        unchanged=await manager.allow('owner',first['session_id'],['https://hub.example'],public_route=True)
-        assert unchanged['fields']==[] and [url for url,_ in pages.calls]==[ROOT]
-        approved=await manager.allow('owner',first['session_id'],['https://hub.example','https://assets.example'],public_route=True)
-        assert [field['label'] for field in approved['fields']]==['RFC']
-        assert [url for url,_ in pages.calls]==[ROOT,ROOT,asset]
+        assert [field['label'] for field in first['fields']]==['RFC']
+        assert [url for url,_ in pages.calls]==[ROOT,asset]
+        current=await manager.get('owner',first['session_id'])
+        assert 'https://assets.example' in current.allowed
+        assert current.document_allowed=={'https://hub.example'}
+        assert first['blocked_document_origins']==['https://assets.example']
+        assert first['actions'][0]['permission_origin']=='https://assets.example'
+        with pytest.raises(BrowserError,match='browser_origin'):
+            await manager.act('owner',first['session_id'],first['observation_id'],first['actions'][0]['reference'])
+        assert document not in [url for url,_ in pages.calls] and frame not in [url for url,_ in pages.calls]
     finally:await manager.close()
 
 
