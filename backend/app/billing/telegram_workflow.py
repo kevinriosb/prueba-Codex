@@ -167,9 +167,10 @@ class TelegramWorkflow:
         active = self.active(owner)
         text = 'Solicitud activa: ' + self.label(active) if active else 'Elige cómo continuar.'
         key = 'fw:' + choice['id'] + ':'
-        if choice['kind'] == 'replace':
+        if choice['kind'] in {'replace','receipt'}:
             text += '\nFoto recibida. ¿Es el mismo ticket u otro?'
-            buttons = [('Otra foto del mismo ticket', key+'same'), ('Es otro ticket', key+'other'), ('Conservar la anterior', key+'keep')]
+            buttons = ([('Corrige este mismo ticket',key+'same'),('Es otro ticket',key+'other')] if choice['kind']=='receipt' else
+                [('Otra foto del mismo ticket', key+'same'), ('Es otro ticket', key+'other'), ('Conservar la anterior', key+'keep')])
         elif choice['kind'] == 'resume':
             ticket = self.billing.resolve_ticket(owner, choice['ticket_id'])
             text = 'Retomar solicitud: ' + self.label(ticket)
@@ -241,11 +242,13 @@ class TelegramWorkflow:
 
     async def choose(self, owner, chat_id, identifier, action):
         choice = self.store.get('workflow_choice', owner, identifier)
+        if choice['kind']=='receipt' and choice['_state']!='pending':
+            raise AppError(409,'workflow_changed','Esta decisión ya fue utilizada. Abre /menu para continuar.')
         state = self.state(owner)
         active = self.active(owner)
         if state.get('workflow_choice_id') != identifier or choice['_state'] != 'pending' or choice['from_ticket_id'] != (active['id'] if active else None):
             raise AppError(409, 'workflow_changed', 'El menú cambió. Abre /menu para continuar.')
-        allowed = {'same','other','keep'} if choice['kind']=='replace' else {'resume','keep'} if choice['kind']=='resume' else {'cancel','keep'} if choice['kind']=='stop' else {'pause','cancel','keep'}
+        allowed = {'same','other'} if choice['kind']=='receipt' else {'same','other','keep'} if choice['kind']=='replace' else {'resume','keep'} if choice['kind']=='resume' else {'cancel','keep'} if choice['kind']=='stop' else {'pause','cancel','keep'}
         if action not in allowed or action=='cancel' and (not active or self.uncertain(owner, active)):
             raise AppError(409, 'workflow_choice', 'Esa opción no está disponible. Abre /menu.')
         document = self.billing.document(owner, choice['document_id']) if choice.get('document_id') and action!='keep' else None
@@ -270,6 +273,9 @@ class TelegramWorkflow:
         if action == 'same':
             if not active or choice['ticket_id']!=active['id']:
                 raise AppError(409,'workflow_changed','La solicitud cambió. Abre /menu.')
+            if choice['kind']=='receipt':
+                await self.bridge.receipts.correct(owner,chat_id,active,document)
+                return
             if document['id']==active['document_id']:
                 replacement=document
             else:
