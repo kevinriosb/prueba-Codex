@@ -58,8 +58,9 @@ class PortalDiscovery:
         printed,rejected=printed_billing_addresses(ticket.get('printed_addresses'))
         ticket['portal_rejected_addresses']=list({(item['url'],item['reason']):item
             for item in [*ticket.get('portal_rejected_addresses',[]),*rejected]}.values())
-        if ticket.get('billing_url') and not printed:
-            printed=[{'url':ticket['billing_url'],'evidence':ticket.get('billing_url_evidence') or ''}]
+        candidate=ticket.get('billing_url') or ticket.get('portal_printed_url_candidate')
+        if candidate and not printed:
+            printed=[{'url':candidate,'evidence':ticket.get('billing_url_evidence') or ''}]
         # Comprobaciones acotadas; nunca reintentar una dirección fallida en esta búsqueda.
         attempted=set()
         async def attempt(url,source,evidence):
@@ -70,6 +71,7 @@ class PortalDiscovery:
         for item in printed[:2]:
             found=await attempt(item['url'],'ticket',item['evidence'])
             if found:return found
+        ticket.pop('portal_printed_url_candidate',None)
         ticket.update(billing_url=None,portal_stage='awaiting_official_site')
         self.store.update('ticket',owner,ticket['id'],ticket)
         for saved in self.billing.portal_memory.for_merchant(owner,ticket)[:1]:
@@ -82,6 +84,9 @@ class PortalDiscovery:
         if printed and urlsplit(printed).hostname.removeprefix('www.') in evidence.casefold():
             found=await attempt(printed,'printed',evidence)
             if found:return found
+        if len(attempted)>=4:
+            return self.store.update('ticket',owner,ticket['id'],ticket|{'portal_discovery_error':
+                'Estas direcciones no respondieron. Escribe la web oficial del comercio para continuar.'})
         lookup=self.store.digest('official-site:'+ticket['merchant'].strip().casefold())
         old=self.store.find('portal_discovery',owner,lookup)
         if old and (not refresh or old.get('url')):

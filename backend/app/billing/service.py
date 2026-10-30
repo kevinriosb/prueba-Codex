@@ -327,7 +327,8 @@ class BillingService:
         qr_urls=receipt_qr_urls(document)
         if data.get('billing_url') and unrelated_billing_link(data['billing_url'],data.get('billing_url_evidence')):
             data['billing_url']=None
-        if not data.get('billing_url') and len(qr_urls)==1 and re.search(r'factur|cfdi',data.get('billing_url_evidence') or '',re.I):
+        qr_billing=any(item.get('purpose')=='billing' and not item.get('url') for item in data.get('printed_addresses') or [])
+        if not data.get('billing_url') and len(qr_urls)==1 and (qr_billing or re.search(r'factur|cfdi',data.get('billing_url_evidence') or '',re.I)):
             if not unrelated_billing_link(qr_urls[0],data.get('billing_url_evidence')):data['billing_url']=qr_urls[0]
         if not data['is_ticket'] or (not data['readable'] and not any(data.get(key) for key in ('merchant','folio','total','billing_url','billing_email'))):
             self._status(owner,pending,Status.REQUIERE_INTERVENCION,'No se identificaron datos de compra. El archivo sigue guardado.')
@@ -363,6 +364,10 @@ class BillingService:
             'status_history':pending['status_history'],
             'delivery':None,'certificate_requested':False,'csf_supplement_sent':False,'invoice_documents':[],
             'qr_urls':qr_urls,'validation':None,'note':'' if complete else 'Falta completar: '+', '.join(missing_receipt_fields(data))+'.'}
+        if data.get('billing_url'):
+            # Mientras DNS/HTTPS está en vuelo ningún lector concurrente debe
+            # anunciar esta dirección como portal ni abrirla como tal.
+            ticket.update(portal_printed_url_candidate=data['billing_url'],billing_url=None)
         if document.get('analysis_stage')=='routing' and data.get('billing_url'):
             ticket.update(portal_driven=True,portal_stage='awaiting_entry',note='Comprobando la dirección impresa.')
         if document.get('analysis_scope')=='portal-fields-v3':ticket['receipt_summary_read']=True
@@ -371,7 +376,7 @@ class BillingService:
         if document.get('analysis_stage')=='routing' and not data.get('billing_url') and data.get('email_explicitly_for_billing'):
             await self.portal_preparation.read_for_email(owner,ticket['id'])
             ticket=self.resolve_ticket(owner,ticket['id'])
-        if ticket.get('billing_url') or document.get('analysis_scope')=='portal-fields-v3':
+        if ticket.get('portal_printed_url_candidate') or ticket.get('billing_url') or document.get('analysis_scope')=='portal-fields-v3':
             ticket=await self.portal_discovery.find(owner,ticket['id'])
         return public(ticket)|{'channels':self.detect_billing_channels(owner,ticket['id'])}
 

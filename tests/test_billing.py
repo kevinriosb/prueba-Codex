@@ -38,7 +38,8 @@ def billing_client(tmp_path):
         login(client)
         async def simulated_probe(url):
             return {'url':url,'reachable':True,'reason':None,'status':200}
-        app.state.billing.portal_discovery.probe=portal_probe or simulated_probe
+        if app.state.billing.enabled:
+            app.state.billing.portal_discovery.probe=portal_probe or simulated_probe
         return client,app,extractor,mail,sat,telegram
     yield make
     stack.close()

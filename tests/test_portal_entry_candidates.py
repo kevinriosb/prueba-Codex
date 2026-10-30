@@ -42,6 +42,8 @@ def test_no_positive_printed_context_does_not_turn_a_branch_or_survey_into_a_por
 def test_printed_portal_is_checked_before_awaiting_form_or_identified_text(billing_client):
     calls=[]
     async def probe(url):
+        pending=app.state.billing.store.list('ticket','owner')[0]
+        assert pending.get('portal_stage')!='awaiting_form' and not pending.get('billing_url')
         calls.append(url)
         return {'url':url,'reachable':True,'reason':None,'status':200}
     client,app,extractor,*_=billing_client(portal_probe=probe)
@@ -112,3 +114,52 @@ async def test_probe_rejects_http_errors_without_retry(status):
     result=await probe_url(HUB,fetcher=transport)
     assert not result['reachable'] and result['reason']=='http_error' and result['status']==status
     assert len(transport.calls)==1
+
+
+def saved_portal(app,item,url='https://saved.example/form'):
+    import time
+    billing=app.state.billing
+    source='https://previous-entry.example'
+    lookup=billing.portal_memory.key(item|{'billing_url':source})
+    return billing.store.add('portal_memory','owner',{'merchant':item['merchant'],'source':source,
+        'url':url,'ticket_id':item['id']},lookup=lookup,expires=time.time()+3600)
+
+
+def test_no_valid_printed_address_uses_an_owned_saved_portal_before_official_search(billing_client):
+    client,app,extractor,*_=billing_client()
+    item=ticket(client);saved=saved_portal(app,item)
+    checked=[]
+    async def probe(url):
+        checked.append(url);return {'url':url,'reachable':True,'reason':None,'status':200}
+    app.state.billing.portal_discovery.probe=probe
+    result=client.portal.call(app.state.billing.portal_discovery.find,'owner',item['id'])
+    assert result['billing_url']==saved['url'] and result['portal_discovery']['source']=='saved'
+    assert checked==[saved['url']] and app.state.billing.store.list('portal_discovery','owner')==[]
+
+
+def test_valid_printed_address_keeps_priority_over_the_saved_form(billing_client):
+    client,app,extractor,*_=billing_client()
+    extractor.ticket['billing_url']=HUB
+    item=ticket(client);saved=saved_portal(app,item)
+    result=client.portal.call(app.state.billing.portal_discovery.find,'owner',item['id'])
+    assert result['billing_url']==HUB and result['portal_discovery']['source']=='ticket'
+    assert not result.get('selected_portal') and result['billing_url']!=saved['url']
+
+
+def test_saved_fallback_is_bound_to_owner_brand_and_issuer_and_does_not_renew_expiry(billing_client):
+    client,app,*_=billing_client();item=ticket(client);saved=saved_portal(app,item)
+    memory=app.state.billing.portal_memory
+    assert memory.for_merchant('owner',item)[0]['id']==saved['id']
+    assert memory.for_merchant('another',item)==[]
+    assert memory.for_merchant('owner',item|{'merchant':'Unrelated business'})==[]
+    assert memory.for_merchant('owner',item|{'issuer_rfc':'CCC010101CCC'})==[]
+    client.portal.call(app.state.billing.portal_discovery.find,'owner',item['id'])
+    assert app.state.billing.store.get('portal_memory','owner',saved['id'])['_expires']==saved['_expires']
+
+
+def test_semantic_qr_context_and_printed_official_site_are_preserved_without_keyword_rules():
+    raw=TICKET|{'printed_addresses':[{'url':None,'evidence':'Scansiona per ottenere il documento tributario','purpose':'billing'},
+        {'url':HUB,'evidence':'Unser offizieller Internetauftritt: '+HUB,'purpose':'official'}]}
+    result=TicketExtraction.model_validate(raw)
+    assert result.billing_url is None and result.billing_url_evidence=='Scansiona per ottenere il documento tributario'
+    assert result.merchant_website==HUB

@@ -107,7 +107,14 @@ class PrintedAddresses(SafeModel):
             from .receipt import printed_billing_addresses
             candidates,_=printed_billing_addresses([item.model_dump() for item in self.printed_addresses])
             self.billing_url=candidates[0]['url'] if candidates else None
-            self.billing_url_evidence=candidates[0]['evidence'] if candidates else None
+            qr=next((item for item in self.printed_addresses if item.purpose=='billing' and item.url is None),None)
+            self.billing_url_evidence=candidates[0]['evidence'] if candidates else qr.evidence if qr else None
+            if hasattr(self,'merchant_website') and not self.merchant_website:
+                official=next((item for item in self.printed_addresses if item.purpose=='official' and item.url
+                    and item.url.removeprefix('https://').removeprefix('http://').rstrip('/').casefold() in item.evidence.casefold()),None)
+                if official:
+                    self.merchant_website=portal_url(official.url)
+                    self.merchant_website_evidence=official.evidence
         return self
 
 

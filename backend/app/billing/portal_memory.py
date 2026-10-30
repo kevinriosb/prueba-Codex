@@ -66,7 +66,7 @@ def stable_form_bookmark(ticket,snapshot):
 
 def brand_options(snapshot):
     options=[item for item in snapshot['actions'] if item.get('brand') and brand_key(item.get('label')) not in
-        {'','facebook','instagram','twitter','x','youtube','linkedin','tiktok','inicio','home'}]
+        {'','inicio','home'}]
     # Un logo aislado (o repetido en la cabecera/pie) no es un selector de marcas.
     return options if len({brand_key(item['label']) for item in options})>=2 else []
 
@@ -91,11 +91,17 @@ class PortalMemory:
 
     def for_merchant(self,owner,ticket):
         """Respaldo por comercio cuando no hay URL impresa; nunca amplía permisos."""
-        merchant=ticket.get('merchant')
-        if not merchant:return []
-        return [item for item in self.store.list('portal_memory',owner)
-            if same_brand_label(merchant,item.get('merchant')) and bookmark_url(item.get('url'))==item.get('url')
-            and not unrelated_billing_link(item.get('url'))]
+        if not ticket.get('merchant'):return []
+        matches=[]
+        for item in self.store.list('portal_memory',owner):
+            if not item.get('source') or not item.get('url') or bookmark_url(item['url'])!=item['url']:continue
+            # La clave existente ya vincula marca exacta normalizada, RFC emisor
+            # y origen. No basta con que un nombre se parezca al del ticket.
+            lookup=self.key(ticket|{'billing_url':item['source']})
+            found=self.store.find('portal_memory',owner,lookup) if lookup else None
+            if found and found['id']==item['id'] and not unrelated_billing_link(item['url']):matches.append(item)
+        # Sin origen impreso no se elige a ciegas entre varias rutas guardadas.
+        return matches if len({item['url'] for item in matches})==1 else []
 
     def key(self,ticket):
         if len(brand_key(ticket.get('merchant')))<3 or not ticket.get('billing_url'):
