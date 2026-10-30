@@ -77,3 +77,17 @@ def test_dead_end_explains_current_location_and_offers_manual_address_without_re
     assert 'Aún no se encontró el formulario' in telegram.messages[-1][1]
     assert any(data.startswith('dw:') for _,data in telegram.messages[-1][2])
     assert mail.sent==sat.calls==[]
+
+
+async def test_form_associated_selects_and_plain_form_buttons_are_not_navigation_actions():
+    from backend.browser_worker.engine import BrowserManager
+    markup='''<form id=private><label>Dato desconocido<input></label>
+        <button type=button onclick="document.querySelector('input').value='never-write'">Rellenar</button></form>
+        <select form=private><option value="">Elige</option><option value="X">Otro dato</option></select>'''
+    pages=Pages({ROOT:markup});manager=BrowserManager(fetcher=pages)
+    try:
+        observed=await manager.open('owner',ROOT,['https://merchant.example'],public_route=True)
+        assert observed['actions']==[]
+        assert await manager.sessions[observed['session_id']].page.locator('input').input_value()==''
+        assert [url for url,_ in pages.calls]==[ROOT]
+    finally:await manager.close()

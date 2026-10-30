@@ -76,7 +76,7 @@ SNAPSHOT = r'''() => {
   if(e.tagName==='BUTTON'&&e.type==='submit'&&!literal&&!e.hasAttribute('aria-expanded')&&e.getAttribute('role')!=='tab'
     &&!['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))&&!['collapse','tab','pill'].includes(e.getAttribute('data-toggle')))continue;
   const href=literal||(['A','AREA'].includes(e.tagName)?e.getAttribute('href'):null);
-  const expand=(!href&&(e.tagName==='BUTTON'||e.type==='button'||e.getAttribute('role')==='button')&&(!inForm||e.type==='button'))||e.tagName==='SUMMARY'||e.hasAttribute('aria-expanded')||e.getAttribute('role')==='tab'||['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))||['collapse','tab','pill'].includes(e.getAttribute('data-toggle'));
+  const expand=(!href&&(e.tagName==='BUTTON'||e.type==='button'||e.getAttribute('role')==='button')&&!inForm)||e.tagName==='SUMMARY'||e.hasAttribute('aria-expanded')||e.getAttribute('role')==='tab'||['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))||['collapse','tab','pill'].includes(e.getAttribute('data-toggle'));
   if(inForm&&!expand&&!literal&&e.tagName!=='A') continue;
   if(!expand&&(!href||href.startsWith('#'))) continue;
   if(expand&&(e.getAttribute('aria-selected')==='true'||e.getAttribute('aria-expanded')==='true')) continue;
@@ -86,7 +86,7 @@ SNAPSHOT = r'''() => {
   candidates.push({e,label:text,kind:expand?'expand':'link',url:expand?null:(literal||e.href),brand,priority,description:(e.closest('nav,footer,header,section,article,li,div')?.innerText||'').replace(/\s+/g,' ').trim().slice(0,140)});
  }
  // Selectores públicos: cada opción observada conserva su valor, sin inventar URLs.
- for(const select of all('select').filter(e=>visible(e)&&!e.disabled&&!e.closest('form'))) {
+ for(const select of all('select').filter(e=>visible(e)&&!e.disabled&&!e.form&&!e.closest('form'))) {
   for(const option of Array.from(select.options).slice(0,25)) {
    if(option.disabled||!option.value||option.selected)continue;
    candidates.push({e:option,label:option.text.slice(0,100),kind:'expand',url:null,brand:true,priority:1,
