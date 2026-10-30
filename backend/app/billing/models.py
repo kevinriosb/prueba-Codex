@@ -109,6 +109,8 @@ class TicketExtraction(SafeModel):
     billing_code: str | None = Field(max_length=160)
     billing_url: str | None = Field(max_length=500)
     billing_url_evidence: str | None = Field(default=None,max_length=500)
+    merchant_website: str | None = Field(default=None,max_length=500)
+    merchant_website_evidence: str | None = Field(default=None,max_length=500)
     billing_email: str | None = Field(max_length=254)
     billing_email_evidence: str | None = Field(max_length=500)
     email_explicitly_for_billing: bool
@@ -138,6 +140,14 @@ class TicketRouting(SafeModel):
     billing_email: str | None = Field(max_length=254)
     billing_email_evidence: str | None = Field(max_length=500)
     email_explicitly_for_billing: bool
+    issuer_rfc:str|None=Field(default=None,max_length=13)
+    purchase_date:str|None=Field(default=None,max_length=10)
+    folio:str|None=Field(default=None,max_length=100)
+    account_number:str|None=Field(default=None,max_length=100)
+    total:str|None=Field(default=None,max_length=24)
+    currency:str|None=Field(default=None,max_length=3)
+    merchant_website:str|None=Field(default=None,max_length=500)
+    merchant_website_evidence:str|None=Field(default=None,max_length=500)
 
 
 def validate_fiscal(data):

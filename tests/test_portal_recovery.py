@@ -56,7 +56,7 @@ def test_portal_review_is_not_blocked_by_the_general_conversation(billing_client
     before=app.state.database.get_conversation(identifier,owner(app))
     chat(data=button(telegram,'wa'))
     assert [item[0] for item in browser.calls]==['open','act']
-    assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
+    assert 'Cuenta: No leído' in telegram.messages[-1][1]
     after=app.state.database.get_conversation(identifier,owner(app))
     assert all(after[key]==before[key] for key in ('history','pending','turns','blocked','messages'))
     assert app.state.billing.store.find('channel_state',owner(app),'telegram')['conversation_id']==identifier
@@ -78,7 +78,7 @@ def test_old_model_reference_refreshes_observation_without_executing_the_old_cli
     chat(data=button(telegram,'bn'))
     assert [item[0] for item in browser.calls]==['open','observe','act']
     assert browser.calls[-1][-2:]==('dddddddd','eeeeeeee')
-    assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
+    assert 'Cuenta: No leído' in telegram.messages[-1][1]
     assert app.state.billing.store.find('channel_state',owner(app),'telegram').get('conversation_id') is None
     assert app.state.database.usage(owner(app))['runs']==2
     assert mail.sent==sat.calls==[]
@@ -136,7 +136,7 @@ def test_public_navigation_stops_at_form_even_if_model_asks_to_click_more(billin
     assert [item[0] for item in browser.calls]==['open','act']
     assert len(model.inputs)==2  # No se solicita el siguiente clic ni un cierre de IA.
     assert 'Formulario encontrado' in telegram.messages[-1][1]
-    assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
+    assert 'Cuenta: No leído' in telegram.messages[-1][1]
     assert app.state.database.usage(owner(app))['runs']==1
 
 
@@ -244,7 +244,7 @@ def test_model_identifier_cannot_change_the_ticket_selected_in_telegram(billing_
     chat(data=button(telegram,'wa'))
     assert [item[0] for item in browser.calls]==['open','act']
     assert browser.calls[0][2]=='https://merchant.example/'
-    assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
+    assert 'Cuenta: No leído' in telegram.messages[-1][1]
     assert app.state.billing.store.get('ticket',owner(app),selected['id'])['portal_browser_error'] is None
     assert len(extractor.calls)==2 and mail.sent==sat.calls==[]
 

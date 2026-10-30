@@ -96,7 +96,7 @@ def test_observed_provider_is_covered_by_native_public_route_permission(billing_
     chat(data=button(telegram,'wa'))
     assert [item[0] for item in browser.calls]==['open','act']
     assert not any(data.startswith('wa:') for _,data in telegram.messages[-1][2])
-    assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
+    assert 'Cuenta: No leído' in telegram.messages[-1][1]
     assert mail.sent==sat.calls==[]
 
 

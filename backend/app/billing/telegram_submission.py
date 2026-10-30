@@ -1,4 +1,5 @@
 """Menús nativos para enviar un paso y corregir únicamente el campo solicitado."""
+from datetime import datetime
 from ..errors import AppError
 from .portal_preparation import PROFILE_KEYS
 
@@ -38,7 +39,15 @@ class TelegramSubmission:
                 if any(f.get('key') in PROFILE_KEYS for f in missing):
                     text+=' Actualiza y confirma el dato fiscal en Mi perfil fiscal.'
                     buttons.append(('Mi perfil fiscal','mn:'+self.bridge._state(owner)['id']+':profile'))
+                for item in missing:
+                    if not item.get('reference') and item.get('key')=='total':
+                        buttons.append(('Completar importe','td:'+ticket['id']+':total'))
+                        state=self.bridge._state(owner)
+                        state['ticket_input']={'id':ticket['id'],'field':'total'}
+                        self.bridge._save_state(owner,state)
             text+='\n'+'\n'.join(v['label']+': '+v['value'] for v in values)
+            if ticket.get('total') and not any(value.get('key')=='total' for value in values):
+                text+='\nImporte del ticket: '+str(ticket['total'])
             for field in tx['view']['snapshot']['fields']:
                 if field.get('key') not in PROFILE_KEYS:
                     buttons.append(('Completar '+field['label'][:30],'lm:'+tx['id']+':'+field['reference']))
@@ -81,30 +90,60 @@ class TelegramSubmission:
         elif prefix=='lu':
             photo=self.billing.store.get('portal_field_photo',owner,identifier)
             if photo['_state']!='read' or not photo.get('value'):raise AppError(409,'portal_field','Primero autoriza la lectura del campo.')
+            if not photo.get('transaction_id'):
+                ticket=self.receipt_value(owner,photo['ticket_id'],photo['key'],photo['value'])
+                self.billing.store.update('portal_field_photo',owner,identifier,photo,state='used')
+                self.clear_input(owner)
+                await self.receipt_done(owner,chat_id,ticket)
+                return
             tx=self.submission.set_field(owner,photo['transaction_id'],photo['reference'],photo['value'])
             self.billing.store.update('portal_field_photo',owner,identifier,photo,state='used')
             self.clear_input(owner)
             await self.show(owner,chat_id,tx['ticket_id'],tx=tx)
 
     def clear_input(self,owner):
-        state=self.bridge._state(owner);state.pop('portal_field_input',None);self.bridge._save_state(owner,state)
+        state=self.bridge._state(owner)
+        state.pop('portal_field_input',None);state.pop('ticket_input',None)
+        self.bridge._save_state(owner,state)
+
+    def receipt_value(self,owner,ticket_id,key,value,correction=False):
+        if key=='purchase_date' and '/' in value:
+            try:value=datetime.strptime(value.strip(),'%d/%m/%Y').date().isoformat()
+            except ValueError:raise AppError(422,'ticket_field','Escribe una fecha válida: DD/MM/AAAA.') from None
+        return self.billing.complete_ticket_field(owner,ticket_id,key,value,correction=correction)
+
+    async def receipt_done(self,owner,chat_id,ticket):
+        tx=self.submission.current(owner,ticket['id'])
+        if tx:
+            await self.show(owner,chat_id,ticket['id'],tx=tx);return
+        try:self.billing.browser_review(owner,ticket['id'])
+        except AppError as error:
+            if error.status!=404:raise
+            await self.bridge._ticket(owner,chat_id,ticket['id'])
+        else:await self.bridge._browser(owner,chat_id,ticket['id'])
 
     async def message(self,owner,chat_id,message):
-        state=self.bridge._state(owner);pending=state.get('portal_field_input')
+        state=self.bridge._state(owner);pending=state.get('portal_field_input') or state.get('ticket_input')
         if not pending:return False
         if state.get('expected_upload')=='csf' or state.get('replace_profile_id'):
             self.clear_input(owner);return False
         text=message.get('text','').strip();caption=message.get('caption','').strip()
         if text.startswith('/') or caption.startswith('/'):return False
         active=self.bridge.workflow.active(owner)
-        if not active or active['id']!=pending['ticket_id']:
+        if not active or active['id']!=(pending.get('ticket_id') or pending.get('id')):
             self.clear_input(owner);return False
         if message.get('document') or message.get('photo'):
             attachment=message.get('document') or message['photo'][-1]
             data=await self.bridge.client.download(attachment['file_id'])
-            photo=self.submission.receive_crop(owner,pending['transaction_id'],pending['reference'],data)
+            photo=(self.submission.receive_crop(owner,pending['transaction_id'],pending['reference'],data) if pending.get('transaction_id') else
+                self.submission.receive_receipt_crop(owner,pending['id'],pending['field'],data))
             await self.bridge.client.send(chat_id,'Leer solo este campo con OpenAI consume tokens.',[('Autorizar lectura del campo','la:'+photo['id'])])
         elif text:
+            if not pending.get('transaction_id'):
+                ticket=self.receipt_value(owner,pending['id'],pending['field'],text,pending.get('correction',False))
+                self.clear_input(owner)
+                await self.receipt_done(owner,chat_id,ticket)
+                return True
             tx=self.submission.set_field(owner,pending['transaction_id'],pending['reference'],text)
             self.clear_input(owner)
             await self.show(owner,chat_id,tx['ticket_id'],tx=tx)

@@ -6,6 +6,7 @@ from urllib.parse import unquote
 
 from ...browser_worker.policy import bookmark_url,origin
 from ..errors import AppError
+from .receipt import unrelated_billing_link
 
 
 FORM_KEYS={'rfc','account_number','folio','reference_number','billing_code','web_id','fiscal_regime','cfdi_use'}
@@ -101,7 +102,7 @@ class PortalMemory:
     def suggestion(self,owner,ticket):
         lookup=self.key(ticket)
         record=self.store.find('portal_memory',owner,lookup) if lookup else None
-        return record if record and bookmark_url(record['url'])==record['url'] else None
+        return record if record and bookmark_url(record['url'])==record['url'] and not unrelated_billing_link(record['url']) else None
 
     def entry_url(self,owner,ticket):
         selected=ticket.get('selected_portal')

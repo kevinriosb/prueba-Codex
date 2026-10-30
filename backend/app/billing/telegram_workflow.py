@@ -9,12 +9,12 @@ from .telegram_profiles import normalized
 
 TERMINAL = {'FACTURACION_COMPLETADA'}
 TICKET_ACTIONS = {'td','xe','xu','xr','ts','bd','bp','bn','ba','bs','bm','bo','ve','vc','ec','pr','tr','sa','sv','po','on','of'}
-TICKET_ACTIONS.update({'lv','lr','lq'})
+TICKET_ACTIONS.update({'lv','lr','lq','df','dw'})
 REVIEW_ACTIONS = {'xa':'portal_data_review','xg':'portal_fill_review','xs':'portal_fill_review',
     'er':'email_approval','se':'email_approval','no':'email_approval','wa':'portal_permission','wx':'portal_permission'}
 REVIEW_ACTIONS.update({'ls':'portal_send_review','lm':'portal_transaction','la':'portal_field_photo','lu':'portal_field_photo'})
 TRANSIENT = ('last_ticket_id','browser_ticket_id','last_document_id','portal_upload_ticket','ticket_input','browser_choice',
-    'expected_upload','replace_profile_id','profile_input','portal_field_input')
+    'expected_upload','replace_profile_id','profile_input','portal_field_input','portal_site_input')
 
 
 class TelegramWorkflow:
@@ -196,11 +196,14 @@ class TelegramWorkflow:
         await self.bridge.client.send(chat_id, text, buttons)
 
     async def new(self, owner, chat_id):
-        if self.active(owner):
-            await self.offer(owner, chat_id)
-        else:
-            self.awaiting(owner)
-            await self.menu(owner, chat_id)
+        pending=self.pending(owner)
+        document_id=pending.get('document_id') if pending and pending.get('kind')=='switch' else None
+        active=self.active(owner)
+        if active:await self.close(owner,active,cancel=False)
+        else:self.awaiting(owner)
+        if document_id:
+            await self.bridge._choose_document(owner,chat_id,document_id,'ticket',workflow_confirmed=True)
+        else:await self.menu(owner, chat_id)
 
     async def admit(self, owner, chat_id, document_id):
         document = self.billing.document(owner, document_id)
@@ -210,8 +213,8 @@ class TelegramWorkflow:
             await self.prompt(owner,chat_id,self.pending(owner))
             return False
         if active and (not target or target['id'] != active['id']):
-            await self.offer(owner, chat_id, document_id=document_id, ticket_id=target['id'] if target else None)
-            return False
+            await self.close(owner,active,cancel=False)
+            await self.bridge.client.send(chat_id,'Nuevo ticket activo. El anterior queda en Mis solicitudes.')
         if target:
             self.activate(owner, target)
         return True
@@ -261,7 +264,8 @@ class TelegramWorkflow:
                 await self.menu(owner, chat_id)
             return
         if action == 'other':
-            await self.offer(owner, chat_id, document_id=document['id'])
+            if active:await self.close(owner,active,cancel=False)
+            await self.bridge._choose_document(owner,chat_id,document['id'],'ticket',workflow_confirmed=True)
             return
         if action == 'same':
             if not active or choice['ticket_id']!=active['id']:
@@ -386,7 +390,7 @@ class TelegramWorkflow:
         if text in {'/start','/ayuda','/menu','/inicio','menu','inicio'}:
             await self.menu(owner, chat_id)
             return True
-        if text in {'/nuevo','/nuevo_ticket','nueva solicitud','nuevo ticket','otro ticket'} or re.search(r'\b(?:empieza|empezar|inicia|iniciar|comienza|comenzar)\b.*\b(?:nuevo ticket|nueva solicitud|de cero|de 0)\b', text):
+        if text in {'/nuevo','/nuevo_ticket','nueva solicitud','otra solicitud','nuevo ticket','otro ticket'} or re.search(r'\b(?:empieza|empezar|inicia|iniciar|comienza|comenzar)\b.*\b(?:(?:otro|nuevo) ticket|(?:otra|nueva) solicitud|de cero|de 0)\b', text):
             await self.new(owner, chat_id)
             return True
         if text in {'/cancelar','cancelar solicitud','cancela la solicitud'}:

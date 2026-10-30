@@ -11,7 +11,7 @@ from .cfdi import validate_cfdi
 from .documents import inspect_document
 from .models import Status
 from .portal_preparation import PROFILE_KEYS,RECEIPT_KEYS,portal_value
-from .receipt import purchase_date,purchase_total
+from .receipt import purchase_date,purchase_total,pending_receipt_fields
 
 
 class PortalSubmission:
@@ -52,6 +52,7 @@ class PortalSubmission:
     def fingerprint(self,owner,ticket,view,values):
         return self.store.digest(json.dumps({'scope':self.billing.portal_permissions.scope(ticket),
             'document':ticket['document_id'],'profile':self.store.get('profile',owner,ticket['profile_id']),
+            'purchase':self.billing._purchase_fingerprint(ticket),
             'values':values,'form':self.billing.portal_preparation.shape_key(view['snapshot'])},sort_keys=True))
 
     async def review(self,owner,ticket_id):
@@ -80,6 +81,8 @@ class PortalSubmission:
     def approvals(self,owner,transaction):
         ticket=self.billing.resolve_ticket(owner,transaction['ticket_id'])
         values,missing=self.plan(owner,ticket,transaction['view'],transaction.get('manual'))
+        if not ticket.get('total') and not any(item.get('key')=='total' for item in missing):
+            missing.append({'key':'total','label':'importe del ticket','reference':None})
         actions=[a for a in transaction['view']['actions'] if a['kind']!='download']
         if missing:return [],missing,values
         records=[]
@@ -105,7 +108,7 @@ class PortalSubmission:
         tx=self.store.get('portal_transaction',owner,approval['transaction_id'])
         if approval['_state']!='pending':return await self.status(owner,tx)
         values,missing=self.plan(owner,ticket,tx['view'],tx.get('manual'))
-        if (tx['state'] not in {'review','correction'} or approval['deadline']<time.time() or missing
+        if (tx['state'] not in {'review','correction'} or approval['deadline']<time.time() or missing or not ticket.get('total')
                 or approval['observation_id']!=tx['view']['snapshot']['observation_id']
                 or approval['fingerprint']!=self.fingerprint(owner,ticket,tx['view'],values)
                 or approval['scope']!=self.billing.portal_permissions.scope(ticket)):
@@ -247,12 +250,24 @@ class PortalSubmission:
             'label':field['label'],'key':field.get('key'),'mime':mime,'data':base64.b64encode(content).decode()},
             state='pending',expires=time.time()+900)
 
+    def receive_receipt_crop(self,owner,ticket_id,key,data):
+        ticket=self.billing.resolve_ticket(owner,ticket_id);self.guard(owner,ticket)
+        if key not in pending_receipt_fields(ticket):raise AppError(409,'ticket_field','Ese dato ya no está pendiente.')
+        if self.store.count('portal_field_photo',owner)>=10:raise AppError(429,'document_limit','Escribe el dato manualmente; hay recortes pendientes.')
+        mime,content=inspect_document(data,self.billing.settings.billing_max_upload_bytes)
+        labels={'total':'importe','purchase_date':'fecha','merchant':'comercio','folio':'folio'}
+        return self.store.add('portal_field_photo',owner,{'ticket_id':ticket_id,'transaction_id':None,'reference':None,
+            'label':labels.get(key,key),'key':key,'mime':mime,'data':base64.b64encode(content).decode()},state='pending',expires=time.time()+900)
+
     async def read_crop(self,owner,identifier):
         photo=self.store.get('portal_field_photo',owner,identifier)
         ticket=self.billing.resolve_ticket(owner,photo['ticket_id']);self.guard(owner,ticket)
-        tx=self.store.get('portal_transaction',owner,photo['transaction_id'])
-        if tx['state'] not in {'review','correction'} or not any(f['reference']==photo['reference'] for f in tx['view']['snapshot']['fields']):
-            raise AppError(409,'portal_field','Cambió el paso. La foto no se analizará.')
+        if photo.get('transaction_id'):
+            tx=self.store.get('portal_transaction',owner,photo['transaction_id'])
+            if tx['state'] not in {'review','correction'} or not any(f['reference']==photo['reference'] for f in tx['view']['snapshot']['fields']):
+                raise AppError(409,'portal_field','Cambió el paso. La foto no se analizará.')
+        elif photo.get('key') not in pending_receipt_fields(ticket):
+            raise AppError(409,'ticket_field','El dato ya se completó. La foto no se analizará.')
         if not hasattr(self.billing.extractor,'extract_field'):raise AppError(503,'portal_field','La lectura de recortes no está disponible; escribe el dato.')
         if self.billing.analysis_lock.locked():raise AppError(429,'billing_busy','Hay otra lectura en curso. Espera unos segundos.')
         async with self.billing.analysis_lock:

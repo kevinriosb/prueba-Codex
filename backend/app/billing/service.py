@@ -18,7 +18,7 @@ from .documents import inspect_document
 from .extraction import DocumentExtractor, EXTRACTION_VERSION
 from .models import CFDI_USES, REGIMES, FiscalExtraction, Status, TicketExtraction, missing_fiscal_fields, regime_code, validate_fiscal
 from .providers import GmailProvider, normalized_email
-from .receipt import browser_missing_fields, missing_receipt_fields, pending_receipt_fields, purchase_date, purchase_reference, purchase_total, receipt_qr_urls
+from .receipt import browser_missing_fields, missing_receipt_fields, pending_receipt_fields, purchase_date, purchase_reference, purchase_total, receipt_qr_urls,unrelated_billing_link
 from .portal_inspection import PortalInspector, portal_plan
 from .browser import PortalBrowserClient
 from .portal_permissions import PortalPermissions,PortalPermissionRequired,portal_origin
@@ -26,6 +26,7 @@ from .portal_memory import PortalMemory,public_form_ready,stable_form_bookmark
 from .store import BillingStore
 from .portal_preparation import PortalPreparation
 from .portal_submission import PortalSubmission
+from .portal_discovery import PortalDiscovery
 
 
 def public(record):
@@ -52,6 +53,7 @@ class BillingService:
             self.portal_memory=PortalMemory(self)
             self.portal_preparation=PortalPreparation(self)
             self.portal_submission=PortalSubmission(self)
+            self.portal_discovery=PortalDiscovery(self)
             self.contacts=official_contacts(settings.billing_verified_contacts_json)
             self.store.purge()
 
@@ -207,7 +209,7 @@ class BillingService:
             document.update(analysis_consent=True,extraction_version=EXTRACTION_VERSION,analysis_error=None)
             document=self.store.update('document',owner,identifier,document)
             try:
-                routing=purpose=='ticket' and document.get('analysis_scope') in {'portal-fields-v1','portal-fields-v2'} and hasattr(self.extractor,'extract_routing')
+                routing=purpose=='ticket' and document.get('analysis_scope') in {'portal-fields-v1','portal-fields-v2','portal-fields-v3'} and hasattr(self.extractor,'extract_routing')
                 if routing:
                     result=await self.extractor.extract_routing(document['mime'],base64.b64decode(document['data']))
                     document['analysis_stage']='routing'
@@ -323,8 +325,10 @@ class BillingService:
             self._status(owner,pending,Status.ERROR,error.message)
             raise
         qr_urls=receipt_qr_urls(document)
+        if data.get('billing_url') and unrelated_billing_link(data['billing_url'],data.get('billing_url_evidence')):
+            data['billing_url']=None
         if not data.get('billing_url') and len(qr_urls)==1 and re.search(r'factur|cfdi',data.get('billing_url_evidence') or '',re.I):
-            data['billing_url']=qr_urls[0]
+            if not unrelated_billing_link(qr_urls[0],data.get('billing_url_evidence')):data['billing_url']=qr_urls[0]
         if not data['is_ticket'] or (not data['readable'] and not any(data.get(key) for key in ('merchant','folio','total','billing_url','billing_email'))):
             self._status(owner,pending,Status.REQUIERE_INTERVENCION,'No se identificaron datos de compra. El archivo sigue guardado.')
             raise AppError(422,'unreadable_ticket','No pude identificar datos de compra en este archivo. Revisa el tipo o la foto.')
@@ -361,6 +365,7 @@ class BillingService:
             'qr_urls':qr_urls,'validation':None,'note':'' if complete else 'Falta completar: '+', '.join(missing_receipt_fields(data))+'.'}
         if document.get('analysis_stage')=='routing' and data.get('billing_url'):
             ticket.update(portal_driven=True,portal_stage='awaiting_form',note='Portal identificado; falta leer su formulario.')
+        if document.get('analysis_scope')=='portal-fields-v3':ticket['receipt_summary_read']=True
         ticket=self.store.update('ticket',owner,pending['id'],ticket)
         ticket=self._status(owner,ticket,ticket['status'])
         if document.get('analysis_stage')=='routing' and not data.get('billing_url') and data.get('email_explicitly_for_billing'):
@@ -368,6 +373,8 @@ class BillingService:
             ticket=self.resolve_ticket(owner,ticket['id'])
         if self.portal_memory.suggestion(owner,ticket):
             ticket=self.portal_memory.select(owner,ticket['id'])
+        if document.get('analysis_scope')=='portal-fields-v3' and not ticket.get('billing_url'):
+            ticket=await self.portal_discovery.find(owner,ticket['id'])
         return public(ticket)|{'channels':self.detect_billing_channels(owner,ticket['id'])}
 
     async def inspect_billing_portal(self,owner,ticket_id):

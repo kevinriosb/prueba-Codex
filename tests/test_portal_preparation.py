@@ -327,7 +327,7 @@ def test_same_purchase_in_different_photos_links_back_to_the_existing_ticket(bil
     client,app,extractor,mail,sat,telegram,chat=values
     billing=app.state.billing;first=billing.store.list('ticket',owner(app))[0]
     telegram.files['second']=image('blue');chat(document='second')
-    chat(data=choice(telegram,'pause'));chat(data=button(telegram,'an'))
+    chat(data=button(telegram,'an'))
     second=next(t for t in billing.store.list('ticket',owner(app)) if t['id']!=first['id'])
     record=billing.browser_review(owner(app),first['id'])
     review=billing.portal_permissions.request(owner(app),second['id'],route=True)

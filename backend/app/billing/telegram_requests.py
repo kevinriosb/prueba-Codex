@@ -139,6 +139,9 @@ class TelegramRequests:
         text += '\nSe restablece: ' + usage['reset'] + ' (' + self.settings.server_timezone + ').'
         if code is None:
             text += f"\nArchivos activos: {usage['documents']}/{self.settings.billing_max_documents}."
+            day=datetime.now(timezone.utc).date().isoformat()
+            searches=sum(record.get('day')==day for record in self.billing.store.list('portal_discovery',owner))
+            text+=f'\nBúsquedas web: {searches}/{self.settings.billing_max_daily_extractions} hoy; se reutilizan resultados guardados.'
         text += '\n/estado y /tickets no usan IA. Los intentos fallidos de análisis también cuentan.'
         await self.bridge.client.send(chat_id, text)
 

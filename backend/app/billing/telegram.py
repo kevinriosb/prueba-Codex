@@ -18,6 +18,7 @@ from .telegram_profiles import TelegramProfiles, normalized
 from .telegram_requests import REQUEST_TEXTS, TelegramRequests
 from .telegram_workflow import TelegramWorkflow
 from .telegram_submission import TelegramSubmission
+from .telegram_discovery import TelegramDiscovery
 from .portal_permissions import PortalPermissionRequired
 from .portal_memory import matching_brand,brand_options,has_billing_form,public_form_ready,unresolved_brand_selector
 
@@ -96,6 +97,7 @@ class TelegramBridge:
         self.requests=TelegramRequests(self)
         self.workflow=TelegramWorkflow(self)
         self.submission=TelegramSubmission(self)
+        self.discovery=TelegramDiscovery(self)
         self._locks={}
 
     @property
@@ -244,9 +246,12 @@ class TelegramBridge:
             profile=self.billing.store.get('profile',owner,profile_id)
             profile_text=' Perfil: '+profile['name']+'.'
             if hasattr(self.billing.extractor,'extract_routing'):
-                current['analysis_scope_offered']='portal-fields-v2'
+                modern=getattr(self.billing.extractor,'routing_version',2)>=3
+                current['analysis_scope_offered']='portal-fields-v3' if modern else 'portal-fields-v2'
                 self.billing.store.update('document',owner,current['id'],current)
-                await self.client.send(chat_id,'Solicitud '+current['ticket_id'][:8]+'\nLeeré este ticket con OpenAI: portal y campos necesarios. Cada lectura usa tokens; no solicita factura.',
+                text=('Analizaré el ticket y buscaré facturación en la web oficial con IA. Usa saldo de OpenAI; confirmarás el envío.' if modern else
+                    'Leeré este ticket con OpenAI: portal y campos necesarios. Cada lectura usa tokens; no solicita factura.')
+                await self.client.send(chat_id,'Solicitud '+current['ticket_id'][:8]+'\n'+text,
                     [('Autorizar análisis','an:'+current['id'])]+self.workflow.navigation(owner))
                 return
         await self.client.send(chat_id,label+' recibido.'+profile_text+
@@ -272,6 +277,7 @@ class TelegramBridge:
 
     async def _ticket(self,owner,chat_id,identifier):
         ticket=self.billing.resolve_ticket(owner,identifier)
+        ticket=self.billing.portal_discovery.repair(owner,ticket)
         identifier=ticket['id']
         active=self.workflow.active(owner)
         state=self._state(owner)
@@ -293,7 +299,7 @@ class TelegramBridge:
         for key,label in [('account_number','Cuenta'),('folio','Folio'),('store_number','Tienda'),('reference_number','Referencia'),('billing_code','Código de facturación')]:
             if ticket.get(key):
                 text+='\n'+label+': '+ticket[key]
-        text+='\nImporte: '+str(ticket.get('total') or 'Pendiente')
+        if ticket.get('total'):text+='\nImporte: '+str(ticket['total'])
         try:
             document=self.billing.document(owner,ticket['document_id'])
         except AppError as error:
@@ -314,16 +320,23 @@ class TelegramBridge:
             text+='\n'+(analysis['message'] if analysis else
                 (ticket.get('analysis_error') or (document or {}).get('analysis_error') or {}).get('message',ticket.get('note') or 'El análisis anterior falló; no se determinó la legibilidad.'))
         elif ticket.get('portal_stage')=='awaiting_form':
-            text+='\nLos datos de compra se leerán después del formulario.'
+            text+='\n'+('Revisaré los campos adicionales del portal.' if ticket.get('receipt_summary_read') else 'Los datos de compra se leerán después del formulario.')
+            if ticket.get('receipt_summary_read'):
+                missing=[key for key in ('total','purchase_date','merchant') if not ticket.get(key)]
+                names={'total':'importe','purchase_date':'fecha','merchant':'comercio'}
+                if missing:
+                    text+='\nNo leí: '+', '.join(names[key] for key in missing)+'. Escríbelo o envía foto de ese campo.'
+                    buttons.extend(('Completar '+names[key],'td:'+identifier+':'+key) for key in missing)
         elif pending_receipt_fields(ticket):
             labels={'merchant':'comercio','purchase_date':'fecha','folio':'folio','total':'importe',
                 'account_number':'Cuenta','reference_number':'referencia','billing_code':'código de facturación',
                 'web_id':'Web ID','store_number':'Tienda','toll_station':'caseta','lane':'carril','purchase_time':'hora'}
-            text+='\nFalta: '+', '.join(labels[key] for key in pending_receipt_fields(ticket))+'.'
+            text+='\nNo leí: '+', '.join(labels[key] for key in pending_receipt_fields(ticket))+'. Escríbelo o envía foto de ese campo.'
             if ticket.get('is_ticket') is True or document and (document.get('extracted') or {}).get('is_ticket'):
                 buttons.extend(('Completar '+labels[key],'td:'+identifier+':'+key) for key in pending_receipt_fields(ticket))
         channels=self.billing.detect_billing_channels(owner,identifier)
         if channels['method'] in {'portal','portal_manual'}:
+            if ticket.get('portal_discovery_error'):text+='\n'+ticket['portal_discovery_error']
             if ticket.get('billing_url'):
                 entry=self.billing.portal_memory.entry_url(owner,ticket)
                 text+='\n'+('Portal guardado: ' if entry!=ticket['billing_url'] else 'Portal: ')+entry
@@ -356,9 +369,9 @@ class TelegramBridge:
             else:
                 buttons.extend([('Preparar correo con datos y CSF','ec:'+identifier),('Preparar solo datos y ticket','pr:'+identifier)])
         elif ticket['status'] not in {'ERROR','TICKET_RECIBIDO'}:
-            text+='\nNo se identificó página o correo de facturación.'
-            if ticket.get('qr_urls'):
-                text+='\nQR leído (confirma su finalidad en el ticket):\n'+'\n'.join(ticket['qr_urls'])
+            text+='\n'+(ticket.get('portal_discovery_error') or 'Buscaré Facturación en la web oficial del comercio.')
+            text+='\nBuscar con IA usa saldo de OpenAI.'
+            buttons.extend([('Buscar facturación oficial con IA','df:'+identifier),('Escribir web oficial','dw:'+identifier)])
         old_failure=ticket['status']=='ERROR' and (ticket.get('analysis_error') or {}).get('code') not in {'billing_daily_limit','billing_busy'}
         if document and (document.get('analysis_consent') or old_failure) and (ticket['status'] in {'ERROR','REQUIERE_INTERVENCION'} or pending_receipt_fields(ticket)) and document.get('extraction_version')!=EXTRACTION_VERSION and not document.get('superseded_by') and not ticket.get('delivery'):
             text+='\nReanalizar comparte el archivo con OpenAI y consume tokens.'
@@ -412,8 +425,8 @@ class TelegramBridge:
         if not plan['fields'] and plan.get('proposed_reference'):
             item=plan['proposed_reference']
             text+='Referencia propuesta, sin validar: '+item['label']+' '+item['value']+'\n'
-        text+='\n'.join(label+': '+str(ticket.get(key) or 'Pendiente') for key,label in
-            [('merchant','Comercio'),('account_number','Cuenta'),('folio','Folio'),('reference_number','Referencia'),('purchase_date','Fecha'),('total','Importe'),('billing_code','Código de facturación')])
+        text+='\n'.join(label+': '+str(ticket[key]) for key,label in
+            [('merchant','Comercio'),('account_number','Cuenta'),('folio','Folio'),('reference_number','Referencia'),('purchase_date','Fecha'),('total','Importe'),('billing_code','Código de facturación')] if ticket.get(key))
         text+='\n'+'\n'.join(label+': '+str(profile[key]) for key,label in
             [('rfc','RFC'),('name','Nombre'),('postal_code','CP fiscal'),('fiscal_regime','Régimen'),('cfdi_use','Uso CFDI'),('email','Correo')])
         text+='\nLa captura en este portal sigue siendo manual. No se ha solicitado la factura.'
@@ -566,6 +579,8 @@ class TelegramBridge:
         except AppError:
             proposal=None
         text=('Formulario encontrado\n' if ready else 'Revisión pública\n')+(proposal['url'] if proposal else snapshot['page'])
+        if ticket.get('total'):text+='\nImporte del ticket: '+str(ticket['total'])
+        elif ready:text+='\nNo leí el importe. Escríbelo o envía foto de ese campo.'
         if ticket.get('portal_browser_error'):
             text+='\n'+ticket['portal_browser_error']['message']
         if ticket.get('portal_data_error'):
@@ -576,7 +591,7 @@ class TelegramBridge:
             text+='\nDatos para el portal:' if ready else '\nCampos visibles; puede haber alternativas:'
             for item in active_fields:
                 key=item.get('key')
-                value=prepared_values.get(item.get('reference')) or ticket.get(key) or profile.get(key) or 'Pendiente de revisar'
+                value=prepared_values.get(item.get('reference')) or ticket.get(key) or profile.get(key) or 'No leído. Complétalo abajo'
                 text+='\n'+item['label']+': '+str(value)
         else:
             text+='\nAún no se encontró el formulario.'
@@ -622,6 +637,7 @@ class TelegramBridge:
             text+='\nRevisar con IA consume tokens. No se enviaron datos fiscales ni se solicitó la factura.'
         buttons=[]
         if ready:
+            if not ticket.get('total'):buttons.append(('Completar importe','td:'+ticket['id']+':total'))
             if ticket.get('portal_fill'):
                 buttons.append(('Ver estado del llenado','xs:'+ticket['portal_fill']['review_id']))
             if hasattr(self.billing.browser,'transaction_view'):
@@ -888,7 +904,7 @@ class TelegramBridge:
             examples={'merchant':'COMERCIO','purchase_date':'AAAA-MM-DD','folio':'FOLIO','total':'IMPORTE',
                 'account_number':'CUENTA','reference_number':'REFERENCIA','billing_code':'CODIGO',
                 'web_id':'WEB_ID','store_number':'TIENDA','toll_station':'CASETA','lane':'CARRIL','purchase_time':'HORA'}
-            await self.client.send(chat_id,'Completa el dato: /dato_ticket '+examples[code])
+            await self.client.send(chat_id,'No leí '+examples[code]+'. Escríbelo o envía una foto de ese campo.')
         elif prefix=='xa':
             await self.billing.portal_preparation.read_approved(owner,identifier)
             review=self.billing.store.get('portal_data_review',owner,identifier)
@@ -942,6 +958,10 @@ class TelegramBridge:
             await self.client.send(chat_id,'Formulario preparado; sesión activa '+str(result['expires_in'])+' s. Sin envío al comercio.',self.workflow.navigation(owner))
         elif prefix=='ts':
             await self._ticket(owner,chat_id,identifier)
+        elif prefix=='df':
+            await self.discovery.search(owner,chat_id,identifier)
+        elif prefix=='dw':
+            await self.discovery.ask_site(owner,chat_id,identifier)
         elif prefix=='bd':
             await self._browser_diagnostic(owner,chat_id,identifier)
         elif prefix=='er':
@@ -990,7 +1010,7 @@ class TelegramBridge:
                     raise
                 await self.profiles.show_draft(owner,chat_id,draft['id'])
             else:
-                if document.get('analysis_scope_offered') in {'portal-fields-v1','portal-fields-v2'}:
+                if document.get('analysis_scope_offered') in {'portal-fields-v1','portal-fields-v2','portal-fields-v3'}:
                     document['analysis_scope']=document['analysis_scope_offered']
                     self.billing.store.update('document',owner,identifier,document)
                 ticket=await self.billing.analyze_ticket(owner,identifier,consent=True)
@@ -1000,7 +1020,7 @@ class TelegramBridge:
                 state=self._state(owner)
                 state['last_ticket_id']=ticket['id']
                 self._save_state(owner,state)
-                await self._ticket(owner,chat_id,ticket['id'])
+                await self.discovery.after_analysis(owner,chat_id,ticket,self.billing.document(owner,identifier))
         elif prefix=='ra':
             document=self.billing.retry_ticket_after_update(owner,identifier)
             state=self._state(owner)
@@ -1097,6 +1117,7 @@ class TelegramBridge:
     async def _message(self,owner,chat_id,message):
         if await self.workflow.message(owner,chat_id,message):
             return
+        if await self.discovery.message(owner,chat_id,message):return
         if await self.submission.message(owner,chat_id,message):
             return
         text=message.get('text','').strip()

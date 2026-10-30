@@ -66,7 +66,7 @@ def test_real_agents_sdk_observes_and_chooses_public_link_without_fiscal_values(
     chat(data=button(telegram,'wa'))
     assert [item[0] for item in browser.calls]==['open','act']
     assert len(telegram.messages)==before+1  # Solo la observación más reciente.
-    assert 'Cuenta: Pendiente' in telegram.messages[-1][1]
+    assert 'Cuenta: No leído' in telegram.messages[-1][1]
     assert 'No se solicitó la factura' in telegram.messages[-1][1]
     assert all(value not in json.dumps(model.inputs) for value in (FISCAL['rfc'],FISCAL['name'],'cliente@example.com'))
     assert mail.sent==sat.calls==[] and len(extractor.calls)==2
@@ -227,7 +227,7 @@ def test_pending_auxiliary_resource_does_not_block_sdk_navigation_or_trigger_unn
     start=len(telegram.messages)
     chat(data=button(telegram,'wa'))
     assert [item[0] for item in browser.calls]==['open','act']
-    assert len(telegram.messages)==start+1 and 'Cuenta: Pendiente' in telegram.messages[-1][1]
+    assert len(telegram.messages)==start+1 and 'Cuenta: No leído' in telegram.messages[-1][1]
     assert all('cdn.example' not in message[1] for message in telegram.messages[start:])
     assert not any(value.startswith('wa:') for _,value in telegram.messages[-1][2])
     assert mail.sent==sat.calls==[] and len(extractor.calls)==2

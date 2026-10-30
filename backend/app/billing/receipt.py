@@ -5,7 +5,7 @@ import ipaddress
 import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit,unquote
 
 from PIL import Image
 import zxingcpp
@@ -49,6 +49,14 @@ def purchase_date(value):
         return date.fromisoformat(value).isoformat()
     except ValueError:
         return None
+
+
+def unrelated_billing_link(url,evidence=''):
+    """Una encuesta o promoción no se vuelve fiscal por contener un QR."""
+    address=unquote(str(url or '')).casefold()
+    survey_url=re.search(r'(?:^|[/.?&=_-])(?:encuestas?|surveys?|feedback|opinion|satisfaccion|sorteo)(?:$|[/.?&=_-])',address)
+    context=re.search(r'\b(?:encuestas?|surveys?|tu opini[oó]n|cu[eé]ntanos|califica|satisfacci[oó]n|sorteo|giveaway)\b',str(evidence or '').casefold())
+    return bool(survey_url or context)
 
 
 def purchase_total(value):

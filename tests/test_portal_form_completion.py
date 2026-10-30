@@ -118,8 +118,8 @@ def test_missing_store_can_be_completed_in_telegram_even_after_the_original_file
     chat('/estado')
     assert 'Completar Tienda' in str(telegram.messages[-1][2])
     chat(data=button(telegram,'td'))
-    assert '/dato_ticket TIENDA' in telegram.messages[-1][1]
-    chat('/dato_ticket 07001')
+    assert 'TIENDA' in telegram.messages[-1][1] and 'foto' in telegram.messages[-1][1]
+    chat('07001')
     updated=app.state.billing.resolve_ticket(owner(app),ticket['id'])
     assert updated['store_number']=='07001' and updated['folio']==ticket['folio']
     assert len(model.inputs)==before and len(extractor.calls)==2 and mail.sent==sat.calls==[]

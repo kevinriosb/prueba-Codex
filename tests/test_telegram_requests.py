@@ -49,7 +49,6 @@ def test_new_picture_same_purchase_opens_original_and_preserves_photo_and_old_bu
     original, _ = receipt(app, telegram, chat)
     telegram.files['copy'] = image('green')
     chat(document='copy')
-    chat(data=choice(telegram,'pause'))
     duplicate_button = button(telegram, 'an')
     uploaded = duplicate_button.split(':')[1]
     chat(data=duplicate_button)
@@ -258,7 +257,6 @@ def test_duplicate_photo_is_removed_with_its_ticket_only_after_explicit_deletion
     identifier,_=receipt(app,telegram,chat)
     telegram.files['copy']=image('green')
     chat(document='copy')
-    chat(data=choice(telegram,'pause'))
     action=button(telegram,'an')
     chat(data=action)
     app.state.billing.delete_ticket(owner(app),identifier)

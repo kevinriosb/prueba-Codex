@@ -11,11 +11,10 @@
    muestran cuando ya se conocen; antes de analizar no se inventa su contenido.
 4. Un archivo recibido no autoriza analizarlo ni enviarlo. Guardarlo, elegir su
    tipo y cambiar de solicitud se resuelven con botones, sin generación de IA.
-5. Si llega otro archivo mientras hay una solicitud activa, se guarda y se pide:
-   **Pausar anterior y abrir nueva**, **Cancelar anterior y abrir nueva** o
-   **Continuar con la anterior**. No se analiza ni se cambia el destino antes
-   de la elección. El archivo conservado aparece en **Mis solicitudes** como
-   **Ticket por asignar**; no exige subirlo otra vez.
+5. Otro ticket queda activo automáticamente. La solicitud anterior se pausa y
+   sigue en **Mis solicitudes**; no exige cancelarla ni anula envíos al comercio.
+   La subida no dispara IA: se conserva el permiso de análisis del archivo nuevo.
+   Si después se identifica la misma compra, se retoma su solicitud existente.
 6. Si se pidió otra foto mediante el botón del ticket, la siguiente subida pregunta
    **Otra foto del mismo ticket** o **Es otro ticket**. Nunca adjunta una foto
    distinta al ticket anterior por conservar un estado viejo del chat. Una
@@ -24,8 +23,8 @@
 7. La misma imagen de la misma solicitud reutiliza los datos y conserva el punto
    de navegación. Otra foto de la misma compra puede detectarse como duplicada
    después del análisis autorizado; se informa y se reutiliza la solicitud real.
-8. `/nuevo`, `/nuevo_ticket` y «Empieza de 0 un nuevo ticket» abren el flujo de
-   nueva solicitud. Con una activa exigen la elección anterior. Después esperan
+8. `/nuevo`, `/nuevo_ticket`, «Empezar con otra solicitud» y «Empieza de 0 un nuevo
+   ticket» pausan la activa y abren una nueva sin pedir cancelar. Después esperan
    el archivo nuevo y limpian el ticket, la captura y el navegador seleccionados
    en el chat. Conservan los registros, perfiles, permisos históricos y cuotas.
 9. `/nuevo_chat` reinicia únicamente la conversación de IA. No es otro ticket,
@@ -75,6 +74,30 @@ El envío real y la corrección con una foto de un solo campo se describen en
 [Facturación desde Telegram](FACTURACION_PORTAL.md). Cada pantalla del portal
 se revisa y confirma por separado; el llenado aislado sigue disponible.
 
+## Datos visibles y web oficial
+
+La primera lectura actual (`portal-fields-v3`) también obtiene los datos básicos
+visibles: importe, fecha, folio/Cuenta, moneda y RFC emisor. La imagen no se relee
+si el portal solo pide datos que ya están disponibles. Los campos adicionales se
+extraen cuando se observa el formulario. Un dato ausente se pide por nombre con
+**Completar campo**: se acepta texto normal o foto cercana con análisis autorizado;
+no exige `/dato_ticket`, reenviar todo el ticket ni actualizar la CSF.
+
+El permiso inicial actual dice que cubre analizar el ticket y buscar/recorrer la
+web oficial con IA. No incluye enviar formularios fiscales. Sin una liga fiscal
+ni un correo expresamente indicado, se usa la web oficial impresa con evidencia;
+si falta, una búsqueda web real con fuentes. No se deduce el dominio del nombre
+ni se elige un resultado ambiguo. Una encuesta se descarta, también en solicitudes
+guardadas, y su URL con datos no se ofrece como portal.
+
+La navegación sigue los controles reales hasta Facturación y el formulario. Las
+solicitudes con permisos antiguos conservan su alcance y ofrecen **Buscar facturación
+oficial** o **Escribir web oficial** para autorizar el recorrido público nuevo. Si
+no se verifica el sitio, se pide su liga. Los resultados de búsqueda se reutilizan
+24 horas por cuenta; `/limites` muestra sus consultas y el límite vigente. La búsqueda
+recibe solo el nombre público del comercio, sin CSF, RFC receptor, correo, foto o
+datos de la compra. La confirmación del envío real al comercio sigue siendo privada.
+
 ## Estado y controles del servidor
 
 `TelegramWorkflow` concentra menús, cambios, pausas, cierre y protección de botones.
@@ -106,25 +129,21 @@ se hacen llamadas de IA de pago ni se demuestra compatibilidad universal de siti
 
 ## Validación y despliegue
 
-Pasaron **732 pruebas completas** (344,48 s) y una ejecución posterior de las
-**68 regresiones de flujo y preparación** (88,85 s), que incluyen los **24 casos
-del flujo nativo**: video citado o no, sustitución al límite de archivos,
-caducidad y una foto con detalle que conserva su huella y contenido exactos.
-También pasaron compilación de Python, sintaxis JavaScript, detección de nombres
-inválidos y comprobación de espacios. Las pruebas previas de fotos diferentes y
-portales guardados incorporan ahora la elección humana, conservando sus controles
-sobre permisos, datos, cuotas, duplicados y ausencia de envío.
+Pasaron **780 pruebas completas** (390,09 s), **116 regresiones de los flujos
+afectados** y un caso adicional del SDK que verifica proveedores abiertos como
+fuentes reales por la búsqueda web. También pasaron compilación de Python,
+detección de nombres inválidos y comprobación de espacios.
 
-Se conservan navegación Playwright, frontend, dependencias, claves, esquema y
-archivos Docker/Compose. Se corrigió el ciclo de recursos del navegador: un
-arranque fallido o cancelado cierra su controlador, y un error al cerrar un
-contexto no impide cerrar navegador, controlador y transporte. Tres pruebas
-con fallos provocados demostraron la fuga anterior y comprobaron el cierre.
-La prueba de foto reenviada exige datos anteriores ya leídos; admite una sola
-continuación nativa de preparación si el recorrido inicial se pausó. La foto temporal de la captura llegó como video; ahora
-se explica el formato admitido antes de consultar al modelo. La prueba adicional
-Docker sigue limitada por el disco del entorno de desarrollo, sin desplegar ni
-alterar contenedores del VPS desde aquí.
+Los casos incluyen pausa automática sin anular un correo enviado, campos básicos
+en la primera lectura, importe faltante sin botón de envío, captura manual y
+recorte del importe, descarte de encuesta incluso en solicitudes anteriores,
+fuentes reales frente a dominios inventados, sitio ambiguo, web impresa, ingreso
+manual de la web y ahorro de una segunda lectura si todos los datos ya existen.
+El SDK, el webhook, el almacenamiento y Chromium son reales; las páginas, el
+modelo, correo y SAT son simulados. Las pruebas no emiten facturas reales.
+
+Esta revisión conserva el motor Playwright, frontend, dependencias, claves,
+esquema y archivos Docker/Compose. No despliega ni altera contenedores del VPS.
 
 Actualizar ambos servicios existentes aplica los menús y la corrección de cierre,
 conservando sus volúmenes y credenciales:

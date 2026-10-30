@@ -36,15 +36,13 @@ def test_video_and_reply_to_video_explain_format_without_ai(billing_client):
     assert telegram.downloads==['csf','first'] and len(extractor.calls)==2
 
 
-def test_new_upload_waits_for_explicit_switch_without_analyzing(billing_client):
+def test_new_upload_automatically_pauses_previous_without_analyzing_or_cancelling(billing_client):
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     telegram.files['second']=image('green')
     chat(document='second')
     assert len(extractor.calls)==2
-    assert 'activa' in telegram.messages[-1][1].lower()
-    assert choice(telegram,'pause') and choice(telegram,'cancel') and choice(telegram,'keep')
-    chat(data=choice(telegram,'pause'))
+    assert not any(data.startswith('fw:') for _,data in telegram.messages[-1][2])
     active=app.state.telegram._state(owner(app))['active_ticket_id']
     assert active!=old and app.state.billing.resolve_ticket(owner(app),old)['telegram_workflow']=='paused'
     extractor.ticket['folio']='SECOND-2'
@@ -60,7 +58,6 @@ def test_start_from_zero_clears_old_target_and_does_not_use_ai(billing_client):
     state.update(browser_ticket_id=old,portal_upload_ticket=old,ticket_input={'id':old,'field':'folio'})
     app.state.telegram._save_state(owner(app),state)
     chat('Empieza de 0 un nuevo ticket')
-    chat(data=choice(telegram,'pause'))
     state=app.state.telegram._state(owner(app))
     assert state['workflow_mode']=='awaiting_ticket' and state['active_ticket_id'] is None
     assert all(not state.get(key) for key in ('last_ticket_id','browser_ticket_id','portal_upload_ticket','ticket_input','last_document_id'))
@@ -69,18 +66,19 @@ def test_start_from_zero_clears_old_target_and_does_not_use_ai(billing_client):
     assert app.state.service.agent.model.inputs==[] and len(extractor.calls)==2
 
 
-def test_keep_previous_keeps_new_file_available_without_reading_or_reupload(billing_client):
+def test_returning_to_previous_request_keeps_new_ticket_without_reading_or_reupload(billing_client):
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     original=app.state.billing.resolve_ticket(owner(app),old)['document_id']
     telegram.files['second']=image('green');chat(document='second')
-    pending=app.state.telegram.workflow.pending(owner(app))['document_id']
-    chat(data=choice(telegram,'keep'))
+    second=app.state.telegram.workflow.active(owner(app))
+    pending=second['document_id']
+    chat(data='ts:'+old);chat(data=choice(telegram,'pause'))
     assert app.state.telegram._state(owner(app))['active_ticket_id']==old
     assert app.state.billing.resolve_ticket(owner(app),old)['document_id']==original
     chat('/tickets')
-    assert ('dt:'+pending) in str(telegram.messages[-1][2])
-    chat(data='dt:'+pending);chat(data=choice(telegram,'pause'))
+    assert ('ts:'+second['id']) in str(telegram.messages[-1][2])
+    chat(data='ts:'+second['id']);chat(data=choice(telegram,'pause'))
     assert button(telegram,'an').endswith(pending)
     assert len(extractor.calls)==2 and telegram.downloads==['csf','first','second']
 
@@ -107,12 +105,12 @@ def test_uncertain_send_cannot_be_cancelled_by_forged_option(billing_client):
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     app.state.billing.store.add('email_approval',owner(app),{'ticket_id':old},state='unknown')
-    chat('/nuevo')
+    chat('/cancelar')
     assert all(not data.endswith(':cancel') for _,data in telegram.messages[-1][2])
-    pause=choice(telegram,'pause')
-    chat(data=pause.rsplit(':',1)[0]+':cancel')
+    keep=choice(telegram,'keep')
+    chat(data=keep.rsplit(':',1)[0]+':cancel')
     assert app.state.telegram.workflow.active(owner(app))['id']==old
-    chat('/menu');chat(data=choice(telegram,'pause'))
+    chat('Empezar con otra solicitud')
     assert app.state.telegram.workflow.active(owner(app)) is None and mail.sent==[]
 
 
@@ -120,35 +118,36 @@ def test_stale_and_foreign_switch_buttons_cannot_choose_a_different_file(billing
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     telegram.files.update(second=image('green'),third=image('yellow'))
-    chat(document='second');stale=choice(telegram,'cancel')
-    chat(document='third');current=choice(telegram,'pause')
-    newest=app.state.telegram.workflow.pending(owner(app))['document_id']
+    chat(document='second');second=app.state.telegram.workflow.active(owner(app))['id']
+    chat(data='ts:'+old);stale=choice(telegram,'pause')
+    chat(document='third');third=app.state.telegram.workflow.active(owner(app))['id']
     chat(data=stale)
-    assert app.state.telegram.workflow.active(owner(app))['id']==old
+    assert app.state.telegram.workflow.active(owner(app))['id']==third
+    chat(data='ts:'+second);current=choice(telegram,'pause')
     chat(data=current,user=456)
     assert app.state.billing.store.list('ticket',owner(app,456))==[]
     chat(data=current)
-    assert app.state.billing.resolve_ticket(owner(app),app.state.telegram.workflow.active(owner(app))['id'])['document_id']==newest
+    assert app.state.telegram.workflow.active(owner(app))['id']==second
     count=app.state.billing.store.count('ticket',owner(app))
     chat(data=current)
     assert app.state.billing.store.count('ticket',owner(app))==count and len(extractor.calls)==2
 
 
-def test_old_analysis_button_during_switch_only_redisplays_choice(billing_client):
+def test_old_analysis_button_asks_before_returning_to_previous_ticket(billing_client):
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     old_button=button(telegram,'an')
     telegram.files['second']=image('green');chat(document='second')
-    pending=app.state.telegram.workflow.pending(owner(app))['id']
+    current=app.state.telegram.workflow.active(owner(app))['id']
     chat(data=old_button)
-    assert app.state.telegram.workflow.pending(owner(app))['id']==pending
+    assert app.state.telegram.workflow.active(owner(app))['id']==current
     assert choice(telegram,'pause') and len(extractor.calls)==2
 
 
 def test_old_ticket_button_asks_before_switching_the_active_request(billing_client):
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
-    telegram.files['second']=image('green');chat(document='second');chat(data=choice(telegram,'pause'))
+    telegram.files['second']=image('green');chat(document='second')
     second=app.state.telegram.workflow.active(owner(app))['id']
     chat(data='ts:'+old)
     assert app.state.telegram.workflow.active(owner(app))['id']==second and choice(telegram,'pause')
@@ -160,17 +159,19 @@ def test_pending_change_survives_restart_without_losing_new_document(billing_cli
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     telegram.files['second']=image('green');chat(document='second')
-    pending=app.state.telegram.workflow.pending(owner(app))['document_id']
+    second=app.state.telegram.workflow.active(owner(app))['id']
+    pending=app.state.billing.resolve_ticket(owner(app),second)['document_id']
+    chat(data='ts:'+old)
     current=choice(telegram,'pause')
     client2,app2,ext2,mail2,sat2,tg2,chat2=create(billing_client,path=app.state.settings.app_database_path)
     chat2.sequence=10000
     chat2('/start')
     assert old[:8] in tg2.messages[-1][1] and choice(tg2,'pause')==current
-    chat2(data=current)
+    chat2(data=current);chat2(data='ts:'+second);chat2(data=choice(tg2,'pause'))
     assert button(tg2,'an').endswith(pending) and ext2.calls==[]
 
 
-def test_reply_to_photo_receives_it_and_asks_before_changing_request(billing_client):
+def test_reply_to_photo_receives_it_and_opens_the_new_request(billing_client):
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     telegram.files['quoted']=image('green')
@@ -179,7 +180,7 @@ def test_reply_to_photo_receives_it_and_asks_before_changing_request(billing_cli
         'from':{'id':123},'chat':{'id':123,'type':'private'},'text':'Es este',
         'reply_to_message':{'photo':[{'file_id':'quoted'}]}}},
         headers={'X-Telegram-Bot-Api-Secret-Token':'x'*40})
-    assert response.status_code==200 and choice(telegram,'pause')
+    assert response.status_code==200 and app.state.telegram.workflow.active(owner(app))['id']!=old
     assert telegram.downloads[-1]=='quoted' and app.state.service.agent.model.inputs==[]
 
 
@@ -188,7 +189,7 @@ def test_new_request_clears_a_stale_csf_upload_prompt(billing_client):
     client,app,extractor,mail,sat,telegram,chat=result
     state=app.state.telegram._state(owner(app));state['expected_upload']='csf'
     app.state.telegram._save_state(owner(app),state)
-    chat('/nuevo');chat(data=choice(telegram,'pause'))
+    chat('/nuevo')
     telegram.files['second']=image('green');chat(document='second')
     document=app.state.billing.document(owner(app),button(telegram,'an').split(':')[1])
     assert document['purpose']=='ticket' and len(extractor.calls)==2
@@ -200,14 +201,14 @@ def test_new_chat_is_separate_from_starting_a_new_request(billing_client):
     chat('/nuevo_chat')
     assert app.state.telegram.workflow.active(owner(app))['id']==old
     chat('/nuevo')
-    assert choice(telegram,'pause') and app.state.service.agent.model.inputs==[]
+    assert app.state.telegram.workflow.active(owner(app)) is None and app.state.service.agent.model.inputs==[]
 
 
 def test_bot_menu_does_not_reuse_an_older_ticket_requested_by_the_model(billing_client):
     from .fake_model import call,answer
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
-    telegram.files['second']=image('green');chat(document='second');chat(data=choice(telegram,'pause'))
+    telegram.files['second']=image('green');chat(document='second')
     second=app.state.telegram.workflow.active(owner(app))['id']
     app.state.service.agent.model.outputs=[[call('track_invoice_email',identifier=old)],[answer('Revisa la solicitud activa.')]]
     chat('Revisa la compra anterior')
@@ -268,14 +269,14 @@ def test_cancel_after_send_stops_tracking_and_explains_it_cannot_recall_email(bi
 def test_old_replacement_mode_cannot_retarget_the_new_active_ticket(billing_client):
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
-    telegram.files['second']=image('green');chat(document='second');chat(data=choice(telegram,'pause'))
+    telegram.files['second']=image('green');chat(document='second')
     current=app.state.telegram.workflow.active(owner(app))
     state=app.state.telegram._state(owner(app));state['portal_upload_ticket']=old
     app.state.telegram._save_state(owner(app),state)
     telegram.files['third']=image('yellow');chat(document='third')
-    assert choice(telegram,'pause')
+    assert app.state.telegram.workflow.active(owner(app))['id']!=current['id']
     assert app.state.billing.resolve_ticket(owner(app),current['id'])['document_id']==current['document_id']
-    assert app.state.telegram.workflow.pending(owner(app))['kind']=='switch'
+    assert app.state.telegram.workflow.pending(owner(app)) is None
 
 
 def test_menus_remain_available_when_ai_and_action_budgets_are_exhausted(billing_client):
@@ -320,17 +321,21 @@ def test_confirmed_replacement_reuses_staged_file_at_storage_limit(billing_clien
     assert 'xa:' in str(telegram.messages[-1][2]) and 'xg:' not in str(telegram.messages[-1][2])
 
 
-def test_expired_pending_file_can_be_discarded_without_losing_active_request(billing_client):
+def test_expired_new_file_preserves_request_and_allows_starting_another_without_cancelling(billing_client):
     result,identifier=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     telegram.files['second']=image('green');chat(document='second')
-    keep=choice(telegram,'keep')
-    pending=app.state.telegram.workflow.pending(owner(app))['document_id']
+    active=app.state.telegram.workflow.active(owner(app))
+    pending=active['document_id']
     with app.state.database.connection(True) as conn:
         conn.execute('UPDATE billing_records SET expires=0 WHERE id=?',(pending,))
-    chat(data=keep)
+    chat('/estado')
     assert app.state.telegram.workflow.pending(owner(app)) is None
-    assert app.state.telegram.workflow.active(owner(app))['id']==identifier and identifier[:8] in telegram.messages[-1][1]
+    assert app.state.telegram.workflow.active(owner(app))['id']==active['id'] and active['id'][:8] in telegram.messages[-1][1]
+    assert app.state.billing.resolve_ticket(owner(app),identifier)['telegram_workflow']=='paused'
+    assert 'temporal venció' in telegram.messages[-1][1]
+    chat('/nuevo')
+    assert app.state.telegram.workflow.active(owner(app)) is None
 
 
 def test_replacing_an_expired_replacement_does_not_collide_with_its_old_lookup(billing_client):
@@ -378,3 +383,17 @@ def test_explicit_csf_upload_takes_priority_over_an_old_receipt_photo_prompt(bil
     assert not app.state.telegram._state(owner(app)).get('portal_upload_ticket')
     assert app.state.telegram.workflow.active(owner(app))['id']==identifier
     assert len(extractor.calls)==2 and button(telegram,'an').endswith(received['id'])
+
+
+@pytest.mark.parametrize('phrase',['Empezar con otra solicitud','Empieza otra solicitud','Quiero iniciar un nuevo ticket'])
+def test_new_request_phrase_keeps_previously_sent_email_intact_and_never_requires_cancelling(billing_client,phrase):
+    result,identifier=first_ticket(billing_client,billing_live_email_enabled=True)
+    client,app,extractor,mail,sat,telegram,chat=result
+    chat(data='ve:'+identifier);chat(data='pr:'+identifier);chat(data=button(telegram,'se'))
+    delivery=app.state.billing.resolve_ticket(owner(app),identifier)['delivery']
+    chat(phrase)
+    assert app.state.telegram.workflow.active(owner(app)) is None
+    old=app.state.billing.resolve_ticket(owner(app),identifier)
+    assert old['delivery']==delivery and old['telegram_workflow']=='paused'
+    assert len(mail.sent)==1 and 'nuevo ticket' in telegram.messages[-1][1]
+    assert not any(data.startswith('fw:') for _,data in telegram.messages[-1][2])
