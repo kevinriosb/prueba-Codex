@@ -167,10 +167,6 @@ class PortalInspector:
                             result = await read(client)
             except Exception:
                 pass  # No se registran página, cookies ni excepciones del comercio.
-            if not result['fields'] and page == 'https://f.zetus.mx/albat':
-                # Evidencia de la captura aportada: no se hace pasar por una lectura en vivo.
-                result.update(status='template',fields=[{'key':'account_number','label':'Cuenta'}],
-                    source='user_screenshot_template')
             result['checked_at'] = time.time()
             self.cache[page] = {'expires':time.time()+(3600 if result['status']=='verified' else 60),'result':result}
             return copy.deepcopy(result)

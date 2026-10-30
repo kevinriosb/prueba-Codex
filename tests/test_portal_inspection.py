@@ -23,6 +23,7 @@ async def public_dns(_host):
 
 
 def install(app, handler, resolver=public_dns):
+    app.state.settings.billing_portal_inspection_urls=PAGE
     app.state.billing.portal_inspector=PortalInspector(app.state.settings,
         client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),resolver=resolver)
     return app.state.billing.portal_inspector

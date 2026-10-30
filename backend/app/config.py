@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     billing_live_email_enabled: bool = False
     billing_sat_enabled: bool = False
     billing_verified_contacts_json: str = Field(default='[]',max_length=20_000)
-    billing_portal_inspection_urls: str = Field(default='https://f.zetus.mx/albat',max_length=4000)
+    billing_portal_inspection_urls: str = Field(default='',max_length=4000)
     billing_portal_inspection_timeout_seconds: int = Field(default=7,ge=1,le=15)
     billing_browser_enabled: bool = False
     billing_browser_worker_url: str = 'http://browser:8001'
