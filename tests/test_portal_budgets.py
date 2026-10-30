@@ -9,6 +9,7 @@ from .billing_fakes import image
 from .fake_model import ScriptedModel,answer,call
 from .test_adaptive_browser import FakeBrowser,snapshot
 from .test_billing import billing_client
+from .test_portal_preparation import preauthorize_fixture_origin
 from .test_browser_worker import Pages
 from .test_telegram_agent import create,button,owner
 from .test_telegram_documents import confirm_profile
@@ -92,6 +93,8 @@ def received(factory,*,reobserve=False):
     confirm_profile(telegram,chat)
     extractor.ticket['billing_url']=ROOT
     telegram.files['receipt']=image('red');chat(document='receipt');chat(data=button(telegram,'an'))
+    # Reanudar en la página guardada del proveedor exige su permiso explícito vigente.
+    preauthorize_fixture_origin(app,app.state.billing.store.list('ticket',owner(app))[0],'https://provider.example')
     chat(data=button(telegram,'wa'))
     return values,browser,model
 
