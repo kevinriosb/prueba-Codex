@@ -89,8 +89,8 @@ def test_private_or_mixed_dns_never_makes_an_http_request(billing_client,address
         pytest.fail('No debe consultar una IP interna')
     inspector=install(app,handler,resolver)
     result=client.portal.call(inspector.inspect,PAGE)
-    assert calls==[] and result['status']=='template'
-    assert result['source']=='user_screenshot_template' and result['lookup_performed'] is False
+    assert calls==[] and result['status']=='unavailable' and result['fields']==[]
+    assert result['source']=='none' and result['lookup_performed'] is False
 
 
 @pytest.mark.parametrize('url',[
@@ -114,7 +114,7 @@ def test_redirect_cannot_leave_approved_page_or_forward_query_data(billing_clien
     inspector=install(app,handler)
     result=client.portal.call(inspector.inspect,PAGE+'?rfc=PRIVATE&account=SECRET')
     assert len(calls)==1 and not calls[0].url.query
-    assert result['status']=='template' and 'PRIVATE' not in json.dumps(result)
+    assert result['status']=='unavailable' and result['fields']==[] and 'PRIVATE' not in json.dumps(result)
 
 
 def test_safe_trailing_slash_redirect_can_be_followed_once(billing_client):
@@ -144,7 +144,7 @@ def test_unavailable_form_template_is_marked_as_unverified_not_live_validation(b
         raise httpx2.ConnectError('PRIVATE-NETWORK-DETAILS')
     inspector=install(app,handler)
     result=client.portal.call(inspector.inspect,PAGE)
-    assert result['status']=='template' and result['fields'][0]['key']=='account_number'
+    assert result['status']=='unavailable' and result['fields']==[]
     assert 'PRIVATE' not in json.dumps(result)
 
 

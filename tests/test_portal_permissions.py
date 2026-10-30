@@ -94,9 +94,9 @@ def test_observed_provider_is_covered_by_native_public_route_permission(billing_
     browser=CrossDomain()
     client,app,extractor,mail,sat,telegram,chat=received(billing_client,model,browser)
     chat(data=button(telegram,'wa'))
-    assert [item[0] for item in browser.calls]==['open','act']
-    assert not any(data.startswith('wa:') for _,data in telegram.messages[-1][2])
-    assert 'Cuenta: No leído' in telegram.messages[-1][1]
+    assert [item[0] for item in browser.calls]==['open','observe']
+    assert any(data.startswith('wa:') for _,data in telegram.messages[-1][2])
+    assert 'merchant.example → billing.example' in telegram.messages[-1][1]
     assert mail.sent==sat.calls==[]
 
 
