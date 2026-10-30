@@ -13,6 +13,7 @@ from .test_billing import billing_client,ticket
 from .test_telegram_agent import create,button,owner
 from .test_telegram_documents import confirm_profile
 from .test_telegram_workflow import choice
+from .test_portal_preparation import preauthorize_fixture_origin
 
 ROOT='https://group.example/'
 FORM='https://provider.example/form?opc=Dominos'
@@ -56,6 +57,7 @@ def receive(billing_client,*,merchant="Dominos"):
     confirm_profile(telegram,chat)
     extractor.ticket.update(merchant=merchant,billing_url=ROOT)
     telegram.files['receipt']=image('red');chat(document='receipt');chat(data=button(telegram,'an'))
+    preauthorize_fixture_origin(app,app.state.billing.store.list('ticket',owner(app))[0],'https://provider.example')
     chat(data=button(telegram,'wa'))
     return values,browser,model
 

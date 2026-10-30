@@ -389,6 +389,8 @@ class BillingService:
         inspection=await self.portal_inspector.inspect(self.portal_memory.entry_url(owner,ticket))
         profile=self.store.get('profile',owner,ticket['profile_id'])
         ticket['portal_inspection']=portal_plan(ticket|profile,inspection)
+        if inspection['status']=='verified' and inspection.get('fields'):
+            ticket['portal_stage']='fields_pending'
         ticket=self.store.update('ticket',owner,ticket_id,ticket)
         self.store.audit(owner,ticket_id,'portal_public_form_inspected')
         return ticket
@@ -492,6 +494,8 @@ class BillingService:
                 if action.get('brand'):
                     brand_label=action['label']
                 if action.get('permission_origin'):
+                    if portal_origin(action['permission_origin']) not in self.portal_permissions.allowed(owner,ticket):
+                        raise PortalPermissionRequired([action['permission_origin']])
                     self.portal_permissions.require(owner,ticket,action['permission_origin'])
                 if previous['snapshot']['captcha'] or previous['snapshot']['network_blocked'] or previous['snapshot'].get('login_required'):
                     raise AppError(409,'browser_intervention','La página requiere intervención humana antes de continuar.')
@@ -529,6 +533,9 @@ class BillingService:
         for item in self.portal_preparation.active_fields(ticket,snapshot):
             fields.append({'key':item.get('key'),'label':item['label'],'required':item['required'],
                 'matched':bool(ticket.get(item.get('key'))),'options':item['options']})
+        chain=ticket.setdefault('portal_domain_chain',[])
+        current_origin=portal_origin(snapshot['page'])
+        if not chain or chain[-1]!=current_origin:chain.append(current_origin)
         ticket['portal_browser']={'page':snapshot['page'],'fields':fields,'checked_at':time.time(),
             'purchase_validated':False,'submitted':False,'diagnostics':snapshot.get('diagnostics'),
             'block_reason':snapshot.get('block_reason'),'omitted_writes':snapshot.get('omitted_writes',0),

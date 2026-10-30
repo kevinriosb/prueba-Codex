@@ -11,7 +11,7 @@ from .fake_model import ScriptedModel,answer,call
 from .test_billing import billing_client
 from .test_telegram_agent import create,button,owner
 from .test_telegram_documents import confirm_profile
-from .test_portal_preparation import ScopedExtractor,RealBrowser,ROOT,FORM
+from .test_portal_preparation import ScopedExtractor,RealBrowser,ROOT,FORM,preauthorize_fixture_origin
 
 
 class Modern(ScopedExtractor):
@@ -35,6 +35,8 @@ def modern(factory,extractor=None):
     client,app,extractor,mail,sat,telegram,chat=values
     confirm_profile(telegram,chat)
     telegram.files['receipt']=image('green');chat(document='receipt')
+    pending=app.state.billing.store.list('ticket',owner(app))[0]
+    preauthorize_fixture_origin(app,pending|{'billing_url':ROOT},'https://provider.example')
     return values,browser
 
 

@@ -5,6 +5,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
+from urllib.parse import urlsplit
 
 import httpx2
 from fastapi import APIRouter, Request
@@ -21,7 +22,7 @@ from .telegram_workflow import TelegramWorkflow
 from .telegram_submission import TelegramSubmission
 from .telegram_discovery import TelegramDiscovery
 from .telegram_receipts import TelegramReceipts
-from .portal_permissions import PortalPermissionRequired
+from .portal_permissions import PortalPermissionRequired,portal_origin
 from .portal_memory import matching_brand,brand_options,has_billing_form,public_form_ready,unresolved_brand_selector
 
 
@@ -358,7 +359,7 @@ class TelegramBridge:
                     buttons.append(('Continuar facturación','lv:'+identifier))
                 if not self.billing.portal_permissions.route_allowed(owner,ticket):
                     permission=self.billing.portal_permissions.request(owner,identifier,route=True)
-                    text+='\n¿Permites revisar este portal y seguir su ruta pública de facturación, incluidos proveedores y recursos? Usa IA; sin enviar datos fiscales ni facturar.'
+                    text+='\n¿Permites revisar este portal y seguir su ruta pública de facturación, confirmando cada nuevo dominio? Usa IA; sin enviar datos fiscales ni facturar.'
                     buttons.extend(self._permission_buttons(permission))
                 else:
                     buttons.append(('Revisar portal con IA','bn:'+identifier))
@@ -440,9 +441,14 @@ class TelegramBridge:
 
     async def _portal_permission(self,owner,chat_id,identifier):
         permission=self.billing.store.get('portal_permission',owner,identifier)
+        ticket=self.billing.resolve_ticket(owner,permission['ticket_id'])
+        chain=list(ticket.get('portal_domain_chain') or [portal_origin(self.billing.portal_memory.entry_url(owner,ticket))])
+        targets=[value for value in permission['origins'] if value!=chain[-1]]
         text='¿Permites revisar este portal?\n'+'\n'.join(permission['origins'])
+        for target in targets:
+            text+='\nRuta: '+' → '.join(urlsplit(value).hostname for value in [*chain,target])
         if permission.get('route_version')==1:
-            text+='\nIncluye seguir la ruta pública de facturación, elegir la marca del ticket y cargar proveedores y recursos necesarios.'
+            text+='\nIncluye recorrer este dominio. Cada nuevo dominio, también para recursos, pedirá confirmación.'
         text+='\nSolo navegación pública; sin enviar datos fiscales ni facturar.'
         if permission['intent']=='browse':
             text+=' La revisión con IA consume tokens.'
@@ -479,7 +485,7 @@ class TelegramBridge:
         if not self.agent:
             raise AppError(503,'telegram_agent','El agente de Telegram no está configurado.')
         try:
-            await self.agent.reply(owner,chat_id,portal_review=True,text='Investiga el acceso de facturación del ticket seleccionado. Observa y sigue los controles útiles hasta el formulario o una ambigüedad real, dentro del presupuesto disponible. La ruta pública y sus recursos ya están autorizados; elige la marca coincidente. No introduzcas datos ni solicites facturas.')
+            await self.agent.reply(owner,chat_id,portal_review=True,text='Investiga el acceso de facturación del ticket seleccionado. Observa y sigue los controles útiles hasta el formulario o una ambigüedad real, dentro del presupuesto disponible. Usa los permisos vigentes; cada nuevo dominio documental requiere el botón de permiso humano. Elige la marca coincidente. No introduzcas datos ni solicites facturas.')
         except AppError as error:
             if error.code not in {'agent_turn_limit','tool_limit','run_timeout','context_limit'}:
                 raise
@@ -568,6 +574,10 @@ class TelegramBridge:
                     if alternate:
                         await self._browser(owner,chat_id,ticket['id'],_alternative_depth+1)
                         return
+            except PortalPermissionRequired as error:
+                permission=self.billing.portal_permissions.request(owner,ticket['id'],origins=error.origins)
+                await self._portal_permission(owner,chat_id,permission['id'])
+                return
             except AppError as error:
                 if error.code not in {'portal_source_expired','billing_daily_limit','billing_busy','extraction_attempted',
                         'portal_not_ticket','portal_source_mismatch','portal_changed','extraction_auth','extraction_quota','extraction_provider','extraction_timeout','extraction_format','extraction_failure'}:
@@ -610,7 +620,7 @@ class TelegramBridge:
             text+='\nPuedes elegir la marca o continuar la revisión con IA.'
         if snapshot['captcha']:
             text+='\nEl sitio requiere CAPTCHA; intervención humana.'
-        needs_resources=bool(pending) and not self.billing.portal_permissions.route_allowed(owner,ticket) and (awaiting_form or snapshot['network_blocked'] or not (snapshot['fields'] or snapshot['actions']))
+        needs_resources=bool(pending) and (awaiting_form or snapshot['network_blocked'] or not (snapshot['fields'] or snapshot['actions']))
         if snapshot['network_blocked']:
             reasons={'unsupported_request':'El sitio intentó enviar una solicitud no habilitada.',
                 'unsupported_document':'El destino es un archivo o respuesta sin formulario HTML.',
@@ -696,6 +706,9 @@ class TelegramBridge:
                 buttons.append(('Autorizar lectura de datos faltantes','ra:'+source['id']))
         if not ready and not unresolved_brand_selector(ticket,snapshot) and snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot.get('login_required') and not snapshot['network_blocked']:
             buttons.append(('Continuar revisión con IA','bn:'+ticket['id']))
+        if not ready:
+            text+='\nMe quedé en esta página. Puedes escribir la dirección de facturación para continuar.'
+            buttons.append(('Escribir dirección de facturación','dw:'+ticket['id']))
         if (snapshot.get('partial') or snapshot.get('block_reason') or (snapshot.get('diagnostics') or {}).get('issues')
                 or snapshot.get('brand_selection') and not brands and not preferred):
             buttons.append(('Ver diagnóstico (sin IA)','bd:'+ticket['id']))

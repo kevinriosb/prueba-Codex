@@ -470,7 +470,7 @@ async def test_private_step_never_sends_field_values_to_a_new_cdn_script_url():
     pages.responses['/lookup']=FISCAL+'''<script src="https://cdn.example/library.js"></script><script src="https://cdn.example/library.js?rfc=PRIVATE"></script>'''
     manager=BrowserManager(fetcher=pages)
     try:
-        opened=await manager.open('owner',HOME,ALLOWED,public_route=True)
+        opened=await manager.open('owner',HOME,ALLOWED+['https://cdn.example'],public_route=True)
         view=await manager.transaction_view('owner',opened['session_id'])
         result=await manager.transaction_send('owner',opened['session_id'],**submission_args(view,['AAA010101AAA','0004']))
         assert not any('PRIVATE' in url for _,url,_,_ in pages.sent)

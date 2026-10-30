@@ -13,6 +13,7 @@ from .portal_memory import public_form_ready
 from .portal_navigation import next_public_action
 from .receipt import missing_receipt_fields,purchase_reference
 from .portal_inspection import field_key
+from .portal_permissions import PortalPermissionRequired,portal_origin
 
 
 RECEIPT_KEYS={'folio','account_number','reference_number','billing_code','web_id','store_number','register_number',
@@ -86,7 +87,6 @@ class PortalPreparation:
             self.store.update('ticket',owner,ticket['id'],ticket)
         return self.store.update('browser_review',owner,record['id'],record,version=record['_version'])
 
-
     async def current(self,owner,ticket_id,*,refresh=False):
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         self.billing.portal_permissions.require(owner,ticket)
@@ -134,6 +134,9 @@ class PortalPreparation:
         choices=self.alternatives(ticket,snapshot)
         if len(choices)!=1:return None
         action=choices[0]
+        target=action.get('permission_origin')
+        if target and portal_origin(target) not in self.billing.portal_permissions.allowed(owner,ticket):
+            raise PortalPermissionRequired([target])
         attempt=self.store.digest(ticket['document_id']+snapshot['session_id']+self.shape_key(snapshot)+action['label'])
         attempts=ticket.get('portal_alternative_attempts',[])
         if attempt in attempts or len(attempts)>=8:return None

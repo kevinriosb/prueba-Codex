@@ -34,7 +34,6 @@ class FieldMeaning(BaseModel):
         'register_number','toll_station','lane','purchase_date','purchase_time','total','issuer_rfc']|None
 
 
-
 class PublicAction(BaseModel):
     model_config=ConfigDict(extra='forbid')
     reference:str=Field(pattern=r'^[a-f0-9]{8}$')
@@ -42,6 +41,7 @@ class PublicAction(BaseModel):
     kind:str=Field(pattern=r'^(link|expand)$')
     permission_origin:str|None=Field(default=None,max_length=2048)
     brand:bool=False
+    description:str=Field(default='',max_length=140)
 
 
 class ResourceIssue(BaseModel):
@@ -70,6 +70,7 @@ class Observation(BaseModel):
     page:str=Field(max_length=2048)
     bookmark_url:str|None=Field(default=None,max_length=2048)
     title:str=Field(max_length=120)
+    text:str=Field(default='',max_length=1500)
     fields:list[PublicField]=Field(max_length=24)
     actions:list[PublicAction]=Field(max_length=48)
     captcha:bool

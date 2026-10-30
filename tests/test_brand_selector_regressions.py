@@ -14,6 +14,7 @@ from .test_billing import billing_client
 from .test_browser_worker import Pages
 from .test_telegram_agent import create,button,owner
 from .test_telegram_documents import confirm_profile
+from .test_portal_preparation import preauthorize_fixture_origin
 
 
 @pytest.mark.parametrize('phrase',['Selecciona la marca','Elige una de estas marcas','Seleccione su restaurante','Select a brand'])
@@ -33,7 +34,7 @@ async def test_auxiliary_post_does_not_freeze_brand_link_or_choose_generic_foote
         ''',form:'<label>RFC<input name="rfc"></label>'})
     manager=BrowserManager(fetcher=pages)
     try:
-        observed=await manager.open('owner',root,['https://group.example'],public_route=True)
+        observed=await manager.open('owner',root,['https://group.example','https://provider.example'],public_route=True)
         assert not observed['network_blocked'] and observed['omitted_writes']==1
         assert observed['block_reason'] is None and observed['brand_selection']
         assert [url for url,_ in pages.calls]==[root]
@@ -144,6 +145,7 @@ def test_telegram_sdk_reaches_brand_form_despite_startup_post_and_footer_link(bi
     confirm_profile(telegram,chat)
     extractor.ticket.update(merchant='Pizza Alfa',billing_url=root)
     telegram.files['receipt']=image('red');chat(document='receipt');chat(data=button(telegram,'an'))
+    preauthorize_fixture_origin(app,app.state.billing.store.list('ticket',owner(app))[0],'https://provider.example')
     before=len(telegram.messages)
     chat(data=button(telegram,'wa'))
     assert browser.calls==['open','act'] and [url for url,_ in pages.calls]==[root,form]

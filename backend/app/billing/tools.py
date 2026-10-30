@@ -121,6 +121,7 @@ def build_billing_tools(billing):
         result={key:snapshot[key] for key in ('observation_id','steps_remaining','captcha','network_blocked',
             'public_only','purchase_validated','submitted')}
         result['site']=urlsplit(snapshot['page']).hostname
+        result['page_context']=snapshot.get('text','')[:900]
         result['blocked_domains']=bool(snapshot['blocked_origins']) and snapshot['network_blocked']
         result['optional_resources_pending']=bool(snapshot['blocked_origins']) and not snapshot['network_blocked']
         result['login_required']=snapshot.get('login_required',False)
@@ -128,7 +129,7 @@ def build_billing_tools(billing):
         result['resource_issues']=sorted({item['code'] for item in (snapshot.get('diagnostics') or {}).get('issues',[])})[:6]
         result['fields']=[{'reference':item.get('reference'),'label':item['label'][:60],'key':item.get('key'),'required':item['required']}
             for item in snapshot['fields'][:12]]
-        result['actions']=[{'reference':item['reference'],'label':item['label'][:60],'kind':item['kind']}
+        result['actions']=[{'reference':item['reference'],'label':item['label'][:60],'kind':item['kind'],'context':item.get('description','')[:100]}
             for item in snapshot['actions'][:16]]
         while len(json.dumps(result,ensure_ascii=False).encode())>3500:
             if result['actions']:
