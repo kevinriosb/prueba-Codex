@@ -31,7 +31,7 @@ def test_timeout_releases_conversation_and_accounts_uncertain_usage(make_client)
     response = client.post(f'/api/conversations/{identifier}/messages', json={'text': 'Hola'})
     assert response.status_code == 504
     assert app.state.database.get_conversation(identifier, 'owner')['busy'] == 0
-    assert app.state.database.usage('owner')['tokens_accounted'] == app.state.settings.token_reservation
+    assert app.state.settings.failed_run_floor_tokens <= app.state.database.usage('owner')['tokens_accounted'] == min(app.state.settings.token_reservation, max(app.state.settings.failed_run_floor_tokens, len(json.dumps([{'role':'user','content':'Hola'}], ensure_ascii=False).encode()) // 3)) < app.state.settings.token_reservation
 
 
 async def test_concurrent_requests_are_rejected_not_queued(make_client):

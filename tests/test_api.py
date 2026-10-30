@@ -140,7 +140,7 @@ def test_errors_and_audit_never_echo_credentials_or_prompts(make_client, caplog)
     assert response.status_code == 502
     assert secret not in response.text and secret not in caplog.text
     assert prompt not in caplog.text and TEST_PASSWORD not in caplog.text
-    assert app.state.database.usage('owner')['tokens_accounted'] == app.state.settings.token_reservation
+    assert app.state.settings.failed_run_floor_tokens <= app.state.database.usage('owner')['tokens_accounted'] == min(app.state.settings.token_reservation, max(app.state.settings.failed_run_floor_tokens, len(json.dumps([{'role':'user','content':prompt}], ensure_ascii=False).encode()) // 3)) < app.state.settings.token_reservation
 
 
 def test_max_turns_stops_tool_loop(make_client):
