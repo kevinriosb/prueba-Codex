@@ -1,5 +1,7 @@
 # Cerrar la revisión cuando ya existe un formulario
 
+> Sesión 3A: el recorrido actual exige confirmar cada nuevo dominio y puede interpretar controles y etiquetas por su significado. Véase [portal correcto](PORTAL_CORRECTO.md). Los conteos y despliegues descritos más abajo son históricos.
+
 Esta nota describe el cierre de la fase pública. La entrega posterior añade
 [extracción según campos y llenado sin red](LECTURA_POR_FORMULARIO.md).
 

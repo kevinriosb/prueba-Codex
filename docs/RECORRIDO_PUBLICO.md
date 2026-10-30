@@ -1,74 +1,19 @@
-# Un permiso para el recorrido público del ticket
+# Recorrido público del ticket
 
-La corrección posterior del POST auxiliar y la prioridad del selector de marcas
-está documentada en [selector de marcas](SELECTOR_MARCAS.md).
+La versión actual se describe y valida en [Sesión 3A: portal correcto](PORTAL_CORRECTO.md). La revisión llega hasta los campos del formulario.
 
-La captura llegó a `alsea.interfactura.com/RegistroDocumento.aspx`, pero aún pedía
-elegir la marca y autorizar bibliotecas/estilos. Había dos barreras de implementación:
-permiso por origen y un solo intento de navegación por ejecución.
+La extracción conserva las direcciones impresas con su propia frase. Elige la indicada para obtener el comprobante y registra por qué descarta las demás. Antes de anunciarla comprueba que resuelva y responda, usando DNS público, conexión a IP fijada y TLS. Esa comprobación no observa campos ni sigue redirecciones.
 
-Telegram ahora solicita un consentimiento explícito para seguir el recorrido
-público de ese ticket, incluidos proveedores y recursos funcionales. Un permiso
-antiguo por dominio no se amplía automáticamente. Sigue separado del análisis del
-documento, envío de datos fiscales, correo y emisión de factura.
+Si no hay una dirección válida, busca primero una memoria propia del comercio y RFC emisor, después la web oficial y su acceso de facturación. El descubrimiento con `web_search` exige fuentes y evidencia. Si no puede verificarlo, pide una dirección escrita. El correo expresamente identificado para facturar y la asistencia manual conservan sus flujos existentes.
 
-El mismo agente usa controles observados. Sigue enlaces inequívocos de facturación,
-elige una marca solo si coincide de forma única y reevalúa cada página. Estos pasos
-claros no agregan llamadas de IA. No contiene recetas de Domino’s, Alsea o REA.
-Ante ambigüedad ofrece la elección humana. Al encontrar el formulario se detiene;
-guardar su enlace estable sigue requiriendo el botón **Guardar portal**.
+El agente decide con la página actual. Recibe texto y contexto, enlaces, botones, descripciones de imágenes, pestañas, menús y opciones observadas. Puede interpretar otros idiomas y etiquetas de campos desconocidas. Las referencias corresponden a la observación vigente; nunca admite URLs, selectores o JavaScript inventados por el modelo. El contenido de la página sigue siendo dato no confiable.
 
-Se conservan las cuotas/turnos/tokens y el plazo de ejecución existentes. Un trabajo
-admite hasta siete clics públicos; la sesión mantiene ocho pasos contando la apertura,
-12 orígenes, 60 solicitudes por página, 240 por recorrido y 24 MiB de red
-descomprimida (8 MiB por página, 4 MiB por respuesta). Los intentos auxiliares denegados también
-cuentan. El avance automático tiene un presupuesto de 22 segundos
-para iniciar pasos, sin repetir un clic fallido. No se abre otro trabajo automáticamente
-al agotar el presupuesto. La API web mantiene sus permisos por dominio.
+El permiso inicial habilita el recorrido dentro de sus presupuestos. Cada nuevo dominio —también para iframes, redirecciones y recursos funcionales— requiere un permiso explícito. Telegram muestra la cadena de dominios antes de acceder al destino. Los permisos siguen vinculados al propietario y al ticket, con caducidad y uso único. Una memoria de portal no concede autorización.
 
-La recuperación del avance del mismo ticket y sus condiciones están descritas en
-[límites y recuperación](LIMITES_RECORRIDO.md).
-La caché privada, los diagnósticos y las regresiones de recursos están descritos
-en [auditoría de navegación](AUDITORIA_NAVEGACION.md).
+La revisión termina al reconocer y guardar un formulario público utilizable. Lee los campos que pide; solicita al usuario los datos ausentes. Un callejón sin salida muestra dónde se detuvo y ofrece escribir la dirección. No abre automáticamente trabajos sucesivos para seguir reintentando.
 
-Los recursos siguen pasando por validación DNS pública, conexión a IP fijada y TLS.
-Los scripts/estilos pueden seguir hasta tres redirecciones adicionales validadas,
-sin reenviar cookies del origen anterior. Se omiten medición, imágenes y fuentes.
-POST, WebSockets, descargas, redes privadas, CAPTCHA y operaciones privadas no
-quedan habilitados por el consentimiento público.
+Se mantienen ocho pasos contando la apertura, 12 dominios, 60 solicitudes por página, 240 por recorrido, 4 MiB por respuesta, 8 MiB por página y 24 MiB por recorrido. El avance automático tiene 22 segundos para iniciar pasos. Siguen vigentes los límites del Runner, de herramientas, de tokens y las cuotas.
 
-## Actualizar en Termius
+Los POST auxiliares siguen bloqueados antes de salir a la red; las operaciones denegadas cuentan para sus límites. La revisión no habilita POST principales, WebSockets, descargas, redes privadas ni saltarse CAPTCHA o login. El [selector de marcas](SELECTOR_MARCAS.md) describe la separación de esas peticiones auxiliares.
 
-```bash
-(
-  set -e
-  cd /opt/lilyapp-agent
-  git pull --ff-only
-  docker compose -f compose.hostinger.yaml -f compose.browser.yaml build agent browser
-  docker compose -f compose.hostinger.yaml -f compose.browser.yaml up -d --wait --wait-timeout 180
-  curl --fail --silent --show-error --max-time 20 https://agente.lilyapp.mx/health
-)
-```
-
-Después: `/estado` en Telegram, **Revisar portal con IA** y el nuevo **Permitir**
-que explica el recorrido completo. No es necesario volver a subir CSF ni ticket.
-Si ya había una sesión con permisos antiguos, la autorización nueva habilita su
-recorrido y recarga los recursos pendientes sin borrar datos.
-
-## Verificación
-
-Las regresiones usan el SDK real y Chromium con páginas/servicios simulados:
-enlace de facturación → selector de marcas → proveedor externo → formulario,
-recursos funcionales de otros orígenes, aislamiento, permisos antiguos y caducidad.
-No usan OpenAI, correo o SAT reales ni emiten facturas.
-
-La suite completa pasó con 550 pruebas (151,71 segundos). También pasaron las dos
-variantes del contrato del cliente (permiso por dominio/recorrido), Ruff, compilación
-y el arranque de ambas imágenes y del stack Compose con autenticación interna.
-Se verificaron además redirecciones de recursos sin fuga de cookies, bloqueo de
-DNS privado/POST y el máximo de orígenes y clics. Los recursos de prueba se retiraron.
-
-La conexión a la página real de Interfactura desde el entorno de desarrollo fue
-rechazada por su proxy (CONNECT 403). El resultado real del formulario en el VPS
-se debe verificar después de actualizar; las pruebas locales no demuestran
-compatibilidad con todos los portales.
+Las pruebas de esta sesión usan páginas y transportes simulados con Chromium y SDK reales. El informe registra sus resultados y las limitaciones; no demuestra compatibilidad universal ni constituye un despliegue en el VPS.
