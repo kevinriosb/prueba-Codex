@@ -22,7 +22,7 @@ from .fake_model import ScriptedModel, answer, call
 def billing_client(tmp_path):
     stack=ExitStack()
     counter=0
-    def make(*,path=None,model=None,portals=(),extractor=None,extras=(),browser=None,**overrides):
+    def make(*,path=None,model=None,portals=(),extractor=None,extras=(),browser=None,portal_probe=None,**overrides):
         nonlocal counter
         counter+=1
         values=dict(ai_api_key='',app_login_password=TEST_PASSWORD,
@@ -36,6 +36,9 @@ def billing_client(tmp_path):
             mail_provider=mail,sat_verifier=sat,telegram_client=telegram,portal_adapters=portals,extra_tools=extras,portal_browser=browser)
         client=stack.enter_context(TestClient(app))
         login(client)
+        async def simulated_probe(url):
+            return {'url':url,'reachable':True,'reason':None,'status':200}
+        app.state.billing.portal_discovery.probe=portal_probe or simulated_probe
         return client,app,extractor,mail,sat,telegram
     yield make
     stack.close()

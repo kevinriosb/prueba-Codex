@@ -1,16 +1,19 @@
 """Encuentra una web oficial pública; nunca usa un QR de encuesta como portal."""
 import time
+import asyncio
 from datetime import datetime,timezone
 from urllib.parse import urlsplit
 
 from ...browser_worker.policy import secure_link,bookmark_url,origin,BrowserError
 from ..errors import AppError
-from .receipt import portal_url,unrelated_billing_link
+from .receipt import portal_url,unrelated_billing_link,printed_billing_addresses
+from .portal_probe import probe_url
 
 
 class PortalDiscovery:
     def __init__(self,billing):
         self.billing,self.store=billing,billing.store
+        self.probe=probe_url
 
     def canonical(self,value):
         url=portal_url(value)
@@ -31,8 +34,20 @@ class PortalDiscovery:
             self.store.audit(owner,ticket['id'],'survey_link_ignored')
         return ticket
 
-    def assign(self,owner,ticket,url,source,evidence):
-        ticket.update(billing_url=url,portal_driven=True,portal_stage='awaiting_form',
+    async def checked(self,owner,ticket,url,source,evidence):
+        printed_url=portal_url(url) if source=='ticket' else None
+        url=self.canonical(url)
+        if not url:return None
+        # No sigue redirecciones ni observa el formulario antes del permiso.
+        try:
+            async with asyncio.timeout(5):result=await self.probe(url)
+        except TimeoutError:result={'url':url,'reachable':False,'reason':'timeout','status':None}
+        ticket['portal_entry_check']=result|{'checked_at':time.time()}
+        if not result['reachable']:
+            ticket.setdefault('portal_rejected_addresses',[]).append({'url':url,'reason':result['reason']})
+            self.store.update('ticket',owner,ticket['id'],ticket)
+            return None
+        ticket.update(billing_url=printed_url or url,portal_driven=True,portal_stage='awaiting_form',
             portal_discovery={'source':source,'url':url,'evidence':str(evidence or '')[:500]},portal_discovery_error=None)
         return self.store.update('ticket',owner,ticket['id'],ticket)
 
@@ -40,17 +55,39 @@ class PortalDiscovery:
         self.billing.require_enabled()
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         ticket=self.repair(owner,ticket)
-        if ticket.get('billing_url') or ticket.get('email_explicitly_for_billing') and ticket.get('billing_email'):return ticket
+        printed,rejected=printed_billing_addresses(ticket.get('printed_addresses'))
+        ticket['portal_rejected_addresses']=list({(item['url'],item['reason']):item
+            for item in [*ticket.get('portal_rejected_addresses',[]),*rejected]}.values())
+        if ticket.get('billing_url') and not printed:
+            printed=[{'url':ticket['billing_url'],'evidence':ticket.get('billing_url_evidence') or ''}]
+        # Comprobaciones acotadas; nunca reintentar una dirección fallida en esta búsqueda.
+        attempted=set()
+        async def attempt(url,source,evidence):
+            canonical=self.canonical(url)
+            if not canonical or canonical in attempted or len(attempted)>=4:return None
+            attempted.add(canonical)
+            return await self.checked(owner,ticket,url,source,evidence)
+        for item in printed[:2]:
+            found=await attempt(item['url'],'ticket',item['evidence'])
+            if found:return found
+        ticket.update(billing_url=None,portal_stage='awaiting_official_site')
+        self.store.update('ticket',owner,ticket['id'],ticket)
+        for saved in self.billing.portal_memory.for_merchant(owner,ticket)[:1]:
+            found=await attempt(saved['url'],'saved',saved.get('merchant'))
+            if found:return found
         if not ticket.get('merchant'):
             return self.store.update('ticket',owner,ticket['id'],ticket|{'portal_discovery_error':'No leí el comercio. Escríbelo para buscar su web oficial.'})
         printed=self.canonical(ticket.get('merchant_website'))
         evidence=ticket.get('merchant_website_evidence') or ''
         if printed and urlsplit(printed).hostname.removeprefix('www.') in evidence.casefold():
-            return self.assign(owner,ticket,printed,'printed',evidence)
+            found=await attempt(printed,'printed',evidence)
+            if found:return found
         lookup=self.store.digest('official-site:'+ticket['merchant'].strip().casefold())
         old=self.store.find('portal_discovery',owner,lookup)
         if old and (not refresh or old.get('url')):
-            if old.get('url'):return self.assign(owner,ticket,old['url'],'web_search',old.get('evidence'))
+            if old.get('url'):
+                found=await attempt(old['url'],'web_search',old.get('evidence'))
+                if found:return found
             return self.store.update('ticket',owner,ticket['id'],ticket|{'portal_discovery_error':old.get('message') or 'No encontré una web oficial verificable. Escríbela.'})
         if not hasattr(self.billing.extractor,'discover_official_site'):
             return self.store.update('ticket',owner,ticket['id'],ticket|{'portal_discovery_error':'Escribe la web oficial del comercio para buscar Facturación.'})
@@ -76,13 +113,18 @@ class PortalDiscovery:
                 record.update(url=None,message='No se completó la búsqueda oficial. Escribe la web del comercio.')
                 self.store.update('portal_discovery',owner,record['id'],record,state='failed')
         ticket=self.billing.resolve_ticket(owner,ticket['id'])
-        if record.get('url'):return self.assign(owner,ticket,record['url'],'web_search',record.get('evidence'))
+        if record.get('url'):
+            found=await attempt(record['url'],'web_search',record.get('evidence'))
+            if found:return found
+            record['message']='La dirección encontrada no respondió. Escribe la web oficial del comercio.'
         return self.store.update('ticket',owner,ticket['id'],ticket|{'portal_discovery_error':record['message']})
 
-    def supplied(self,owner,ticket_id,value):
+    async def supplied(self,owner,ticket_id,value):
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         self.billing.portal_submission.guard(owner,ticket)
         if ticket.get('portal_delivery'):raise AppError(409,'already_requested','Consulta el envío existente antes de cambiar el portal.')
         url=self.canonical(value)
         if not url:raise AppError(422,'official_site','Escribe una web pública del comercio; una encuesta no sirve para facturar.')
-        return self.assign(owner,ticket,url,'user',url)
+        found=await self.checked(owner,ticket,url,'user',url)
+        if found:return found
+        raise AppError(422,'official_site','Esa dirección no respondió. Escribe otra web oficial del comercio.')

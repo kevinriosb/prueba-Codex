@@ -89,6 +89,14 @@ class PortalMemory:
     def __init__(self,billing):
         self.billing,self.store=billing,billing.store
 
+    def for_merchant(self,owner,ticket):
+        """Respaldo por comercio cuando no hay URL impresa; nunca amplía permisos."""
+        merchant=ticket.get('merchant')
+        if not merchant:return []
+        return [item for item in self.store.list('portal_memory',owner)
+            if same_brand_label(merchant,item.get('merchant')) and bookmark_url(item.get('url'))==item.get('url')
+            and not unrelated_billing_link(item.get('url'))]
+
     def key(self,ticket):
         if len(brand_key(ticket.get('merchant')))<3 or not ticket.get('billing_url'):
             return None

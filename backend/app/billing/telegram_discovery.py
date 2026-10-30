@@ -47,7 +47,7 @@ class TelegramDiscovery:
         state=self.bridge._state(owner)
         identifier=state.get('portal_site_input');text=message.get('text','').strip()
         if not identifier or not text or text.startswith('/'):return False
-        ticket=self.billing.portal_discovery.supplied(owner,identifier,text)
+        ticket=await self.billing.portal_discovery.supplied(owner,identifier,text)
         state.pop('portal_site_input',None);self.bridge._save_state(owner,state)
         await self.open(owner,chat_id,ticket,'official_site_supplied')
         return True

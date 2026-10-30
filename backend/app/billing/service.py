@@ -364,16 +364,14 @@ class BillingService:
             'delivery':None,'certificate_requested':False,'csf_supplement_sent':False,'invoice_documents':[],
             'qr_urls':qr_urls,'validation':None,'note':'' if complete else 'Falta completar: '+', '.join(missing_receipt_fields(data))+'.'}
         if document.get('analysis_stage')=='routing' and data.get('billing_url'):
-            ticket.update(portal_driven=True,portal_stage='awaiting_form',note='Portal identificado; falta leer su formulario.')
+            ticket.update(portal_driven=True,portal_stage='awaiting_entry',note='Comprobando la dirección impresa.')
         if document.get('analysis_scope')=='portal-fields-v3':ticket['receipt_summary_read']=True
         ticket=self.store.update('ticket',owner,pending['id'],ticket)
         ticket=self._status(owner,ticket,ticket['status'])
         if document.get('analysis_stage')=='routing' and not data.get('billing_url') and data.get('email_explicitly_for_billing'):
             await self.portal_preparation.read_for_email(owner,ticket['id'])
             ticket=self.resolve_ticket(owner,ticket['id'])
-        if self.portal_memory.suggestion(owner,ticket):
-            ticket=self.portal_memory.select(owner,ticket['id'])
-        if document.get('analysis_scope')=='portal-fields-v3' and not ticket.get('billing_url'):
+        if ticket.get('billing_url') or document.get('analysis_scope')=='portal-fields-v3':
             ticket=await self.portal_discovery.find(owner,ticket['id'])
         return public(ticket)|{'channels':self.detect_billing_channels(owner,ticket['id'])}
 

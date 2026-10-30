@@ -1,8 +1,9 @@
 import re
 import unicodedata
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .receipt import portal_url, purchase_date, purchase_total
 
@@ -89,7 +90,28 @@ class FiscalExtraction(SafeModel):
         return regime_code(value)
 
 
-class TicketExtraction(SafeModel):
+class PrintedAddress(SafeModel):
+    url: str | None = Field(max_length=500)
+    evidence: str = Field(max_length=500)
+    purpose: Literal['billing','official','other','unclear']
+
+
+class PrintedAddresses(SafeModel):
+    printed_addresses: list[PrintedAddress] | None = Field(default=None,max_length=32)
+
+    @model_validator(mode='after')
+    def evaluate_printed_addresses(self):
+        # La lista nueva es autoritativa; los documentos antiguos sin lista
+        # conservan su dirección. Una URL aislada no domina su frase impresa.
+        if self.printed_addresses is not None:
+            from .receipt import printed_billing_addresses
+            candidates,_=printed_billing_addresses([item.model_dump() for item in self.printed_addresses])
+            self.billing_url=candidates[0]['url'] if candidates else None
+            self.billing_url_evidence=candidates[0]['evidence'] if candidates else None
+        return self
+
+
+class TicketExtraction(PrintedAddresses):
     is_ticket: bool
     readable: bool
     merchant: str | None = Field(max_length=160)
@@ -131,7 +153,7 @@ class TicketExtraction(SafeModel):
         return portal_url(value)
 
 
-class TicketRouting(SafeModel):
+class TicketRouting(PrintedAddresses):
     is_ticket: bool
     readable: bool
     merchant: str | None = Field(max_length=160)
