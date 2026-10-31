@@ -19,7 +19,7 @@ def test_a_new_photo_after_missing_data_updates_the_same_request(billing_client,
     assert len(app.state.billing.store.list('ticket',owner(app)))==1
     if caption is None:
         assert app.state.telegram.workflow.active(owner(app))['document_id']==old_document
-        chat(data=next(data for label,data in telegram.messages[-1][2] if label=='Corrige este mismo ticket'))
+        chat(data=next(data for label,data in telegram.messages[-1][2] if label=='Es el mismo ticket'))
     current=app.state.telegram.workflow.active(owner(app))
     assert current['id']==ticket['id'] and current['document_id']!=old_document
     assert 'misma solicitud' in telegram.messages[-1][1]

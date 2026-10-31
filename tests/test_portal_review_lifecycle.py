@@ -49,6 +49,8 @@ def test_first_observe_with_field_meanings_opens_before_interpreting(billing_cli
     chat(document='receipt')
     caplog.clear()
     chat(data=button(telegram,'an'))
+    assert browser.calls==[]
+    chat(data=button(telegram,'wa'))
     ticket=app.state.telegram.workflow.active(owner(app))
     events=portal_events(caplog)
     # La hipótesis original deja aquí browser_session / describe_fields, sin open.
@@ -63,12 +65,16 @@ def test_first_observe_with_field_meanings_opens_before_interpreting(billing_cli
     assert len(model.inputs)==1
     from backend.app.billing.portal_diagnostics import STEP_FIELDS,validate_step
     base={'event','tool','phase','code','scope_changed','browser_review_exists','permission_current'}
-    assert all(set(e)==base or set(e)==base|STEP_FIELDS for e in events)
+    address_fields={'address_purpose','address_result','host','path'}
+    assert all(set(e) in (base,base|STEP_FIELDS,base|address_fields) for e in events)
+    from backend.app.billing.portal_diagnostics import validate_address
+    for e in events:
+        if 'address_purpose' in e:validate_address({k:e[k] for k in address_fields})
     for e in events:
         if 'step' in e:validate_step({k:e[k] for k in STEP_FIELDS})
 
 
-def test_double_analysis_click_does_not_start_a_second_review(billing_client):
+def test_double_permission_click_does_not_start_a_second_review(billing_client):
     import asyncio
 
     class GatedModel(ScriptedModel):
@@ -82,7 +88,9 @@ def test_double_analysis_click_does_not_start_a_second_review(billing_client):
     client,app,extractor,mail,sat,telegram,chat=create(billing_client,model,browser=browser,extractor=Printed())
     confirm_profile(telegram,chat)
     telegram.files['receipt']=image('red');chat(document='receipt')
-    data=button(telegram,'an')
+    chat(data=button(telegram,'an'))
+    assert browser.calls==[]
+    data=button(telegram,'wa')
     message={'chat':{'id':123,'type':'private'}}
     def payload(identifier):
         return {'update_id':identifier,'callback_query':{'from':{'id':123},'message':message,'data':data}}
@@ -102,6 +110,21 @@ def test_double_analysis_click_does_not_start_a_second_review(billing_client):
     assert len(model.inputs)==1 and browser.calls==['open']
     assert app.state.database.usage(owner(app))['runs']==1
     assert not app.state.telegram._inflight_callbacks
+    assert mail.sent==sat.calls==[]
+
+
+def test_double_analysis_click_does_not_start_a_second_review(billing_client):
+    browser=RealBrowser();browser.pages.pages={ROOT:'<label>RFC<input></label>'}
+    model=ScriptedModel([[call('portal_browser_observe',field_meanings=[])]])
+    client,app,extractor,mail,sat,telegram,chat=create(billing_client,model,browser=browser,extractor=Printed())
+    confirm_profile(telegram,chat)
+    telegram.files['receipt']=image('red');chat(document='receipt')
+    analyze=button(telegram,'an');chat(data=analyze)
+    calls=len(extractor.calls)
+    chat(data=analyze)
+    assert len(extractor.calls)==calls and browser.calls==[] and model.inputs==[]
+    chat(data=button(telegram,'wa'))
+    assert browser.calls==['open'] and len(model.inputs)==1
     assert mail.sent==sat.calls==[]
 
 

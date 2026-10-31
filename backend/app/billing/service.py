@@ -141,6 +141,8 @@ class BillingService:
         deadline=time.time()+retention*3600
         if source and source['purpose']!='unclassified' and source['_expires']:
             deadline=min(deadline,source['_expires'])
+        if source and source['purpose']=='unclassified' and purpose=='ticket' and source.get('photo_read'):
+            payload.update({k:source[k] for k in ('extracted','analysis_consent','extraction_version','analysis_stage','analysis_scope') if k in source})
         if source and source['purpose']=='unclassified':
             record=self.store.update('document',owner,source['id'],payload)
             if purpose=='ticket':
@@ -187,10 +189,10 @@ class BillingService:
             self.store.update('document',owner,source['id'],source)
         return result
 
-    async def _extract(self,owner,identifier,purpose,consent):
+    async def _extract(self,owner,identifier,purpose,consent,*,staged=False):
         self.require_enabled()
         document=self.document(owner,identifier)
-        if document['purpose']!=purpose:
+        if document['purpose']!=purpose and not (staged and purpose=='ticket' and document['purpose']=='unclassified'):
             raise AppError(422,'document_purpose','El archivo no corresponde a este paso.')
         if document.get('extracted') is not None:
             return document,document['extracted']
@@ -201,7 +203,7 @@ class BillingService:
         async with self.analysis_lock:
             day=datetime.now(timezone.utc).date().isoformat()
             with self.database.connection(True) as conn:
-                used=conn.execute('SELECT COUNT(*) FROM billing_extractions WHERE owner=? AND day=?',(owner,day)).fetchone()[0]
+                used=conn.execute('SELECT COUNT(*) FROM billing_extractions WHERE owner=? AND day=? AND status NOT LIKE \'linked%\'',(owner,day)).fetchone()[0]
                 if used>=self.settings.billing_max_daily_extractions:
                     raise AppError(429,'billing_daily_limit','Alcanzaste el límite diario de análisis de documentos.')
                 try:
@@ -219,6 +221,9 @@ class BillingService:
                     result=await self.extractor.extract(purpose,document['mime'],base64.b64decode(document['data']))
                 schema=FiscalExtraction if purpose=='csf' else TicketExtraction
                 extracted=schema.model_validate(result).model_dump()
+                if purpose=='ticket':
+                    from .receipt_quality import assess
+                    extracted=assess(extracted)
                 document['extracted']=extracted
                 document=self.store.update('document',owner,identifier,document)
                 with self.database.connection(True) as conn:
@@ -326,12 +331,8 @@ class BillingService:
             pending['analysis_error']={'code':error.code,'message':error.message}
             self._status(owner,pending,Status.ERROR,error.message)
             raise
-        qr_urls=receipt_qr_urls(document)
-        if data.get('billing_url') and unrelated_billing_link(data['billing_url'],data.get('billing_url_evidence')):
-            data['billing_url']=None
-        qr_billing=any(item.get('purpose')=='billing' and not item.get('url') for item in data.get('printed_addresses') or [])
-        if not data.get('billing_url') and len(qr_urls)==1 and (qr_billing or re.search(r'factur|cfdi',data.get('billing_url_evidence') or '',re.I)):
-            if not unrelated_billing_link(qr_urls[0],data.get('billing_url_evidence')):data['billing_url']=qr_urls[0]
+        from .receipt_quality import read_addresses
+        data,qr_urls=read_addresses(data,document)
         if not data['is_ticket'] or (not data['readable'] and not any(data.get(key) for key in ('merchant','folio','total','billing_url','billing_email'))):
             self._status(owner,pending,Status.REQUIERE_INTERVENCION,'No se identificaron datos de compra. El archivo sigue guardado.')
             raise AppError(422,'unreadable_ticket','No pude identificar datos de compra en este archivo. Revisa el tipo o la foto.')
@@ -354,6 +355,8 @@ class BillingService:
                     superseded_by=duplicate['document_id'])
                 self.store.update('document',owner,document_id,document)
                 self.store.delete('ticket',owner,pending['id'])
+                with self.database.connection(True) as conn:
+                    conn.execute("UPDATE billing_extractions SET status='linked_' || status WHERE owner=? AND document_id=? AND status NOT LIKE 'linked%'",(owner,document_id))
                 self.store.audit(owner,document_id,'duplicate_ticket_linked')
                 return public(duplicate)|{'duplicate':True,'channels':self.detect_billing_channels(owner,duplicate['id'])}
         self.store.change_lookup('ticket',owner,pending['id'],lookup)
@@ -397,8 +400,8 @@ class BillingService:
         self.store.audit(owner,ticket_id,'portal_public_form_inspected')
         return ticket
 
-    def portal_diagnostic(self,owner,ticket,*,tool,phase,code=None,starting_scope=None,navigation=None):
-        """Registro deliberadamente sin IDs, destinos, argumentos ni contenido fiscal."""
+    def portal_diagnostic(self,owner,ticket,*,tool,phase,code=None,starting_scope=None,navigation=None,address=None):
+        """Registro sin IDs, argumentos, datos fiscales ni parámetros de URL."""
         record=self.store.find('browser_review',owner,self.store.digest('browser:'+ticket['id']))
         scope=self.portal_permissions.scope(ticket)
         changed=(starting_scope is not None and starting_scope!=scope) or bool(record and record.get('scope')!=scope)
@@ -408,6 +411,15 @@ class BillingService:
         if navigation is not None:
             profile=self.store.get('profile',owner,ticket['profile_id'])
             event.update(validate_step(navigation,private_values(ticket,profile)))
+        if address is not None:
+            from .portal_diagnostics import safe_text,validate_address
+            from .receipt import portal_url
+            from urllib.parse import urlsplit
+            profile=self.store.get('profile',owner,ticket['profile_id'])
+            private=private_values(ticket,profile)
+            parsed=urlsplit(portal_url(address.get('url')) or '')
+            event.update(validate_address({'address_purpose':address['purpose'],'address_result':address['result'],
+                'host':safe_text(parsed.hostname or '',private,limit=240),'path':safe_text(parsed.path or '/',private,limit=240)},private))
         logger=logging.getLogger('personal_agent.portal')
         logger.log(logging.WARNING if code else logging.INFO,json.dumps(event,ensure_ascii=True))
 

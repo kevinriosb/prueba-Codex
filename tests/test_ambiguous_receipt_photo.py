@@ -12,7 +12,12 @@ from .test_portal_preparation import ScopedExtractor, prepared
 from .test_portal_submission import PortalPages, enable_transactions
 from .test_prepared_approval_quota import fill_daily_quota
 from .test_telegram_agent import button, owner
-from .test_telegram_workflow import choice
+def pending_photo(app):
+    return app.state.billing.store.get('receipt_photo_review',owner(app),app.state.telegram._state(owner(app))['receipt_photo_review_id'])
+
+
+def photo_choice(telegram,action):
+    return button(telegram,'fm' if action=='same' else 'fo')
 
 
 def receive_ambiguous(factory, *, maximum=None, last_update=False):
@@ -28,27 +33,27 @@ def receive_ambiguous(factory, *, maximum=None, last_update=False):
     return values, previous, calls
 
 
-def test_unknown_photo_is_saved_without_replacing_or_reading_and_asks_two_choices(billing_client):
+def test_unknown_photo_is_saved_without_reading_and_offers_analysis_or_two_identity_choices(billing_client):
     values, previous, calls = receive_ambiguous(billing_client)
     _, app, extractor, mail, sat, telegram, _ = values
     current = app.state.telegram.workflow.active(owner(app))
     assert current['id']==previous['id'] and current['document_id']==previous['document_id']
     assert extractor.calls==calls and mail.sent==sat.calls==[]
-    pending = app.state.telegram.workflow.pending(owner(app))
+    pending = pending_photo(app)
     assert pending is not None and pending['from_ticket_id']==previous['id']
     assert time.time() < pending['_expires'] <= time.time()+1800
     document = app.state.billing.document(owner(app),pending['document_id'])
     assert document['purpose']=='unclassified' and document['extracted'] is None and not document['analysis_consent']
     assert app.state.billing.store.count('document',owner(app))==3
-    assert {label for label,_ in telegram.messages[-1][2]}=={'Corrige este mismo ticket','Es otro ticket'}
+    assert {label for label,_ in telegram.messages[-1][2]}=={'Autorizar lectura y comparar','Es el mismo ticket','Es otro'}
     assert all(len(data.encode())<=64 for _,data in telegram.messages[-1][2])
 
 
 def test_same_choice_replaces_source_once_even_when_the_photo_consumed_update_100(billing_client):
     values, previous, calls = receive_ambiguous(billing_client,last_update=True)
     _, app, extractor, _, _, telegram, chat = values
-    decision = choice(telegram,'same')
-    document_id = app.state.telegram.workflow.pending(owner(app))['document_id']
+    decision = photo_choice(telegram,'same')
+    document_id = pending_photo(app)['document_id']
     response, _ = chat(data=decision)
     assert not response.json().get('rate_limited')
     current = app.state.telegram.workflow.active(owner(app))
@@ -63,8 +68,8 @@ def test_same_choice_replaces_source_once_even_when_the_photo_consumed_update_10
 def test_other_choice_pauses_previous_and_opens_a_new_request_without_mixing_data(billing_client):
     values, previous, calls = receive_ambiguous(billing_client)
     _, app, extractor, _, _, telegram, chat = values
-    decision = choice(telegram,'other')
-    document_id = app.state.telegram.workflow.pending(owner(app))['document_id']
+    decision = photo_choice(telegram,'other')
+    document_id = pending_photo(app)['document_id']
     chat(data=decision)
     current = app.state.telegram.workflow.active(owner(app))
     assert current['id']!=previous['id'] and current['document_id']==document_id
@@ -120,7 +125,7 @@ def test_requested_field_photo_keeps_its_recorded_expectation_and_applies_withou
 def test_expired_foreign_or_superseded_decision_never_changes_the_active_source(billing_client, invalid):
     values, previous, calls = receive_ambiguous(billing_client)
     _, app, extractor, _, _, telegram, chat = values
-    decision = choice(telegram,'same')
+    decision = photo_choice(telegram,'same')
     if invalid=='expired':
         with app.state.database.connection() as conn:
             conn.execute('UPDATE billing_records SET expires=? WHERE id=?',(time.time()-1,decision.split(':')[1]))
@@ -137,7 +142,7 @@ def test_pending_photo_counts_once_at_document_limit_and_decisions_reuse_it(bill
     values, previous, calls = receive_ambiguous(billing_client,maximum=3)
     _, app, extractor, _, _, telegram, chat = values
     assert app.state.billing.store.count('document',owner(app))==3
-    chat(data=choice(telegram,action))
+    chat(data=photo_choice(telegram,action))
     current = app.state.telegram.workflow.active(owner(app))
     assert app.state.billing.store.count('document',owner(app))==3 and extractor.calls==calls
     telegram.files['overflow'] = image('red'); chat(document='overflow')

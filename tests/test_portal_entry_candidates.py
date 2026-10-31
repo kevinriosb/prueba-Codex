@@ -76,7 +76,10 @@ def test_unreachable_printed_address_is_discarded_and_official_search_really_run
     assert checked==[BAD,HUB] and extractor.searches==[extractor.ticket['merchant']]
     assert saved['billing_url']==HUB and saved['portal_entry_check']['reachable']
     assert any(item['url']==BAD and item['reason']=='dns_error' for item in saved['portal_rejected_addresses'])
-    assert all(BAD not in text for _,text,_ in telegram.messages)
+    # La dirección fallida se muestra como diagnóstico, nunca como portal elegido.
+    from backend.app.billing.receipt_quality import public_address
+    assert any('No usé '+public_address(BAD)+': no respondió' in text for _,text,_ in telegram.messages)
+    assert all('Portal: '+BAD not in text for _,text,_ in telegram.messages)
     assert mail.sent==sat.calls==[]
 
 

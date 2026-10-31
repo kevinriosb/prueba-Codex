@@ -42,6 +42,17 @@ def safe_text(value,private=(),*,limit=80):
     return text[:limit]
 
 
+def validate_address(event,private=()):
+    if set(event)!={'address_purpose','address_result','host','path'}:raise ValueError('Campos de dirección no admitidos')
+    if event['address_purpose'] not in {'billing','official','other','unclear'}:raise ValueError('Propósito no admitido')
+    if event['address_result'] not in {'valid','no_response','blocked','survey_filtered','not_billing','not_literal','not_checked'}:raise ValueError('Resultado no admitido')
+    for key in ('host','path'):
+        value=event[key]
+        if not isinstance(value,str) or len(value)>240 or PRIVATE_PATTERN.search(value) or any(normalized(v) in normalized(value) for v in private if v):
+            raise ValueError('Dato privado en diagnóstico de dirección')
+    return event
+
+
 def validate_step(event,private=()):
     """Rechaza contaminación, incluso si un llamador intenta omitir el saneado."""
     if set(event)!=STEP_FIELDS:raise ValueError('Campos de diagnóstico no admitidos')

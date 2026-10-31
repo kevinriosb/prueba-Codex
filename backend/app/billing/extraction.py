@@ -12,7 +12,7 @@ from pydantic import BaseModel,ConfigDict,Field
 from ..errors import AppError
 from .models import FiscalExtraction, TicketExtraction,TicketRouting
 
-EXTRACTION_VERSION = 'document-0.9-contextual-addresses'
+EXTRACTION_VERSION = 'document-1.0-photo-quality'
 
 
 class FieldExtraction(BaseModel):
@@ -59,6 +59,7 @@ official (web oficial general), other (sucursal, encuesta, opinión, menú, prom
 unclear (sin relación demostrable). Interpreta el significado, también sinónimos y otros idiomas;
 no decidas por contener una palabra o por su posición. No añadas dominios que no estén impresos.
 En un QR sin URL legible devuelve url null y su frase cercana; el servidor decodifica el QR.
+Reporta photo_issues por zona (top, middle, bottom, whole), sujeto y causa si texto de facturación o datos importantes están pequeños, cortados o borrosos. No supongas dónde están si no lo ves. Reporta field_confidence por campo; si hay varios folios o totales posibles usa low y no elijas arbitrariamente. Copia subtotal, IVA (tax), propina (tip), total_without_tip y total_with_tip solo si sus etiquetas e importes son explícitos, separados; no calcules valores ausentes. El total no incluye propina separada. Si el precio antes de un cupón difiere del pagado, no los intercambies.
 billing_url sale solo de la evaluación de esas frases, nunca de Datos Sucursal o una encuesta.'''
 
 
@@ -74,7 +75,7 @@ class DocumentExtractor:
     async def extract_routing(self,mime,data):
         result=await self._read(TicketRouting,POLICY+'\nPrimera lectura: lee también comercio, RFC emisor, fecha, folio o Cuenta, importe total y moneda visibles. No los dejes pendientes si se leen. '
             'En merchant usa la marca o nombre comercial visible; si solo aparece razón social, copia esa. El RFC emisor va separado. '
-            'El portal determinará después los campos adicionales, como tienda, carril o código. '
+            'El portal determinará después los campos adicionales, como carril o código. Lee tienda y hora si son visibles: ayudan a reconocer otra foto del mismo ticket. '
             'Distingue la web general del comercio (merchant_website) del portal expresamente indicado para facturar (billing_url). '
             'Copia su evidencia impresa. Un QR de encuesta, opinión, menú o promoción nunca es el portal de facturación. '
             'No inventes una web a partir de la marca; si no está impresa devuelve null.',

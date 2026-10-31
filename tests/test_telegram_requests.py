@@ -16,6 +16,8 @@ def receipt(app, telegram, chat, *, color='red', folio='TEST-1'):
     app.state.billing.extractor.ticket['folio'] = folio
     telegram.files[color] = image(color)
     chat(document=color)
+    if any(data.startswith('fo:') for _,data in telegram.messages[-1][2] or []):
+        chat(data=button(telegram,'fo'))
     if any(data.startswith('fw:') for _,data in telegram.messages[-1][2] or []):
         chat(data=choice(telegram,'pause'))
     analyze = button(telegram, 'an')
@@ -49,13 +51,14 @@ def test_new_picture_same_purchase_opens_original_and_preserves_photo_and_old_bu
     original, _ = receipt(app, telegram, chat)
     telegram.files['copy'] = image('green')
     chat(document='copy')
-    duplicate_button = button(telegram, 'an')
-    uploaded = duplicate_button.split(':')[1]
+    duplicate_button = button(telegram, 'fa')
+    review=app.state.billing.store.get('receipt_photo_review',owner(app),duplicate_button.split(':')[1])
+    uploaded = review['document_id']
     chat(data=duplicate_button)
     assert app.state.telegram._state(owner(app))['last_ticket_id'] == original
     assert 'Estado: Datos listos' in telegram.messages[-1][1]
     duplicate = app.state.billing.document(owner(app), uploaded)
-    assert duplicate['duplicate_ticket_id'] == original and duplicate['data']
+    assert duplicate['ticket_id'] == original and duplicate['photo_linked'] and duplicate['data']
     assert len(app.state.billing.store.list('ticket', owner(app))) == 1
     calls = len(extractor.calls)
     chat(data=duplicate_button)
@@ -257,7 +260,7 @@ def test_duplicate_photo_is_removed_with_its_ticket_only_after_explicit_deletion
     identifier,_=receipt(app,telegram,chat)
     telegram.files['copy']=image('green')
     chat(document='copy')
-    action=button(telegram,'an')
+    action=button(telegram,'fa')
     chat(data=action)
     app.state.billing.delete_ticket(owner(app),identifier)
     assert app.state.billing.store.count('document',owner(app))==1  # Solo la CSF.

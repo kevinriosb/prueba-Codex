@@ -11,6 +11,7 @@ from .cfdi import validate_cfdi
 from .documents import inspect_document
 from .models import Status
 from .portal_preparation import PROFILE_KEYS,RECEIPT_KEYS,portal_value
+from .receipt_quality import field_total
 from .receipt import purchase_date,purchase_total,pending_receipt_fields
 
 
@@ -37,7 +38,7 @@ class PortalSubmission:
             return [],[{'reference':None,'label':'El portal requiere revisión manual','key':None}]
         for item in snapshot['fields']:
             key=item.get('key')
-            value=portal_value(item,profile.get(key) if key in PROFILE_KEYS else ticket.get(key) if key in RECEIPT_KEYS else None)
+            value=portal_value(item,profile.get(key) if key in PROFILE_KEYS else field_total(ticket,item) if key in RECEIPT_KEYS else None)
             value=manual.get(self.field_identity(item)) or value
             if value and item.get('max_length') is not None and len(value)>item['max_length']:value=None
             if value and item.get('reference'):
@@ -334,7 +335,7 @@ class PortalSubmission:
         async with self.billing.analysis_lock:
             day=datetime.now(timezone.utc).date().isoformat()
             with self.billing.database.connection(True) as conn:
-                count=conn.execute('SELECT COUNT(*) FROM billing_extractions WHERE owner=? AND day=?',(owner,day)).fetchone()[0]
+                count=conn.execute('SELECT COUNT(*) FROM billing_extractions WHERE owner=? AND day=? AND status NOT LIKE \'linked%\'',(owner,day)).fetchone()[0]
                 if count>=self.billing.settings.billing_max_daily_extractions:raise AppError(429,'billing_daily_limit','Alcanzaste el límite de lecturas. Escribe el dato manualmente.')
             self.store.claim('portal_field_photo',owner,identifier)
             with self.billing.database.connection(True) as conn:

@@ -36,11 +36,13 @@ def test_video_and_reply_to_video_explain_format_without_ai(billing_client):
     assert telegram.downloads==['csf','first'] and len(extractor.calls)==2
 
 
-def test_new_upload_automatically_pauses_previous_without_analyzing_or_cancelling(billing_client):
+def test_new_upload_pauses_previous_only_after_confirming_it_is_another_ticket(billing_client):
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     telegram.files['second']=image('green')
     chat(document='second')
+    assert app.state.telegram.workflow.active(owner(app))['id']==old
+    chat(data=button(telegram,'fo'))
     assert len(extractor.calls)==2
     assert not any(data.startswith('fw:') for _,data in telegram.messages[-1][2])
     active=app.state.telegram._state(owner(app))['active_ticket_id']
@@ -70,7 +72,7 @@ def test_returning_to_previous_request_keeps_new_ticket_without_reading_or_reupl
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     original=app.state.billing.resolve_ticket(owner(app),old)['document_id']
-    telegram.files['second']=image('green');chat(document='second')
+    telegram.files['second']=image('green');chat(document='second',caption='Es otro ticket')
     second=app.state.telegram.workflow.active(owner(app))
     pending=second['document_id']
     chat(data='ts:'+old);chat(data=choice(telegram,'pause'))
@@ -118,9 +120,9 @@ def test_stale_and_foreign_switch_buttons_cannot_choose_a_different_file(billing
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     telegram.files.update(second=image('green'),third=image('yellow'))
-    chat(document='second');second=app.state.telegram.workflow.active(owner(app))['id']
+    chat(document='second',caption='Es otro ticket');second=app.state.telegram.workflow.active(owner(app))['id']
     chat(data='ts:'+old);stale=choice(telegram,'pause')
-    chat(document='third');third=app.state.telegram.workflow.active(owner(app))['id']
+    chat(document='third',caption='Es otro ticket');third=app.state.telegram.workflow.active(owner(app))['id']
     chat(data=stale)
     assert app.state.telegram.workflow.active(owner(app))['id']==third
     chat(data='ts:'+second);current=choice(telegram,'pause')
@@ -137,7 +139,7 @@ def test_old_analysis_button_asks_before_returning_to_previous_ticket(billing_cl
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     old_button=button(telegram,'an')
-    telegram.files['second']=image('green');chat(document='second')
+    telegram.files['second']=image('green');chat(document='second',caption='Es otro ticket')
     current=app.state.telegram.workflow.active(owner(app))['id']
     chat(data=old_button)
     assert app.state.telegram.workflow.active(owner(app))['id']==current
@@ -147,7 +149,7 @@ def test_old_analysis_button_asks_before_returning_to_previous_ticket(billing_cl
 def test_old_ticket_button_asks_before_switching_the_active_request(billing_client):
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
-    telegram.files['second']=image('green');chat(document='second')
+    telegram.files['second']=image('green');chat(document='second',caption='Es otro ticket')
     second=app.state.telegram.workflow.active(owner(app))['id']
     chat(data='ts:'+old)
     assert app.state.telegram.workflow.active(owner(app))['id']==second and choice(telegram,'pause')
@@ -158,7 +160,7 @@ def test_old_ticket_button_asks_before_switching_the_active_request(billing_clie
 def test_pending_change_survives_restart_without_losing_new_document(billing_client):
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
-    telegram.files['second']=image('green');chat(document='second')
+    telegram.files['second']=image('green');chat(document='second',caption='Es otro ticket')
     second=app.state.telegram.workflow.active(owner(app))['id']
     pending=app.state.billing.resolve_ticket(owner(app),second)['document_id']
     chat(data='ts:'+old)
@@ -171,7 +173,7 @@ def test_pending_change_survives_restart_without_losing_new_document(billing_cli
     assert button(tg2,'an').endswith(pending) and ext2.calls==[]
 
 
-def test_reply_to_photo_receives_it_and_opens_the_new_request(billing_client):
+def test_reply_to_photo_receives_it_and_waits_for_identity_before_a_new_request(billing_client):
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
     telegram.files['quoted']=image('green')
@@ -180,7 +182,9 @@ def test_reply_to_photo_receives_it_and_opens_the_new_request(billing_client):
         'from':{'id':123},'chat':{'id':123,'type':'private'},'text':'Es este',
         'reply_to_message':{'photo':[{'file_id':'quoted'}]}}},
         headers={'X-Telegram-Bot-Api-Secret-Token':'x'*40})
-    assert response.status_code==200 and app.state.telegram.workflow.active(owner(app))['id']!=old
+    assert response.status_code==200 and app.state.telegram.workflow.active(owner(app))['id']==old
+    chat(data=button(telegram,'fo'))
+    assert app.state.telegram.workflow.active(owner(app))['id']!=old
     assert telegram.downloads[-1]=='quoted' and app.state.service.agent.model.inputs==[]
 
 
@@ -190,7 +194,7 @@ def test_new_request_clears_a_stale_csf_upload_prompt(billing_client):
     state=app.state.telegram._state(owner(app));state['expected_upload']='csf'
     app.state.telegram._save_state(owner(app),state)
     chat('/nuevo')
-    telegram.files['second']=image('green');chat(document='second')
+    telegram.files['second']=image('green');chat(document='second',caption='Es otro ticket')
     document=app.state.billing.document(owner(app),button(telegram,'an').split(':')[1])
     assert document['purpose']=='ticket' and len(extractor.calls)==2
 
@@ -208,7 +212,7 @@ def test_bot_menu_does_not_reuse_an_older_ticket_requested_by_the_model(billing_
     from .fake_model import call,answer
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
-    telegram.files['second']=image('green');chat(document='second')
+    telegram.files['second']=image('green');chat(document='second',caption='Es otro ticket')
     second=app.state.telegram.workflow.active(owner(app))['id']
     app.state.service.agent.model.outputs=[[call('track_invoice_email',identifier=old)],[answer('Revisa la solicitud activa.')]]
     chat('Revisa la compra anterior')
@@ -269,11 +273,11 @@ def test_cancel_after_send_stops_tracking_and_explains_it_cannot_recall_email(bi
 def test_old_replacement_mode_cannot_retarget_the_new_active_ticket(billing_client):
     result,old=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
-    telegram.files['second']=image('green');chat(document='second')
+    telegram.files['second']=image('green');chat(document='second',caption='Es otro ticket')
     current=app.state.telegram.workflow.active(owner(app))
     state=app.state.telegram._state(owner(app));state['portal_upload_ticket']=old
     app.state.telegram._save_state(owner(app),state)
-    telegram.files['third']=image('yellow');chat(document='third')
+    telegram.files['third']=image('yellow');chat(document='third',caption='Es otro ticket')
     assert app.state.telegram.workflow.active(owner(app))['id']!=current['id']
     assert app.state.billing.resolve_ticket(owner(app),current['id'])['document_id']==current['document_id']
     assert app.state.telegram.workflow.pending(owner(app)) is None
@@ -327,7 +331,7 @@ def test_confirmed_replacement_reuses_staged_file_at_storage_limit(billing_clien
 def test_expired_new_file_preserves_request_and_allows_starting_another_without_cancelling(billing_client):
     result,identifier=first_ticket(billing_client)
     client,app,extractor,mail,sat,telegram,chat=result
-    telegram.files['second']=image('green');chat(document='second')
+    telegram.files['second']=image('green');chat(document='second',caption='Es otro ticket')
     active=app.state.telegram.workflow.active(owner(app))
     pending=active['document_id']
     with app.state.database.connection(True) as conn:

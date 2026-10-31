@@ -119,7 +119,7 @@ class TelegramRequests:
         now = datetime.now(timezone.utc)
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
         with self.billing.database.connection() as conn:
-            analyses = conn.execute('SELECT COUNT(*) FROM billing_extractions WHERE owner=? AND day=?',
+            analyses = conn.execute('SELECT COUNT(*) FROM billing_extractions WHERE owner=? AND day=? AND status NOT LIKE \'linked%\'',
                 (owner, today.date().isoformat())).fetchone()[0]
             updates = conn.execute("SELECT COUNT(*) FROM billing_records WHERE kind='channel_update' AND owner=? AND created>=?",
                 (owner, today.timestamp())).fetchone()[0]

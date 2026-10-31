@@ -96,7 +96,25 @@ class PrintedAddress(SafeModel):
     purpose: Literal['billing','official','other','unclear']
 
 
+class PhotoIssue(SafeModel):
+    zone:Literal['top','middle','bottom','whole']
+    subject:Literal['billing_address','qr','purchase_fields']
+    reason:Literal['blurred','too_small','cropped','partially_visible']
+
+
+class FieldConfidence(SafeModel):
+    key:Literal['merchant','store_number','purchase_date','purchase_time','folio','total','billing_url','subtotal','tax','tip','total_without_tip','total_with_tip']
+    confidence:Literal['high','medium','low','unreadable']
+
+
 class PrintedAddresses(SafeModel):
+    photo_issues:list[PhotoIssue]|None=Field(default=None,max_length=12)
+    field_confidence:list[FieldConfidence]|None=Field(default=None,max_length=20)
+    subtotal:str|None=Field(default=None,max_length=24)
+    tax:str|None=Field(default=None,max_length=24)
+    tip:str|None=Field(default=None,max_length=24)
+    total_without_tip:str|None=Field(default=None,max_length=24)
+    total_with_tip:str|None=Field(default=None,max_length=24)
     printed_addresses: list[PrintedAddress] | None = Field(default=None,max_length=32)
 
     @model_validator(mode='after')
@@ -163,6 +181,8 @@ class TicketExtraction(PrintedAddresses):
 
 
 class TicketRouting(PrintedAddresses):
+    store_number:str|None=Field(default=None,max_length=100)
+    purchase_time:str|None=Field(default=None,max_length=20)
     is_ticket: bool
     readable: bool
     merchant: str | None = Field(max_length=160)

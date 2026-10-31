@@ -21,7 +21,8 @@ from .telegram_requests import REQUEST_TEXTS, TelegramRequests
 from .telegram_workflow import TelegramWorkflow
 from .telegram_submission import TelegramSubmission
 from .telegram_discovery import TelegramDiscovery
-from .telegram_receipts import TelegramReceipts
+from .telegram_receipts import TelegramReceipts,receipt_intent
+from .receipt_quality import display_address
 from .portal_permissions import PortalPermissionRequired,portal_origin
 from .portal_memory import matching_brand,brand_options,has_billing_form,public_form_ready,unresolved_brand_selector
 from .portal_diagnostics import stop_detail,stop_message
@@ -204,6 +205,9 @@ class TelegramBridge:
                 await self.profiles.resume(owner,chat_id)
                 return
         if purpose=='ticket':
+            profiles=self.billing.store.list('profile',owner)
+            selected=profile_id or state.get('active_profile') or (profiles[0]['id'] if len(profiles)==1 else None)
+            if not workflow_confirmed and not document.get('photo_explicit_new') and document['purpose']=='unclassified' and selected and await self.receipts.stage(owner,chat_id,document,selected):return
             if not workflow_confirmed and not await self.workflow.admit(owner,chat_id,identifier):
                 return
             state=self._state(owner)
@@ -244,7 +248,9 @@ class TelegramBridge:
         if purpose=='ticket' and current.get('ticket_id'):
             self.workflow.activate(owner,self.billing.resolve_ticket(owner,current['ticket_id']))
         if purpose=='ticket' and current.get('extracted') is not None:
-            await self._ticket(owner,chat_id,current['ticket_id'])
+            ticket=await self.billing.analyze_ticket(owner,current['id'],consent=True)
+            self.workflow.activate(owner,self.billing.resolve_ticket(owner,ticket['id']))
+            await self.discovery.after_analysis(owner,chat_id,ticket,self.billing.document(owner,current['id']))
             return
         label='CSF' if purpose=='csf' else 'TICKET'
         profile_text=''
@@ -315,8 +321,24 @@ class TelegramBridge:
             text+='\nEl archivo temporal venció; los datos siguen guardados.'
         analysis=self.requests.analysis_status(owner,ticket,document)
         summary,approval_id,can_prepare=self.requests.summary(owner,ticket,analysis=analysis)
+        from .receipt_quality import warnings,url_notice,public_address,confirmed
         text+='\n'+summary
+        for warning in warnings(ticket):text+='\n'+warning
+        if ticket.get('printed_address_note'):text+='\n'+ticket['printed_address_note']
+        if url_notice(ticket):text+='\n'+url_notice(ticket)
+        reasons={'no_response':'no respondió en la comprobación','blocked':'bloqueada por seguridad','survey_filtered':'rechazada por el filtro de encuestas','not_billing':'clasificada con un propósito distinto de facturación','not_literal':'la dirección no coincide con su evidencia literal','not_checked':'no se comprobó; se priorizó otra dirección'}
+        for item in ticket.get('printed_address_diagnostics') or []:
+            if item['result']!='valid':text+='\nNo usé '+item['url']+': '+reasons.get(item['result'],'requiere revisión')+'.'
         buttons=[]
+        for item in ticket.get('field_confidence') or []:
+            if item['confidence'] in {'low','unreadable'} and not confirmed(ticket,item['key']) and ticket.get(item['key']):
+                from .receipt_quality import LABELS
+                key=item['key']
+                lookup=self.billing.store.digest('receipt-confidence:'+ticket['id']+ticket['document_id']+key+str(ticket[key]))
+                review=self.billing.store.find('receipt_confidence',owner,lookup)
+                if not review:review=self.billing.store.add('receipt_confidence',owner,{'ticket_id':ticket['id'],
+                    'document_id':ticket['document_id'],'key':key,'value':ticket[key]},lookup=lookup,state='pending',expires=time.time()+900)
+                if review['_state']=='pending':buttons.append(('Confirmo '+LABELS[key], 'qc:'+review['id']))
         if approval_id:
             buttons.append(('Revisar solicitud pendiente','er:'+approval_id))
         if document and not document.get('analysis_consent') and document.get('extracted') is None and (analysis is None or analysis['available']):
@@ -345,7 +367,7 @@ class TelegramBridge:
             if ticket.get('portal_discovery_error'):text+='\n'+ticket['portal_discovery_error']
             if ticket.get('billing_url'):
                 entry=self.billing.portal_memory.entry_url(owner,ticket)
-                text+='\n'+('Portal guardado: ' if entry!=ticket['billing_url'] else 'Portal: ')+entry
+                text+='\n'+('Portal guardado: ' if entry!=ticket['billing_url'] else 'Portal: ')+(urlsplit(entry).scheme+'://' if urlsplit(entry).scheme else '')+public_address(entry)
                 if ticket.get('selected_portal'):
                     buttons.append(('Usar enlace del ticket','bo:'+identifier))
                 elif self.billing.portal_memory.suggestion(owner,ticket):
@@ -417,7 +439,7 @@ class TelegramBridge:
         profile=self.billing.store.get('profile',owner,ticket['profile_id'])
         if not ticket.get('billing_url'):
             raise AppError(409,'billing_portal','No hay una página de facturación identificada.')
-        text='Datos para el portal\n'+self.billing.portal_memory.entry_url(owner,ticket)+'\n'
+        text='Datos para el portal\n'+display_address(self.billing.portal_memory.entry_url(owner,ticket))+'\n'
         plan=ticket['portal_inspection']
         if plan['status']=='verified':
             text+='Campos leídos del formulario público:\n'
@@ -446,7 +468,8 @@ class TelegramBridge:
         ticket=self.billing.resolve_ticket(owner,permission['ticket_id'])
         chain=list(ticket.get('portal_domain_chain') or [portal_origin(self.billing.portal_memory.entry_url(owner,ticket))])
         targets=[value for value in permission['origins'] if value!=chain[-1]]
-        text='¿Permites revisar este portal?\n'+'\n'.join(permission['origins'])
+        from .receipt_quality import url_notice
+        text=url_notice(ticket)+'\n¿Permites revisar este portal?\n'+'\n'.join(permission['origins'])
         for target in targets:
             text+='\nRuta: '+' → '.join(urlsplit(value).hostname for value in [*chain,target])
         if permission.get('route_version')==1:
@@ -605,7 +628,7 @@ class TelegramBridge:
             proposal=self.billing.portal_memory.propose(owner,ticket['id'])
         except AppError:
             proposal=None
-        text=('Formulario encontrado\n' if ready else 'Revisión pública\n')+(proposal['url'] if proposal else snapshot['page'])
+        text=('Formulario encontrado\n' if ready else 'Revisión pública\n')+display_address(proposal['url'] if proposal else snapshot['page'])
         if ticket.get('total'):text+='\nImporte del ticket: '+str(ticket['total'])
         elif ready:text+='\nNo leí el importe. Escríbelo o envía foto de ese campo.'
         if ticket.get('portal_browser_error'):
@@ -886,7 +909,7 @@ class TelegramBridge:
         if not isinstance(data,str):return False
         prefix,separator,tail=data.partition(':')
         identifier,_,action=tail.partition(':')
-        if not separator or (action and prefix!='fw'):return False
+        if not separator or (action and prefix not in {'fw','fm'}):return False
         try:
             uuid.UUID(identifier)
             if prefix in {'ga','gr'}:
@@ -903,6 +926,9 @@ class TelegramBridge:
                 ticket=self.billing.resolve_ticket(owner,identifier)
                 tx=self.billing.portal_submission.current(owner,ticket['id'])
                 return bool(tx and tx['state'] in {'unknown','expired','resolved'})
+            if prefix in {'fm','fo'}:
+                review=self.billing.store.get('receipt_photo_review',owner,identifier)
+                return review['_state'] in {'pending','read'}
             if prefix=='sv':
                 # SAT no tiene un registro de aprobación separado: la revisión está en el ticket.
                 ticket=self.billing.store.get('ticket',owner,identifier)
@@ -966,7 +992,7 @@ class TelegramBridge:
         if not separator:
             raise AppError(422,'telegram_callback','Acción no válida.')
         code=None
-        if prefix in {'cu','rf','td','xe','ba','bs','lm'}:
+        if prefix in {'cu','rf','td','xe','ba','bs','lm','fm'}:
             identifier,_,code=identifier.partition(':')
         try:
             uuid.UUID(identifier)
@@ -974,7 +1000,18 @@ class TelegramBridge:
             raise AppError(422,'telegram_callback','Acción no válida.') from None
         if await self.workflow.guard(owner,chat_id,prefix,identifier):
             return
-        if prefix in {'lv','lr','ls','lc','lq','lm','la','lu','lx','ly','le','lz'}:
+        if prefix=='qc':
+            review=self.billing.store.get('receipt_confidence',owner,identifier)
+            ticket=self.billing.resolve_ticket(owner,review['ticket_id'])
+            if ticket.get(review['key'])!=review['value'] or ticket['document_id']!=review['document_id']:
+                raise AppError(409,'photo_confidence','Cambió el valor o la foto. Revisa antes de confirmar.')
+            self.billing.store.claim('receipt_confidence',owner,identifier)
+            ticket.setdefault('confidence_confirmed',{})[review['key']]=review['value']
+            self.billing.store.update('ticket',owner,ticket['id'],ticket)
+            await self._ticket(owner,chat_id,ticket['id'])
+        elif prefix in {'fa','fm','fo'}:
+            await self.receipts.decision(owner,chat_id,prefix,identifier,code)
+        elif prefix in {'lv','lr','ls','lc','lq','lm','la','lu','lx','ly','le','lz'}:
             await self.submission.callback(owner,chat_id,prefix,identifier,code)
         elif prefix in {'td','xe'}:
             ticket=self.billing.store.get('ticket',owner,identifier)
@@ -1229,7 +1266,7 @@ class TelegramBridge:
             if not records:
                 await self.client.send(chat_id,'No hay portales guardados todavía.')
             for record in records[:50]:
-                await self.client.send(chat_id,record['merchant']+'\n'+record['url'],[('Olvidar enlace','bf:'+record['id'])])
+                await self.client.send(chat_id,record['merchant']+'\n'+display_address(record['url']),[('Olvidar enlace','bf:'+record['id'])])
         elif text=='/nuevo_chat' and self.agent:
             self.agent.conversation(owner,new=True)
             await self.client.send(chat_id,'Chat nuevo. Tu perfil y tickets se conservan.')
@@ -1325,6 +1362,9 @@ class TelegramBridge:
             if not selected and len(profiles)==1:
                 selected=profiles[0]['id']
             document=self.billing.receive_document(owner,'unclassified',data,profile_id=None if explicit_csf else selected)
+            if receipt_intent(message)=='new':
+                saved=self.billing.document(owner,document['id'])
+                self.billing.store.update('document',owner,document['id'],saved|{'photo_explicit_new':True})
             state['last_document_id']=document['id']
             state['last_received_media']='document'
             self._save_state(owner,state)

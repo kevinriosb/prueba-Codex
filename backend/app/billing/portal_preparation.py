@@ -11,6 +11,7 @@ from ..errors import AppError
 from .models import TicketExtraction,Status
 from .portal_memory import public_form_ready
 from .portal_navigation import next_public_action
+from .receipt_quality import field_total
 from .receipt import missing_receipt_fields,purchase_reference
 from .portal_inspection import field_key
 from .portal_permissions import PortalPermissionRequired,portal_origin
@@ -210,7 +211,7 @@ class PortalPreparation:
                     or review['scope']!=self.billing.portal_permissions.scope(ticket)):
                 raise AppError(409,'portal_changed','Cambió la foto o solicitud. Usa la revisión actual.')
             self.store.claim('portal_data_review',owner,identifier)
-            return await self._read(owner,ticket['id'],review['fields'],review['signature'],consent=True)
+            return await self._read(owner,ticket['id'],review['fields'],review['signature'],consent=True,photo_union=True)
         record=await self.current(owner,ticket['id'])
         if (review['document_id']!=document['id'] or review['sha256']!=document['sha256']
                 or review['signature']!=self.shape_key(record['snapshot']) or review['scope']!=self.billing.portal_permissions.scope(ticket)):
@@ -231,7 +232,7 @@ class PortalPreparation:
         fields=[{'key':key,'label':label} for key,label in [('folio','Folio'),('purchase_date','Fecha'),('total','Importe')]]
         return await self._read(owner,ticket_id,fields,self.store.digest('email-receipt-fields-v1'))
 
-    async def _read(self,owner,ticket_id,fields,signature,*,consent=False):
+    async def _read(self,owner,ticket_id,fields,signature,*,consent=False,photo_union=False):
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         if not hasattr(self.billing.extractor,'extract_fields'):return False
         if not fields:return False
@@ -247,6 +248,7 @@ class PortalPreparation:
         if not consent and ticket.get('receipt_summary_read') and not self.replacement_pending(owner,ticket) and all(ticket.get(item['key']) for item in fields):
             return False
         document=self.source(owner,ticket)
+        linked=photo_union and document.get('portal_replacement') is True
         scope=document.get('analysis_scope')
         if not consent and scope not in {'portal-fields-v1','portal-fields-v2','portal-fields-v3'}:return False
         lookup=self.store.digest('portal-data:'+ticket['id']+document['sha256']+signature)
@@ -261,10 +263,10 @@ class PortalPreparation:
             attempt='portal:'+lookup
             day=datetime.now(timezone.utc).date().isoformat()
             with self.billing.database.connection(True) as conn:
-                used=conn.execute('SELECT COUNT(*) FROM billing_extractions WHERE owner=? AND day=?',(owner,day)).fetchone()[0]
-                if used>=self.billing.settings.billing_max_daily_extractions:
+                used=conn.execute('SELECT COUNT(*) FROM billing_extractions WHERE owner=? AND day=? AND status NOT LIKE \'linked%\'',(owner,day)).fetchone()[0]
+                if used>=self.billing.settings.billing_max_daily_extractions and not linked:
                     raise AppError(429,'billing_daily_limit','Alcanzaste el límite diario de lecturas de documentos.')
-                try:conn.execute('INSERT INTO billing_extractions VALUES(?,?,?,?)',(owner,day,attempt,'started'))
+                try:conn.execute('INSERT INTO billing_extractions VALUES(?,?,?,?)',(owner,day,attempt,'linked_started' if linked else 'started'))
                 except sqlite3.IntegrityError:
                     raise AppError(409,'extraction_attempted','Esta lectura ya tuvo un intento; completa solo los campos pendientes.') from None
             record=self.store.add('portal_data',owner,{'ticket_id':ticket['id'],'document_id':document['id'],'signature':signature,'status':'started'},lookup=lookup)
@@ -273,10 +275,19 @@ class PortalPreparation:
                 data=TicketExtraction.model_validate(result).model_dump()
                 if not data['is_ticket']:
                     raise AppError(422,'portal_not_ticket','El archivo no se identificó como ticket. Revisa el adjunto.')
+                from .receipt_quality import assess
+                data=assess(data)
                 current=self.billing.resolve_ticket(owner,ticket['id'])
                 if current['id']!=ticket['id'] or current['document_id']!=document['id'] or current['profile_id']!=ticket['profile_id']:
                     raise AppError(409,'portal_changed','Cambió el archivo o perfil durante la lectura. Revisa el ticket.')
                 ticket=current
+                if photo_union:ticket.update(is_ticket=True,readable=data['readable'])
+                for key in ('subtotal','tax','tip','total_without_tip','total_with_tip','amounts_consistent','field_confidence'):
+                    if key=='field_confidence':
+                        confidences={i['key']:i for i in ticket.get(key) or []}
+                        confidences.update({i['key']:i for i in data.get(key) or []})
+                        ticket[key]=list(confidences.values())
+                    elif data.get(key) is not None:ticket[key]=data[key]
                 if document.get('portal_replacement'):
                     for key in ('folio','purchase_date','total','issuer_rfc'):
                         old,new=ticket.get(key),data.get(key)
@@ -311,7 +322,7 @@ class PortalPreparation:
                     else:self.store.change_lookup('ticket',owner,ticket['id'],identity)
                 self.store.update('portal_data',owner,record['id'],record|{'status':'complete'})
                 with self.billing.database.connection(True) as conn:
-                    conn.execute("UPDATE billing_extractions SET status='complete' WHERE owner=? AND document_id=?",(owner,attempt))
+                    conn.execute("UPDATE billing_extractions SET status=? WHERE owner=? AND document_id=?",('linked_complete' if linked else 'complete',owner,attempt))
                 return True
             except Exception as error:
                 failure=error if isinstance(error,AppError) else AppError(422,'extraction_format','No se completó la lectura de campos. El archivo se conserva.')
@@ -320,7 +331,7 @@ class PortalPreparation:
                 ticket['portal_data_error']={'code':failure.code,'message':failure.message}
                 self.store.update('ticket',owner,ticket['id'],ticket)
                 with self.billing.database.connection(True) as conn:
-                    conn.execute("UPDATE billing_extractions SET status='failed' WHERE owner=? AND document_id=?",(owner,attempt))
+                    conn.execute("UPDATE billing_extractions SET status=? WHERE owner=? AND document_id=?",('linked_failed' if linked else 'failed',owner,attempt))
                 raise failure from None
 
     def plan(self,owner,ticket,snapshot):
@@ -332,7 +343,7 @@ class PortalPreparation:
         missing.extend(snapshot.get('unsupported_required',[]))
         for item in self.active_fields(ticket,snapshot):
             key=item.get('key')
-            raw=profile.get(key) if key in PROFILE_KEYS else ticket.get(key) if key in RECEIPT_KEYS else None
+            raw=profile.get(key) if key in PROFILE_KEYS else field_total(ticket,item) if key in RECEIPT_KEYS else None
             value=portal_value(item,raw)
             if value and item.get('max_length') is not None and len(value)>item['max_length']:
                 missing.append(item['label'])
