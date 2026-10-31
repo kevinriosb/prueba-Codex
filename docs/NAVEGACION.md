@@ -1,5 +1,7 @@
 # Navegación adaptable y preparación del formulario
 
+> Sesión 3A: la inspección estática ya no tiene dominio ni plantilla predeterminados. El recorrido actual confirma cada nuevo dominio documental y obtiene sus destinos y campos de la página observada. Véase [portal correcto](PORTAL_CORRECTO.md); las validaciones y ejemplos anteriores son históricos.
+
 El mismo agente de OpenAI puede observar controles reales de cada página, seguir
 un enlace observado y desplegar alternativas como «No cuento con Web ID».
 No hay una secuencia fija por comercio. Los nombres de campos se relacionan con

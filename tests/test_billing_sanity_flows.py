@@ -7,7 +7,7 @@ from backend.app.errors import AppError
 from .billing_fakes import TICKET,image
 from .fake_model import ScriptedModel,call
 from .test_billing import billing_client
-from .test_portal_preparation import RealBrowser,ScopedExtractor,prepared,ROOT,FORM
+from .test_portal_preparation import RealBrowser,ScopedExtractor,prepared,ROOT,FORM,preauthorize_fixture_origin
 from .test_telegram_agent import create,button,owner
 from .test_telegram_documents import confirm_profile
 
@@ -115,7 +115,11 @@ def alternative_flow(factory,*,scope='portal-fields-v2',known_id=None,include_ac
     telegram.files['receipt']=image('red');chat(document='receipt')
     document=app.state.billing.document(owner(app),app.state.billing.store.list('document',owner(app))[0]['id'])
     app.state.billing.store.update('document',owner(app),document['id'],document|{'analysis_scope_offered':scope})
-    chat(data=button(telegram,'an'));chat(data=button(telegram,'wa'))
+    chat(data=button(telegram,'an'))
+    current=app.state.billing.store.list('ticket',owner(app))[0]
+    preauthorize_fixture_origin(app,current,'https://provider.example')
+    if linked:preauthorize_fixture_origin(app,current,'https://another-provider.example')
+    chat(data=button(telegram,'wa'))
     return values,browser,model
 
 
@@ -242,7 +246,9 @@ def test_distinct_portals_extract_the_requested_identifier_and_fill_their_own_da
     values=create(billing_client,model,browser=browser,extractor=Receipt())
     client,app,extractor,mail,sat,telegram,chat=values
     confirm_profile(telegram,chat);telegram.files['receipt']=image('red')
-    chat(document='receipt');chat(data=button(telegram,'an'));chat(data=button(telegram,'wa'))
+    chat(document='receipt');chat(data=button(telegram,'an'))
+    preauthorize_fixture_origin(app,app.state.billing.store.list('ticket',owner(app))[0],'https://provider.example')
+    chat(data=button(telegram,'wa'))
     assert {f['key'] for f in extractor.calls[-1][1]}=={key,'purchase_date'}
     before=list(browser.pages.calls);chat(data=button(telegram,'xg'))
     ticket=app.state.billing.store.list('ticket',owner(app))[0]

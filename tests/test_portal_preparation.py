@@ -63,6 +63,17 @@ class RealBrowser:
     async def close(self):await self.manager.close()
 
 
+def preauthorize_fixture_origin(app,ticket,origin,user=None):
+    """Permiso previo explícito para pruebas de datos/llenado, no de navegación."""
+    user=user or owner(app)
+    billing=app.state.billing
+    scope=billing.portal_permissions.scope(ticket)
+    lookup=billing.store.digest('portal-grant:'+scope+':'+origin)
+    if not billing.store.find('portal_grant',user,lookup):
+        billing.store.add('portal_grant',user,{'ticket_id':ticket['id'],'scope':scope,
+            'origin':origin,'purpose':'public_read'},lookup=lookup,expires=time.time()+1800)
+
+
 def prepared(factory,*,extractor=None,before_portal=None):
     extractor=extractor or ScopedExtractor();browser=RealBrowser()
     model=ScriptedModel([[call('portal_browser_observe')]])
@@ -74,6 +85,7 @@ def prepared(factory,*,extractor=None,before_portal=None):
     assert ticket.get('portal_stage')=='awaiting_form' and ticket['store_number'] is None
     assert not any(label.startswith('Completar ') for label,_ in telegram.messages[-1][2])
     if before_portal:before_portal(app,ticket)
+    preauthorize_fixture_origin(app,ticket,'https://provider.example')
     chat(data=button(telegram,'wa'))
     return values,browser,model
 

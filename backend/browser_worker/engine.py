@@ -35,7 +35,7 @@ SNAPSHOT = r'''() => {
   let filename='';
   const src=img&&(img.getAttribute('src')||img.getAttribute('data-src'));
   if(src){try{filename=decodeURIComponent(new URL(src,document.baseURI).pathname.split('/').pop()).replace(/\.(?:png|svg|jpe?g|gif|webp)$/i,'').replace(/[_-]+/g,' ');}catch{}}
-  return (e.getAttribute('aria-label')||e.getAttribute('title')||e.getAttribute('data-brand')||e.getAttribute('data-marca')||labelText(e).trim()||(img&&(img.alt||img.title))||filename||publicBrand(e)||'').replace(/\s+/g,' ').trim().slice(0,100);
+  return (e.getAttribute('aria-label')||e.getAttribute('title')||e.getAttribute('data-brand')||e.getAttribute('data-marca')||labelText(e).trim()||(img&&(img.alt||img.title))||e.querySelector('svg title')?.textContent||filename||publicBrand(e)||'').replace(/\s+/g,' ').trim().slice(0,100);
  };
  const literalNavigation=e=>{
   const code=(e.getAttribute('onclick')||'').trim();
@@ -68,30 +68,40 @@ SNAPSHOT = r'''() => {
  const signature=e=>JSON.stringify(['href','onclick','aria-expanded','aria-selected','role','data-bs-toggle','data-toggle','data-bs-target','data-target'].map(name=>e.getAttribute(name)));
  const candidates=[];
  let scanned=0;
- for(const e of all('a[href],a[onclick],img[onclick],button[onclick],input[type=button][onclick],input[type=image][onclick],[role="link"][onclick],[role="button"][onclick],summary,[aria-expanded],[role="tab"],[data-bs-toggle="collapse"],[data-toggle="collapse"],[data-bs-toggle="tab"],[data-toggle="tab"],[data-bs-toggle="pill"],[data-toggle="pill"]')) {
+ for(const e of all('area[href],button[type=button],button:not([type]),input[type=button],[role=button],a[href],a[onclick],img[onclick],button[onclick],input[type=button][onclick],input[type=image][onclick],[role="link"][onclick],[role="button"][onclick],summary,[aria-expanded],[role="tab"],[data-bs-toggle="collapse"],[data-toggle="collapse"],[data-bs-toggle="tab"],[data-toggle="tab"],[data-bs-toggle="pill"],[data-toggle="pill"]')) {
   if(++scanned>800) break;
   if(!visible(e)||e.disabled) continue;
   const inForm=e.closest('form')||e.form;
   const literal=!inForm||e.tagName==='A'||e.type==='button'?literalNavigation(e):null;
-  const href=literal||(e.tagName==='A'?e.getAttribute('href'):null);
-  const expand=e.tagName==='SUMMARY'||e.hasAttribute('aria-expanded')||e.getAttribute('role')==='tab'||['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))||['collapse','tab','pill'].includes(e.getAttribute('data-toggle'));
+  if(e.tagName==='BUTTON'&&e.type==='submit'&&!literal&&!e.hasAttribute('aria-expanded')&&e.getAttribute('role')!=='tab'
+    &&!['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))&&!['collapse','tab','pill'].includes(e.getAttribute('data-toggle')))continue;
+  const href=literal||(['A','AREA'].includes(e.tagName)?e.getAttribute('href'):null);
+  const expand=(!href&&(e.tagName==='BUTTON'||e.type==='button'||e.getAttribute('role')==='button')&&!inForm)||e.tagName==='SUMMARY'||e.hasAttribute('aria-expanded')||e.getAttribute('role')==='tab'||['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))||['collapse','tab','pill'].includes(e.getAttribute('data-toggle'));
   if(inForm&&!expand&&!literal&&e.tagName!=='A') continue;
   if(!expand&&(!href||href.startsWith('#'))) continue;
   if(expand&&(e.getAttribute('aria-selected')==='true'||e.getAttribute('aria-expanded')==='true')) continue;
   const text=navigationLabel(e);
   const brand=e.tagName==='IMG'||e.tagName==='INPUT'&&e.type==='image'||!!e.querySelector('img,svg')||!!e.getAttribute('data-brand')||!!e.getAttribute('data-marca')||!!publicBrand(e);
   const priority=/factur|invoic|billing|cfdi/i.test(text+' '+(href||''))?3:(brand?2:0);
-  candidates.push({e,label:text,kind:expand?'expand':'link',url:expand?null:(literal||e.href),brand,priority});
+  candidates.push({e,label:text,kind:expand?'expand':'link',url:expand?null:(literal||e.href),brand,priority,description:(e.closest('nav,footer,header,section,article,li,div')?.innerText||'').replace(/\s+/g,' ').trim().slice(0,140)});
+ }
+ // Selectores públicos: cada opción observada conserva su valor, sin inventar URLs.
+ for(const select of all('select').filter(e=>visible(e)&&!e.disabled&&!e.form&&!e.closest('form'))) {
+  for(const option of Array.from(select.options).slice(0,25)) {
+   if(option.disabled||!option.value||option.selected)continue;
+   candidates.push({e:option,label:option.text.slice(0,100),kind:'expand',url:null,brand:true,priority:1,
+    choice:option.value,description:label(select)});
+  }
  }
  const actions=[];
  for(const item of candidates.sort((a,b)=>b.priority-a.priority).slice(0,48)) {
   const id='nav-'+Math.random().toString(36).slice(2,12);
   const e=item.e;
   e.setAttribute('data-public-nav-ref',id);
-  actions.push({selector:id,label:item.label,kind:item.kind,url:item.url,brand:item.brand,signature:signature(e)});
+  actions.push({selector:id,label:item.label,kind:item.kind,url:item.url,brand:item.brand,description:item.description,choice:item.choice,signature:signature(e)});
  }
  const login_required=all('input[type=password]').some(e=>visible(e)&&/iniciar sesi[oó]n|sign in|log in|login|contrase[nñ]a|password/i.test((e.closest('form')?.innerText||'')+' '+label(e)));
- return {title:document.title.slice(0,120),fields,actions,brand_selection,login_required,unsupported_required,partial:traversalPartial||inputs.length>24||candidates.length>48||scanned>800,
+ return {title:document.title.slice(0,120),text:text.slice(0,900)+' '+text.slice(-600),fields,actions,brand_selection,login_required,unsupported_required,partial:traversalPartial||inputs.length>24||candidates.length>48||scanned>800,
   captcha:all('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],[class*="g-recaptcha"],[class*="h-captcha"]').some(visible)};
 }'''
 
@@ -103,6 +113,7 @@ class Session:
     page:object
     allowed:set
     public_route:bool=False
+    document_allowed:set=field(default_factory=set)
     created:float=field(default_factory=time.monotonic)
     observation:str=''
     actions:dict=field(default_factory=dict)
@@ -116,6 +127,7 @@ class Session:
     page_requests:int=0
     size:int=0
     blocked:set=field(default_factory=set)
+    blocked_documents:set=field(default_factory=set)
     main_permission_origin:str|None=None
     network_blocked:bool=False
     unsafe_blocked:bool=False
@@ -238,7 +250,8 @@ class BrowserManager:
                     return
                 target=origin(url)
                 self._count_request(session,page)
-                if target not in session.allowed and not self._route_origin(session,target):
+                permitted=session.document_allowed if request.resource_type=='document' else session.allowed
+                if target not in permitted and not self._route_origin(session,target,document=request.resource_type=='document'):
                     await self._permission_block(session,route,url,main_document=main_document)
                     return
                 cacheable=request.resource_type in {'script','stylesheet'}
@@ -285,7 +298,8 @@ class BrowserManager:
                 if not main_document and tracking_url(target_url):
                     await route.abort('blockedbyclient')
                     return
-                if origin(target_url) not in session.allowed and not self._route_origin(session,origin(target_url)):
+                permitted=session.document_allowed if request.resource_type=='document' else session.allowed
+                if origin(target_url) not in permitted and not self._route_origin(session,origin(target_url),document=request.resource_type=='document'):
                     await self._permission_block(session,route,target_url,main_document=main_document,headers=headers)
                     return
                 # Los documentos pasan por una referencia observada. Los recursos
@@ -368,12 +382,11 @@ class BrowserManager:
                 session.block_reason=reason
             raise BrowserError('browser_requests','Se alcanzó el límite de peticiones públicas.')
 
-    def _route_origin(self,session,target):
-        # Solo una sesión autorizada como recorrido admite los destinos que la
-        # página pide. El fetch conserva DNS público/IP fijada/TLS y todos los
-        # límites; no habilita métodos de escritura ni navegación arbitraria.
-        if not session.public_route:
-            return False
+    def _route_origin(self,session,target,*,document=False):
+        # Solo los recursos auxiliares heredan el permiso de recorrido. Que un
+        # CDN esté permitido no autoriza navegar a sus documentos o iframes.
+        if document or not session.public_route:return False
+        if target in session.allowed:return True
         if len(session.allowed)>=12:
             session.unsafe_blocked=True
             session.block_reason='origin_limit'
@@ -383,6 +396,7 @@ class BrowserManager:
 
     async def _permission_block(self,session,route,url,*,main_document,headers=None):
         session.blocked.add(origin(url))
+        if route.request.resource_type=='document':session.blocked_documents.add(origin(url))
         if main_document:
             session.main_permission_origin=origin(url)
             session.network_blocked=True
@@ -419,7 +433,8 @@ class BrowserManager:
         await context.route_web_socket('**/*',lambda socket:socket.close())
         page=await context.new_page()
         context.on('page',lambda popup:popup.close())
-        session=Session(owner,context,page,allowed,public_route=public_route,last_public_page=public_page(url))
+        session=Session(owner,context,page,allowed,public_route=public_route,
+            document_allowed=set(allowed),last_public_page=public_page(url))
         def finished(request):
             session.request_pages.pop(id(request),None)
         def failed(request):
@@ -478,6 +493,7 @@ class BrowserManager:
         fields,actions=[],[]
         unsupported_required=[]
         title=''
+        page_text=''
         captcha=brand_selection=login_required=partial=False
         async with asyncio.timeout(6):
             # El DOM principal puede estar listo antes del formulario de un iframe.
@@ -496,7 +512,7 @@ class BrowserManager:
                     ancestor=ancestor.parent_frame
                     source=ancestor.url
                 try:
-                    approved=origin(source) in session.allowed
+                    approved=origin(source) in session.document_allowed
                 except BrowserError:
                     approved=False
                 if not approved:
@@ -527,6 +543,7 @@ class BrowserManager:
                     partial=True
                     continue
                 title=title or result['title']
+                page_text=(page_text+' '+result.get('text',''))[:1500]
                 captcha=captcha or result['captcha']
                 brand_selection=brand_selection or result['brand_selection']
                 login_required=login_required or result['login_required']
@@ -546,14 +563,14 @@ class BrowserManager:
                                 continue
                             if url==secure_link(source):
                                 continue
-                            if origin(url) not in session.allowed and not session.public_route:
+                            if origin(url) not in session.document_allowed:
                                 permission_origin=origin(url)
                             item['url']=url
                         except BrowserError:
                             continue
                     reference=secrets.token_hex(4)
                     session.actions[reference]=(frame,item)
-                    actions.append({'reference':reference,'label':item['label'],'kind':item['kind'],'brand':item['brand'],
+                    actions.append({'reference':reference,'label':item['label'],'kind':item['kind'],'brand':item['brand'],'description':item.get('description',''),
                         **({'permission_origin':permission_origin} if permission_origin else {})})
         try:
             page=public_page(session.page.url)
@@ -568,10 +585,11 @@ class BrowserManager:
         session.captcha,session.login_required=captcha,login_required
         result={'session_id':identifier,'observation_id':session.observation,'page':page,
             'bookmark_url':bookmark,
-            'title':title,'fields':fields[:24],'actions':actions[:48],'captcha':captcha,
+            'title':title,'text':page_text,'fields':fields[:24],'actions':actions[:48],'captcha':captcha,
             'login_required':login_required,'partial':partial or len(fields)>24 or len(actions)>48,
             'unsupported_required':unsupported_required[:10],
             'blocked_origins':sorted(session.blocked)[:12],'network_blocked':session.network_blocked,
+            'blocked_document_origins':sorted(session.blocked_documents)[:12],
             'block_reason':session.block_reason,'omitted_writes':session.omitted_writes,'brand_selection':brand_selection,
             'requests_remaining':max(0,(ROUTE_REQUEST_LIMIT if session.public_route else PAGE_REQUEST_LIMIT)-session.requests),
             'page_requests_remaining':max(0,PAGE_REQUEST_LIMIT-session.page_requests),
@@ -609,7 +627,7 @@ class BrowserManager:
             if session.steps>=self.max_steps:
                 raise BrowserError('browser_steps','La revisión alcanzó su límite de navegación. Requiere revisión humana.')
             frame,item=session.actions[reference]
-            if item['kind']=='link' and origin(item['url']) not in session.allowed and not self._route_origin(session,origin(item['url'])):
+            if item['kind']=='link' and origin(item['url']) not in session.document_allowed:
                 raise BrowserError('browser_origin','Autoriza el nuevo dominio antes de abrirlo.',403)
             session.actions.pop(reference)
             session.observation=''
@@ -624,6 +642,12 @@ class BrowserManager:
                 raise BrowserError('browser_stale','El control cambió. Revisa la página nuevamente.')
             if item['kind']=='link':
                 await session.page.goto(https_url(item['url']),wait_until='domcontentloaded',timeout=8000)
+            elif item.get('choice') is not None:
+                # onchange puede iniciar navegación después de select_option;
+                # observar el contexto anterior devuelve un falso DOM vacío.
+                with suppress(PlaywrightTimeout):
+                    async with session.page.expect_navigation(wait_until='domcontentloaded',timeout=1200):
+                        await locator.locator('..').select_option(item['choice'],timeout=4000)
             else:
                 await locator.click(timeout=4000)
             return await self._observe(identifier,session)
@@ -633,22 +657,23 @@ class BrowserManager:
         async with session.lock:
             if session.private:
                 raise BrowserError('browser_private','La sesión de llenado conserva la red cerrada.')
-            allowed={origin(value) for value in allowed}
+            approved_documents={origin(value) for value in allowed}
+            allowed=set(approved_documents)
             if public_route:
                 allowed|=session.allowed
             if not allowed or len(allowed)>12 or not session.allowed<=allowed:
                 raise BrowserError('browser_origin','Permisos de revisión no válidos.',403)
             session.allowed=allowed
+            session.document_allowed.update(approved_documents)
             session.public_route=session.public_route or public_route
-            if public_route:
-                for target in sorted(session.blocked):
-                    if len(session.allowed)>=12:
-                        break
-                    session.allowed.add(target)
-                allowed=session.allowed
-            newly_allowed=session.blocked & allowed
-            session.blocked.difference_update(allowed)
-            main_allowed=not session.main_permission_origin or session.main_permission_origin in allowed
+            if session.public_route:
+                for target in sorted(session.blocked-session.blocked_documents):
+                    if len(session.allowed)>=12:break
+                    self._route_origin(session,target)
+            newly_allowed=((session.blocked-session.blocked_documents) & session.allowed) | (session.blocked_documents & session.document_allowed)
+            session.blocked.difference_update(newly_allowed)
+            session.blocked_documents.difference_update(session.document_allowed)
+            main_allowed=not session.main_permission_origin or session.main_permission_origin in session.document_allowed
             if newly_allowed and main_allowed and not session.unsafe_blocked:
                 session.network_blocked=False
                 session.block_reason=None

@@ -41,6 +41,24 @@ def portal_url(value):
         return None
 
 
+def printed_billing_addresses(items):
+    """Conserva evidencia semántica; no adivina dominios ni usa palabras clave."""
+    candidates,rejected=[],[]
+    for item in items or []:
+        value=item.get('url')
+        if not value:continue  # QR todavía sin decodificar.
+        url=portal_url(value)
+        evidence=str(item.get('evidence') or '')
+        purpose=item.get('purpose','unclear')
+        literal=str(value).strip().removeprefix('https://').removeprefix('http://').rstrip('/')
+        reason=('invalid_url' if not url else 'address_not_printed' if literal.casefold() not in evidence.casefold()
+            else None if purpose=='billing' else 'printed_'+purpose)
+        entry={'url':url or str(value)[:500],'evidence':evidence[:500]}
+        if reason:rejected.append(entry|{'reason':reason})
+        elif url not in {candidate['url'] for candidate in candidates}:candidates.append(entry)
+    return candidates,rejected
+
+
 def purchase_date(value):
     if not isinstance(value, str):
         return None
@@ -107,13 +125,13 @@ def pending_receipt_fields(ticket):
     if identifiers and 'folio' not in identifiers and 'folio' in fields:
         fields.remove('folio')
     for item in portal_fields:
-        if item['key'] in {'account_number','reference_number','billing_code','folio','web_id','store_number','toll_station','lane','purchase_time'} and not ticket.get(item['key']) and item['key'] not in fields:
+        if item['key'] in {'account_number','reference_number','billing_code','folio','web_id','store_number','register_number','toll_station','lane','purchase_time'} and not ticket.get(item['key']) and item['key'] not in fields:
             fields.append(item['key'])
     return fields
 
 
 def browser_missing_fields(ticket):
     """Campos visibles sin valor; pueden ser alternativas, no requisitos universales."""
-    allowed={'account_number','folio','reference_number','billing_code','web_id','store_number','toll_station','lane','purchase_time','purchase_date','total'}
+    allowed={'account_number','folio','reference_number','billing_code','web_id','store_number','register_number','toll_station','lane','purchase_time','purchase_date','total'}
     return list(dict.fromkeys(item['key'] for item in (ticket.get('portal_browser') or {}).get('fields',[])
         if item.get('key') in allowed and not ticket.get(item['key'])))

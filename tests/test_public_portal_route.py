@@ -26,7 +26,17 @@ class RouteBrowser(FakeBrowser):
     async def open(self,owner,url,*,allowed=None,public_route=False):
         assert public_route and allowed==['https://merchant.example']
         self.calls.append(('open',owner,url))
-        return snapshot(actions=[{'reference':'bbbbbbbb','label':'Facturación electrónica','kind':'link'}])
+        self.current=snapshot(actions=[{'reference':'bbbbbbbb','label':'Facturación electrónica','kind':'link'}])
+        return self.current
+
+    async def observe(self,owner,session):
+        self.calls.append(('observe',owner,session))
+        return self.current
+
+    async def allow(self,owner,session,allowed,*,public_route=False):
+        self.calls.append(('allow',owner,session,allowed))
+        assert public_route and set(allowed)=={'https://merchant.example','https://provider.example'}
+        return self.current
 
     async def act(self,owner,session,observed,reference):
         self.calls.append(('act',owner,reference))
@@ -36,16 +46,19 @@ class RouteBrowser(FakeBrowser):
                 {'reference':'cccccccc','label':'Leña Pizza','kind':'link','brand':True,'permission_origin':'https://provider.example'},
                 {'reference':'dddddddd','label':'Otra marca','kind':'link','brand':True}],observed='eeeeeeee')
             result['page']='https://merchant.example/invoices'
+            self.current=result
             return result
         if self.position==2:
             assert reference=='cccccccc'
             result=snapshot(actions=[{'reference':'ffffffff','label':'Continuar al portal de facturación','kind':'link'}],observed='11111111')
             result['page']='https://provider.example/'
+            self.current=result
             return result
         assert self.position==3 and reference=='ffffffff'
         result=snapshot(fields=[{'label':'Cuenta','key':'account_number','kind':'input','required':True,'options':[],
             'source_url':'https://provider.example/form'}],observed='22222222')
         result.update(page='https://provider.example/form',steps_remaining=3)
+        self.current=result
         return result
 
 
@@ -59,12 +72,16 @@ def test_one_native_permission_reaches_form_via_billing_brand_and_provider_witho
     assert 'seguir su ruta pública' in telegram.messages[-1][1]
     before=len(telegram.messages)
     chat(data=button(telegram,'wa'))
-    assert [entry[0] for entry in browser.calls]==['open','act','act','act']
-    assert len(telegram.messages)==before+1 and len(model.inputs)==1
+    assert [entry[0] for entry in browser.calls]==['open','act']
+    assert 'merchant.example → provider.example' in telegram.messages[-1][1]
+    model.outputs=[[call('portal_browser_observe')]]
+    chat(data=button(telegram,'wa'))
+    assert [entry[0] for entry in browser.calls]==['open','act','allow','observe','act','act']
+    assert len(telegram.messages)==before+2 and len(model.inputs)==3
     assert 'Cuenta: No leído' in telegram.messages[-1][1]
     assert 'Guardar portal' in str(telegram.messages[-1][2])
     assert 'Permitir' not in str(telegram.messages[-1][2])
-    assert app.state.database.usage(owner(app))['runs']==1
+    assert app.state.database.usage(owner(app))['runs']==2
     assert all(value not in json.dumps(model.inputs) for value in (FISCAL['rfc'],FISCAL['name'],'cliente@example.com'))
     assert mail.sent==sat.calls==[] and len(extractor.calls)==2
 
@@ -144,8 +161,9 @@ async def test_chromium_route_follows_observed_provider_and_loads_functional_res
     manager=BrowserManager(fetcher=pages)
     try:
         first=await manager.open('owner',root,['https://merchant.example'],public_route=True)
-        assert not first['actions'][0].get('permission_origin')
-        current=await manager.act('owner',first['session_id'],first['observation_id'],first['actions'][0]['reference'])
+        assert first['actions'][0].get('permission_origin')=='https://provider.example'
+        approved=await manager.allow('owner',first['session_id'],['https://merchant.example','https://provider.example'],public_route=True)
+        current=await manager.act('owner',approved['session_id'],approved['observation_id'],approved['actions'][0]['reference'])
         assert current['fields'][0]['label']=='RFC'
         assert current['blocked_origins']==[] and not current['network_blocked']
         fetched=[url for url,_ in pages.calls]

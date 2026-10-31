@@ -13,6 +13,7 @@ from .test_billing import billing_client,ticket
 from .test_telegram_agent import create,button,owner
 from .test_telegram_documents import confirm_profile
 from .test_telegram_workflow import choice
+from .test_portal_preparation import preauthorize_fixture_origin
 
 ROOT='https://group.example/'
 FORM='https://provider.example/form?opc=Dominos'
@@ -56,6 +57,7 @@ def receive(billing_client,*,merchant="Dominos"):
     confirm_profile(telegram,chat)
     extractor.ticket.update(merchant=merchant,billing_url=ROOT)
     telegram.files['receipt']=image('red');chat(document='receipt');chat(data=button(telegram,'an'))
+    preauthorize_fixture_origin(app,app.state.billing.store.list('ticket',owner(app))[0],'https://provider.example')
     chat(data=button(telegram,'wa'))
     return values,browser,model
 
@@ -92,14 +94,17 @@ def test_next_ticket_reuses_direct_route_only_after_new_permission_and_keeps_ori
     telegram.files['second']=image('blue');chat(document='second')
     chat(data=button(telegram,'an'))
     new=app.state.billing.store.list('ticket',owner(app))[0]
-    assert new['selected_portal']=={'id':saved['id'],'url':FORM} and new['billing_url']==ROOT
-    assert 'Portal guardado: '+FORM in telegram.messages[-1][1]
+    assert 'selected_portal' not in new and new['billing_url']==ROOT
+    assert 'Portal: '+ROOT in telegram.messages[-1][1]
+    assert any(label=='Usar portal guardado' for label,_ in telegram.messages[-1][2])
     before=len(browser.calls)
     assert button(telegram,'wa') and len(browser.calls)==before
     model.outputs=[[call('portal_browser_observe')]]
     chat(data=button(telegram,'wa'))
-    assert browser.calls[-1][0]=='open' and browser.calls[-1][2]==FORM
-    assert browser.allowed==['https://provider.example']
+    assert browser.calls[before][0]=='open' and browser.calls[before][2]==ROOT
+    assert browser.allowed==['https://group.example']
+    current=app.state.billing.resolve_ticket(owner(app),new['id'])
+    assert 'selected_portal' not in current and current['billing_url']==ROOT
     assert mail.sent==sat.calls==[]
 
 

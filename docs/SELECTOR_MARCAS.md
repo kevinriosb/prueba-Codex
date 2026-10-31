@@ -1,5 +1,7 @@
 # Selector de marcas: POST auxiliar y enlaces de pie
 
+> Sesión 3A: el recorrido actual exige confirmar cada nuevo dominio documental y puede interpretar controles y etiquetas por su significado. Véase [portal correcto](PORTAL_CORRECTO.md). Los conteos y despliegues descritos más abajo son históricos.
+
 La actualización posterior de presupuestos por página y recuperación del avance
 está descrita en [límites del recorrido](LIMITES_RECORRIDO.md).
 

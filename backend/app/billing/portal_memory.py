@@ -66,7 +66,7 @@ def stable_form_bookmark(ticket,snapshot):
 
 def brand_options(snapshot):
     options=[item for item in snapshot['actions'] if item.get('brand') and brand_key(item.get('label')) not in
-        {'','facebook','instagram','twitter','x','youtube','linkedin','tiktok','inicio','home'}]
+        {'','inicio','home'}]
     # Un logo aislado (o repetido en la cabecera/pie) no es un selector de marcas.
     return options if len({brand_key(item['label']) for item in options})>=2 else []
 
@@ -88,6 +88,20 @@ def matching_brand(ticket,snapshot,*,label=None):
 class PortalMemory:
     def __init__(self,billing):
         self.billing,self.store=billing,billing.store
+
+    def for_merchant(self,owner,ticket):
+        """Respaldo por comercio cuando no hay URL impresa; nunca amplía permisos."""
+        if not ticket.get('merchant'):return []
+        matches=[]
+        for item in self.store.list('portal_memory',owner):
+            if not item.get('source') or not item.get('url') or bookmark_url(item['url'])!=item['url']:continue
+            # La clave existente ya vincula marca exacta normalizada, RFC emisor
+            # y origen. No basta con que un nombre se parezca al del ticket.
+            lookup=self.key(ticket|{'billing_url':item['source']})
+            found=self.store.find('portal_memory',owner,lookup) if lookup else None
+            if found and found['id']==item['id'] and not unrelated_billing_link(item['url']):matches.append(item)
+        # Sin origen impreso no se elige a ciegas entre varias rutas guardadas.
+        return matches if len({item['url'] for item in matches})==1 else []
 
     def key(self,ticket):
         if len(brand_key(ticket.get('merchant')))<3 or not ticket.get('billing_url'):
@@ -126,6 +140,20 @@ class PortalMemory:
             for key in ('portal_inspection','portal_browser','portal_browser_error'):
                 ticket.pop(key,None)
         return self.store.update('ticket',owner,ticket['id'],ticket)
+
+    async def select_checked(self,owner,ticket_id,*,remembered=True):
+        ticket=self.billing.resolve_ticket(owner,ticket_id)
+        record=self.suggestion(owner,ticket) if remembered else None
+        if remembered and not record:
+            raise AppError(404,'portal_memory','No hay un portal guardado vigente para este comercio.')
+        check=await self.billing.portal_discovery.check_response(record['url'] if record else ticket.get('billing_url'))
+        if not check['reachable']:
+            ticket['portal_last_entry_failure']=check
+            ticket.setdefault('portal_rejected_addresses',[]).append({'url':check['url'],'reason':check['reason']})
+            self.store.update('ticket',owner,ticket['id'],ticket)
+            raise AppError(422,'portal_unavailable','Ese enlace no respondió. Escribe la dirección de facturación para continuar.')
+        self.store.update('ticket',owner,ticket['id'],ticket|{'portal_entry_check':check})
+        return self.select(owner,ticket['id'],remembered=remembered)
 
     def propose(self,owner,ticket_id,observation_id=None):
         ticket=self.billing.resolve_ticket(owner,ticket_id)

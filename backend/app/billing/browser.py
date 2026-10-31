@@ -2,6 +2,7 @@
 import re
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
+from typing import Literal
 
 import httpx2
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -25,6 +26,14 @@ class PublicField(BaseModel):
     max_length:int|None=Field(default=None,ge=0)
 
 
+class FieldMeaning(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    reference:str=Field(pattern=r'^[a-f0-9]{8}$')
+    key:Literal['rfc','name','postal_code','email','fiscal_regime','cfdi_use',
+        'folio','account_number','reference_number','billing_code','web_id','store_number',
+        'register_number','toll_station','lane','purchase_date','purchase_time','total','issuer_rfc']|None
+
+
 class PublicAction(BaseModel):
     model_config=ConfigDict(extra='forbid')
     reference:str=Field(pattern=r'^[a-f0-9]{8}$')
@@ -32,6 +41,7 @@ class PublicAction(BaseModel):
     kind:str=Field(pattern=r'^(link|expand)$')
     permission_origin:str|None=Field(default=None,max_length=2048)
     brand:bool=False
+    description:str=Field(default='',max_length=140)
 
 
 class ResourceIssue(BaseModel):
@@ -60,10 +70,12 @@ class Observation(BaseModel):
     page:str=Field(max_length=2048)
     bookmark_url:str|None=Field(default=None,max_length=2048)
     title:str=Field(max_length=120)
+    text:str=Field(default='',max_length=1500)
     fields:list[PublicField]=Field(max_length=24)
     actions:list[PublicAction]=Field(max_length=48)
     captcha:bool
     blocked_origins:list[str]=Field(max_length=12)
+    blocked_document_origins:list[str]=Field(default_factory=list,max_length=12)
     network_blocked:bool
     block_reason:str|None=Field(default=None,pattern=r'^(unsupported_request|unsupported_document|request_limit|page_request_limit|size_limit|page_size_limit|response_size_limit|origin_limit|navigation_failed|permission|timeout|network_error|dns_error|tls_error|private_address|http_error)$')
     omitted_writes:int=Field(default=0,ge=0)

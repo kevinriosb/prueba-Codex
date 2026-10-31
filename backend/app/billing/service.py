@@ -327,7 +327,8 @@ class BillingService:
         qr_urls=receipt_qr_urls(document)
         if data.get('billing_url') and unrelated_billing_link(data['billing_url'],data.get('billing_url_evidence')):
             data['billing_url']=None
-        if not data.get('billing_url') and len(qr_urls)==1 and re.search(r'factur|cfdi',data.get('billing_url_evidence') or '',re.I):
+        qr_billing=any(item.get('purpose')=='billing' and not item.get('url') for item in data.get('printed_addresses') or [])
+        if not data.get('billing_url') and len(qr_urls)==1 and (qr_billing or re.search(r'factur|cfdi',data.get('billing_url_evidence') or '',re.I)):
             if not unrelated_billing_link(qr_urls[0],data.get('billing_url_evidence')):data['billing_url']=qr_urls[0]
         if not data['is_ticket'] or (not data['readable'] and not any(data.get(key) for key in ('merchant','folio','total','billing_url','billing_email'))):
             self._status(owner,pending,Status.REQUIERE_INTERVENCION,'No se identificaron datos de compra. El archivo sigue guardado.')
@@ -363,17 +364,19 @@ class BillingService:
             'status_history':pending['status_history'],
             'delivery':None,'certificate_requested':False,'csf_supplement_sent':False,'invoice_documents':[],
             'qr_urls':qr_urls,'validation':None,'note':'' if complete else 'Falta completar: '+', '.join(missing_receipt_fields(data))+'.'}
+        if data.get('billing_url'):
+            # Mientras DNS/HTTPS está en vuelo ningún lector concurrente debe
+            # anunciar esta dirección como portal ni abrirla como tal.
+            ticket.update(portal_printed_url_candidate=data['billing_url'],billing_url=None)
         if document.get('analysis_stage')=='routing' and data.get('billing_url'):
-            ticket.update(portal_driven=True,portal_stage='awaiting_form',note='Portal identificado; falta leer su formulario.')
+            ticket.update(portal_driven=True,portal_stage='awaiting_entry',note='Comprobando la dirección impresa.')
         if document.get('analysis_scope')=='portal-fields-v3':ticket['receipt_summary_read']=True
         ticket=self.store.update('ticket',owner,pending['id'],ticket)
         ticket=self._status(owner,ticket,ticket['status'])
         if document.get('analysis_stage')=='routing' and not data.get('billing_url') and data.get('email_explicitly_for_billing'):
             await self.portal_preparation.read_for_email(owner,ticket['id'])
             ticket=self.resolve_ticket(owner,ticket['id'])
-        if self.portal_memory.suggestion(owner,ticket):
-            ticket=self.portal_memory.select(owner,ticket['id'])
-        if document.get('analysis_scope')=='portal-fields-v3' and not ticket.get('billing_url'):
+        if ticket.get('portal_printed_url_candidate') or ticket.get('billing_url') or document.get('analysis_scope')=='portal-fields-v3':
             ticket=await self.portal_discovery.find(owner,ticket['id'])
         return public(ticket)|{'channels':self.detect_billing_channels(owner,ticket['id'])}
 
@@ -386,6 +389,8 @@ class BillingService:
         inspection=await self.portal_inspector.inspect(self.portal_memory.entry_url(owner,ticket))
         profile=self.store.get('profile',owner,ticket['profile_id'])
         ticket['portal_inspection']=portal_plan(ticket|profile,inspection)
+        if inspection['status']=='verified' and inspection.get('fields'):
+            ticket['portal_stage']='fields_pending'
         ticket=self.store.update('ticket',owner,ticket_id,ticket)
         self.store.audit(owner,ticket_id,'portal_public_form_inspected')
         return ticket
@@ -449,12 +454,16 @@ class BillingService:
         async def open_current():
             nonlocal brand_label
             resume=self.portal_resume_url(owner,ticket)
+            approved=self.portal_permissions.allowed(owner,ticket)
+            if resume and portal_origin(resume) not in approved:
+                resume=None  # Un checkpoint antiguo no concede un dominio nuevo.
             if resume:
                 saved=ticket['portal_form_checkpoint'] if self.portal_form_url(owner,ticket)==resume else ticket['portal_checkpoint']
                 brand_label=saved.get('brand_label')
             else:
                 brand_label=None
-            allowed=[portal_origin(resume)] if resume else self.portal_permissions.allowed(owner,ticket)
+            # Al reanudar solo se abre el dominio de la página guardada (mínimo privilegio).
+            allowed=[portal_origin(resume)] if resume else approved
             return await self.browser.open(owner,resume or self.portal_memory.entry_url(owner,ticket),allowed=allowed,**route_options)
 
         async def discard_exhausted(snapshot):
@@ -489,6 +498,8 @@ class BillingService:
                 if action.get('brand'):
                     brand_label=action['label']
                 if action.get('permission_origin'):
+                    if portal_origin(action['permission_origin']) not in self.portal_permissions.allowed(owner,ticket):
+                        raise PortalPermissionRequired([action['permission_origin']])
                     self.portal_permissions.require(owner,ticket,action['permission_origin'])
                 if previous['snapshot']['captcha'] or previous['snapshot']['network_blocked'] or previous['snapshot'].get('login_required'):
                     raise AppError(409,'browser_intervention','La página requiere intervención humana antes de continuar.')
@@ -526,6 +537,9 @@ class BillingService:
         for item in self.portal_preparation.active_fields(ticket,snapshot):
             fields.append({'key':item.get('key'),'label':item['label'],'required':item['required'],
                 'matched':bool(ticket.get(item.get('key'))),'options':item['options']})
+        chain=ticket.setdefault('portal_domain_chain',[])
+        current_origin=portal_origin(snapshot['page'])
+        if not chain or chain[-1]!=current_origin:chain.append(current_origin)
         ticket['portal_browser']={'page':snapshot['page'],'fields':fields,'checked_at':time.time(),
             'purchase_validated':False,'submitted':False,'diagnostics':snapshot.get('diagnostics'),
             'block_reason':snapshot.get('block_reason'),'omitted_writes':snapshot.get('omitted_writes',0),
@@ -614,7 +628,7 @@ class BillingService:
         allowed=set(pending_receipt_fields(ticket))|set(browser_missing_fields(ticket))
         if correction:
             allowed={item['key'] for item in (ticket.get('portal_browser') or {}).get('fields',[])} & {
-                'account_number','folio','reference_number','billing_code','web_id','store_number','toll_station','lane','purchase_time','purchase_date','total'}
+                'account_number','folio','reference_number','billing_code','web_id','store_number','register_number','toll_station','lane','purchase_time','purchase_date','total'}
         if ticket.get('delivery') or not analyzed or field not in allowed:
             raise AppError(409,'ticket_field','Ese dato no está pendiente. Consulta /tickets.')
         value=value.strip()
@@ -624,7 +638,7 @@ class BillingService:
             value=purchase_date(value)
         elif field=='total':
             value=purchase_total(value)
-        elif field in {'folio','account_number','store_number'} and len(value)>100:
+        elif field in {'folio','account_number','store_number','register_number'} and len(value)>100:
             value=None
         elif field=='lane' and len(value)>40 or field=='purchase_time' and len(value)>20:
             value=None

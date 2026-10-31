@@ -10,6 +10,7 @@ from backend.browser_worker.engine import BrowserManager
 from .test_browser_worker import Pages
 from .test_billing import billing_client
 from .test_portal_form_completion import prepared,FORM
+from .test_portal_preparation import preauthorize_fixture_origin
 from .test_telegram_agent import button,owner
 from .fake_model import call
 
@@ -62,8 +63,13 @@ def test_a_found_form_survives_expired_session_and_requires_fresh_permission(bil
     ticket=billing.store.list('ticket',user)[0]
     ticket['portal_checkpoint']['expires']=time.time()-1
     billing.store.update('ticket',user,ticket['id'],ticket)
+    # El permiso del proveedor sigue vigente: reanudar en su formulario lo exige. Caduca el
+    # del comercio, que es el que obliga a pedir permiso nuevo.
+    preauthorize_fixture_origin(app,ticket,'https://provider.example')
+    provider_lookup=billing.store.digest('portal-grant:'+billing.portal_permissions.scope(ticket)+':https://provider.example')
     with billing.database.connection(True) as conn:
-        conn.execute("UPDATE billing_records SET expires=0 WHERE kind IN ('browser_review','portal_grant')")
+        conn.execute("UPDATE billing_records SET expires=0 WHERE kind IN ('browser_review','portal_grant') "
+            "AND NOT (kind='portal_grant' AND lookup=?)",(provider_lookup,))
     before=len(model.inputs);calls=list(billing.browser.calls)
     chat(data='bn:'+ticket['id'])
     assert billing.browser.calls==calls and len(model.inputs)==before

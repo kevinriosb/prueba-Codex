@@ -284,3 +284,24 @@ No fue necesario añadir expectativas de fotos de campo: ya se registran como `t
 Se verificó mediante comparación de código/AST contra `16a35e3`: `SafetyHooks`, `needs_approval`, `store.claim`, AES-GCM/digest, permisos de portales, retención, `token_reservation`, default de `max_daily_tokens`, `Database.reserve_run`, `finish_run` y `usage` permanecen intactos. Los archivos `tests/test_limits.py` y `tests/test_api.py` tienen exactamente una línea sustituida cada uno; el resto coincide con la base. No se modificaron dependencias, Compose ni workflows.
 
 **NO VERIFICADO:** despliegue/configuración del VPS, interacción real con Telegram/OpenAI, OCR de fotos reales, coste efectivamente facturado, emisión ante comercios reales, entrega real por correo y consulta real al SAT. Las pruebas verifican el SDK y, para los pasos del portal, Chromium real con transporte/proveedores simulados. No se realizaron envíos ni despliegues reales.
+
+### Sesión 3A — portal correcto: implementación y cierre pendiente
+
+Base `eae6298`, rama local `portal-correcto`; `main` no se modificó. Informe de archivos, decisiones, páginas inventadas, pruebas y limitaciones en [PORTAL_CORRECTO.md](PORTAL_CORRECTO.md).
+
+| Área | Estado | Evidencia y commits |
+|---|---|---|
+| F2: direcciones por contexto, respuesta del host y respaldo | Implementado; validación final pendiente | `test_portal_entry_candidates.py`; `4b02134`, `a6f8523`, `6fc35f4`. Conserva las frases, registra descartes y verifica antes de anunciar, también al seleccionar una memoria. |
+| F2: adaptación al recorrido y permiso por dominio | Implementado; validación final pendiente | `test_portal_semantic_routes.py`, `test_portal_domain_boundaries.py`, `test_portal_hub_regression.py`; `d143584`, `6fc35f4`. Documentos, recursos, iframes, redirecciones y checkpoints no conceden dominios implícitos. |
+| F3/F5: campos observados y datos ausentes | Implementado; validación final pendiente | `test_portal_extra_fields.py`, `test_portal_field_meanings.py`; `f9e022a`, `996a34f`. Caja es independiente y las interpretaciones solo describen referencias vigentes, sin valores. |
+| Ausencia de recetas por comercio | Implementado y guarda estática comprobada | `test_no_merchant_specific_routing.py`; `c5a5014`. Retirada de plantilla y dominio por defecto. Las integraciones técnicas existentes se distinguen de reglas comerciales. |
+| Revisión pública sin rellenar ni enviar | Verificada en las rutas ejecutadas; última regresión pendiente | Las pruebas de rutas comprueban controles vacíos y ningún envío. La exclusión adicional de controles asociados a formularios (`6a88d5d`) necesita repetir su regresión en Chromium en un entorno limpio. |
+| Suite completa de entrega | **PENDIENTE; no está en verde** | Base: 838/0 en 450,79 s. Corrida completa en `c5a5014`: 866/15 en 500,87 s; dos regresiones de pestañas corregidas y comprobadas después. Persisten autorizaciones sobre expectativas antiguas. La siguiente corrida se interrumpió por agotamiento de procesos del entorno. |
+
+Se ejecutaron 44 regresiones nuevas juntas (44 aprobadas, 52,06 s) antes de los últimos cierres. En el estado actual hay 885 casos recolectados (47 nuevos); 21 contratos sin Chromium pasan en 6,67 s. **No se ha certificado la suite completa del HEAD final.**
+
+Hay tres autorizaciones solicitadas y aún sin respuesta: actualizar expectativas de cruce automático entre dominios, retirar expectativas de plantilla cuando no hubo lectura y conservar la dirección impresa válida antes que la memoria. La instrucción del encargo exige preguntar antes de cambiar aserciones; ninguna aserción existente se cambió. Los fixtures de lectura/llenado declaran sus permisos previos de forma explícita, y las nuevas pruebas de permisos verifican la pausa sin esos permisos.
+
+Se mantuvieron intactos `store.py`, claim, AES-GCM/digest, permisos/aprobaciones existentes, retención/purge, `portal_submission.py`, `browser_worker/submission.py`, `browser_worker/policy.py`, SafetyHooks, needs_approval, execute, cuotas, límites de tokens, dependencias y `.github`. Se comprobó por diff/AST; solo se vació el dominio predeterminado de inspección en Settings. Las filas y conclusiones históricas de esta auditoría se conservaron.
+
+**NO VERIFICADO:** suite final completa tras los últimos cierres y adaptación autorizada de pruebas; última regresión de controles asociados a formularios en Chromium; precisión del modelo real en fotografías o diseños arbitrarios; funcionamiento en comercios reales; despliegue y CI remoto. No hubo llenados, solicitudes fiscales ni despliegues reales. La rama no se publicó con estas validaciones pendientes.

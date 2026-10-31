@@ -15,7 +15,7 @@ import httpx2
 LABELS = {'account_number':'Cuenta', 'folio':'Folio', 'reference_number':'Referencia',
     'billing_code':'Código de facturación', 'purchase_date':'Fecha', 'total':'Importe',
     'rfc':'RFC', 'issuer_rfc':'RFC emisor','name':'Nombre fiscal','postal_code':'CP fiscal', 'email':'Correo', 'fiscal_regime':'Régimen', 'cfdi_use':'Uso CFDI',
-    'web_id':'Web ID','store_number':'Tienda','toll_station':'Caseta','lane':'Carril','purchase_time':'Hora'}
+    'web_id':'Web ID','store_number':'Tienda','register_number':'Caja','toll_station':'Caseta','lane':'Carril','purchase_time':'Hora'}
 IDENTIFIERS = ('account_number', 'folio', 'reference_number', 'billing_code')
 
 
@@ -25,7 +25,7 @@ def field_key(text):
     text = re.sub(r'[^a-z0-9]+', ' ', text)
     if re.search(r'\b(emisor|comercio|proveedor|seller|issuer)\b',text):
         return 'issuer_rfc' if re.search(r'\brfc\b',text) else None
-    patterns = {'web_id':r'\b(web\s*id|webid)\b', 'toll_station':r'\b(caseta|plaza de cobro)\b',
+    patterns = {'register_number':r'\b(caja|register|cash desk)\b','web_id':r'\b(web\s*id|webid)\b', 'toll_station':r'\b(caseta|plaza de cobro)\b',
         'lane':r'\b(carril|lane)\b','purchase_time':r'\b(hora|time)\b',
         'account_number':r'\b(cuenta|account|accountnumber|consumptionaccount)\b',
         'billing_code':r'\b(billing code|codigo de facturacion|codigofacturacion)\b',
@@ -120,7 +120,7 @@ class PortalInspector:
                 extensions={'sni_hostname':uri.hostname},follow_redirects=False) as response:
             if response.status_code in {301,302,303,307,308}:
                 target = urljoin(page,response.headers.get('location',''))
-                if canonical_page(target) not in self.allowed:
+                if canonical_page(target) not in self.allowed or urlsplit(target).hostname!=uri.hostname:
                     raise ValueError('Redirección fuera de las páginas aprobadas.')
                 target_uri=urlsplit(target)
                 redirected=urlunsplit(('https',target_uri.hostname,target_uri.path,'',''))
@@ -167,10 +167,6 @@ class PortalInspector:
                             result = await read(client)
             except Exception:
                 pass  # No se registran página, cookies ni excepciones del comercio.
-            if not result['fields'] and page == 'https://f.zetus.mx/albat':
-                # Evidencia de la captura aportada: no se hace pasar por una lectura en vivo.
-                result.update(status='template',fields=[{'key':'account_number','label':'Cuenta'}],
-                    source='user_screenshot_template')
             result['checked_at'] = time.time()
             self.cache[page] = {'expires':time.time()+(3600 if result['status']=='verified' else 60),'result':result}
             return copy.deepcopy(result)

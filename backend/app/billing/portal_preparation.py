@@ -13,9 +13,10 @@ from .portal_memory import public_form_ready
 from .portal_navigation import next_public_action
 from .receipt import missing_receipt_fields,purchase_reference
 from .portal_inspection import field_key
+from .portal_permissions import PortalPermissionRequired,portal_origin
 
 
-RECEIPT_KEYS={'folio','account_number','reference_number','billing_code','web_id','store_number',
+RECEIPT_KEYS={'folio','account_number','reference_number','billing_code','web_id','store_number','register_number',
     'toll_station','lane','purchase_date','purchase_time','total','issuer_rfc'}
 PROFILE_KEYS={'rfc','name','postal_code','fiscal_regime','cfdi_use','email'}
 IDENTITY_KEYS={'merchant','issuer_rfc','purchase_date','folio','total','currency'}
@@ -60,6 +61,31 @@ class PortalPreparation:
 
     def shape_key(self,snapshot):
         return self.store.digest(json.dumps(form_shape(snapshot),ensure_ascii=False,sort_keys=True))
+
+    def describe_fields(self,owner,ticket_id,observation_id,meanings):
+        """Asocia significado a etiquetas observadas; no acepta ni escribe valores."""
+        ticket=self.billing.resolve_ticket(owner,ticket_id)
+        self.billing.portal_permissions.require(owner,ticket)
+        record=self.billing.browser_review(owner,ticket['id'])
+        snapshot=record['snapshot']
+        if observation_id!=snapshot['observation_id'] or not 1<=len(meanings)<=24:
+            raise AppError(409,'browser_stale','La página cambió. Revisa sus campos actuales.')
+        observed={item.get('reference'):item for item in snapshot['fields'] if item.get('reference')}
+        if len({item.reference for item in meanings})!=len(meanings):
+            raise AppError(422,'portal_fields','Hay referencias de campo repetidas.')
+        for meaning in meanings:
+            field=observed.get(meaning.reference)
+            if not field or field.get('key') not in {None,meaning.key}:
+                raise AppError(409,'portal_fields','El significado no corresponde al campo observado.')
+        for meaning in meanings:observed[meaning.reference]['key']=meaning.key
+        if public_form_ready(snapshot):
+            ticket['portal_stage']='fields_pending'
+            ticket['portal_browser']['fields']=[{'key':item.get('key'),'label':item['label'],
+                'required':item['required'],'matched':bool(ticket.get(item.get('key'))),'options':item['options']}
+                for item in snapshot['fields']]
+            self.billing._save_portal_checkpoint(owner,ticket,snapshot,record.get('brand_label'))
+            self.store.update('ticket',owner,ticket['id'],ticket)
+        return self.store.update('browser_review',owner,record['id'],record,version=record['_version'])
 
     async def current(self,owner,ticket_id,*,refresh=False):
         ticket=self.billing.resolve_ticket(owner,ticket_id)
@@ -108,6 +134,9 @@ class PortalPreparation:
         choices=self.alternatives(ticket,snapshot)
         if len(choices)!=1:return None
         action=choices[0]
+        target=action.get('permission_origin')
+        if target and portal_origin(target) not in self.billing.portal_permissions.allowed(owner,ticket):
+            raise PortalPermissionRequired([target])
         attempt=self.store.digest(ticket['document_id']+snapshot['session_id']+self.shape_key(snapshot)+action['label'])
         attempts=ticket.get('portal_alternative_attempts',[])
         if attempt in attempts or len(attempts)>=8:return None
