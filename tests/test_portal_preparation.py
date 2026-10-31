@@ -76,9 +76,9 @@ def preauthorize_fixture_origin(app,ticket,origin,user=None):
             'origin':origin,'purpose':'public_read'},lookup=lookup,expires=time.time()+1800)
 
 
-def prepared(factory,*,extractor=None,before_portal=None,require_ready=False):
+def prepared(factory,*,extractor=None,before_portal=None,require_ready=False,model=None):
     extractor=extractor or ScopedExtractor();browser=RealBrowser()
-    model=ScriptedModel([[call('portal_browser_observe')]])
+    model=model or ScriptedModel([[call('portal_browser_observe')]])
     values=create(factory,model,browser=browser,extractor=extractor)
     client,app,extractor,mail,sat,telegram,chat=values
     confirm_profile(telegram,chat)
