@@ -1,5 +1,6 @@
 """Menús nativos para enviar un paso y corregir únicamente el campo solicitado."""
 from datetime import datetime
+import json
 from ..errors import AppError
 from .portal_preparation import PROFILE_KEYS
 
@@ -13,31 +14,40 @@ class TelegramSubmission:
         tx=tx or await self.submission.review(owner,ticket_id)
         ticket=self.billing.resolve_ticket(owner,tx['ticket_id'])
         buttons=[]
-        if tx['state'] in {'unknown','submitted','expired'}:
+        if tx['state'] in {'unknown','submitted','expired','resolved','step_limit'}:
             text={'unknown':'Envío sin confirmar. No lo repitas.',
                 'submitted':'Solicitud enviada al portal.',
-                'expired':'La sesión venció. Revisa el portal antes de repetir.'}[tx['state']]
+                'expired':'La sesión venció. Revisa el portal antes de repetir.',
+                'resolved':'Resuelto manualmente. No se afirma emisión ni validación SAT.',
+                'step_limit':'Se alcanzó el límite de pasos del trámite. Necesita revisión humana.'}[tx['state']]
             if ticket.get('validation'):text+=' XML recibido y cotejado.'
             if ticket['status']=='FACTURACION_COMPLETADA':text='Factura lista. XML y PDF disponibles.'
             if tx.get('file_error'):text+='\n'+tx['file_error']
-            buttons.append(('Consultar envío','lq:'+ticket['id']))
+            if tx['state'] not in {'resolved','step_limit'}:buttons.append(('Consultar envío','lq:'+ticket['id']))
+            if tx['state'] in {'unknown','expired'}:
+                if tx.get('status_error')=='browser_session':text+=' La sesión del navegador venció; consultar no puede reconstruir la respuesta.'
+                buttons.extend([('Reintentar desde el inicio','lx:'+ticket['id']),('Revisar mi correo','le:'+ticket['id']),('Marcar como resuelto manualmente','lz:'+ticket['id'])])
             for identifier in ticket.get('invoice_documents',[]):
                 document=self.billing.document(owner,identifier)
                 buttons.append(('Descargar '+('XML' if document['mime']=='application/xml' else 'PDF'),'dl:'+identifier))
             if ticket.get('validation') and not ticket['validation'].get('sat_verified'):buttons.append(('Validar vigencia SAT','sa:'+ticket['id']))
         else:
             approvals,missing,values=self.submission.approvals(owner,tx)
-            text='Revisa y autoriza este paso del portal.'
-            if tx['view']['error']:text+='\nPortal: '+tx['view']['error']
+            text=('Paso llenado, con la red cerrada. Revisa de nuevo y confirma SOLO el envío de este paso.' if tx['state']=='prepared' else
+                'Paso de navegación: revisa y autoriza únicamente este avance.' if tx['state']=='navigation' else 'Revisa y autoriza este paso del portal.')
+            text+='\nPaso '+str(len(tx.get('steps',[]))+1)+' de un máximo de '+str(self.billing.settings.billing_portal_max_steps)+'.'
+            if tx.get('stop_reason'):
+                text+='\nLa navegación automática se detuvo por su límite.' if tx['stop_reason'] in {'time_limit','browser_steps'} else '\nEste control requiere tu autorización explícita; no se avanzó automáticamente.'
+            if tx['view'].get('read_error'):text+='\n'+tx['view']['read_error']
             if missing:
                 text='Falta: '+', '.join(f['label'] for f in missing)+'.'
                 text+=' Escríbelo o envía una foto del campo.'
-                if len(missing)==1 and missing[0].get('reference') and missing[0].get('key') not in PROFILE_KEYS:
+                if len(missing)==1 and missing[0].get('reference'):
                     state=self.bridge._state(owner)
                     state['portal_field_input']={'ticket_id':ticket['id'],'transaction_id':tx['id'],'reference':missing[0]['reference']}
                     self.bridge._save_state(owner,state)
                 if any(f.get('key') in PROFILE_KEYS for f in missing):
-                    text+=' Actualiza y confirma el dato fiscal en Mi perfil fiscal.'
+                    text+=' Falta un dato del perfil: proporciónalo explícitamente; no se deducirá ni se inventará.'
                     buttons.append(('Mi perfil fiscal','mn:'+self.bridge._state(owner)['id']+':profile'))
                 for item in missing:
                     if not item.get('reference') and item.get('key')=='total':
@@ -45,33 +55,53 @@ class TelegramSubmission:
                         state=self.bridge._state(owner)
                         state['ticket_input']={'id':ticket['id'],'field':'total'}
                         self.bridge._save_state(owner,state)
+            if tx['view']['error']:text+='\nPortal: '+tx['view']['error']
             text+='\n'+'\n'.join(v['label']+': '+v['value'] for v in values)
             if ticket.get('total') and not any(value.get('key')=='total' for value in values):
                 text+='\nImporte del ticket: '+str(ticket['total'])
             for field in tx['view']['snapshot']['fields']:
-                if field.get('key') not in PROFILE_KEYS:
+                if tx['state']!='prepared' and (field.get('key') not in PROFILE_KEYS or not self.billing.store.get('profile',owner,ticket['profile_id']).get(field.get('key'))):
                     buttons.append(('Completar '+field['label'][:30],'lm:'+tx['id']+':'+field['reference']))
+            if tx.get('prior_values'):
+                text+='\nEste paso puede reenviar datos ya autorizados en el portal:\n'+'\n'.join(k+': '+v for k,v in tx['prior_values'].items())
             for approval in approvals:
                 text+='\nSe enviarán estos datos a: '+', '.join(approval['origins'])
-                buttons.append(('Confirmar: '+approval['action']['label'][:35],'ls:'+approval['id']))
+                buttons.append((('Confirmar envío: ' if approval['stage']=='send' else 'Autorizar llenado: ')+approval['action']['label'][:30],('lc:' if approval['stage']=='send' else 'ls:')+approval['id']))
             if not approvals and not missing:text+='\nNo hay un botón de avance compatible. Requiere revisión manual.'
             buttons.append(('Actualizar este formulario','lr:'+ticket['id']))
         # Nunca aprobar una vista cortada por Telegram.
         if len(text)>3800:
             text='Los datos exceden la vista de Telegram. Revisa este formulario manualmente.'
-            buttons=[b for b in buttons if not b[1].startswith('ls:')]
+            buttons=[b for b in buttons if not b[1].startswith(('ls:','lc:'))]
         await self.bridge.client.send(chat_id,'Solicitud '+ticket['id'][:8]+' · '+(ticket.get('merchant') or 'Ticket')[:45]+'\n'+text,buttons+self.bridge.workflow.navigation(owner))
 
     async def callback(self,owner,chat_id,prefix,identifier,reference=None):
-        if prefix in {'lv','lr'}:await self.show(owner,chat_id,identifier)
-        elif prefix=='ls':
+        if prefix in {'lv','lr'}:await self.show(owner,chat_id,identifier,tx=await self.submission.review(owner,identifier,refresh=prefix=='lr'))
+        elif prefix in {'ls','lc'}:
             self.clear_input(owner)
-            tx=await self.submission.send(owner,identifier)
+            tx=await (self.submission.prepare(owner,identifier) if prefix=='ls' else self.submission.send(owner,identifier))
             await self.show(owner,chat_id,tx['ticket_id'],tx=tx)
         elif prefix=='lq':
             tx=self.submission.current(owner,identifier)
             if not tx:await self.show(owner,chat_id,identifier);return
+            before=json.dumps({k:v for k,v in tx.items() if k!='id' and not k.startswith('_')},sort_keys=True)
             tx=await self.submission.status(owner,tx)
+            if before==json.dumps({k:v for k,v in tx.items() if k!='id' and not k.startswith('_')},sort_keys=True):
+                await self.bridge.client.send(chat_id,'No hay cambios en el envío. La tarjeta anterior sigue vigente; no se repitió ningún envío.')
+                return
+            await self.show(owner,chat_id,identifier,tx=tx)
+        elif prefix=='lx':
+            review=self.submission.restart_request(owner,identifier)
+            await self.bridge.client.send(chat_id,'Reiniciar puede duplicar una factura. Revisa primero tu correo y el portal. Confirma solo si aún NO se emitió; no se hará ningún envío sin nuevas aprobaciones.',
+                [('Confirmo que no se emitió; reiniciar','ly:'+review['id'])])
+        elif prefix=='ly':
+            tx=await self.submission.restart(owner,identifier)
+            await self.show(owner,chat_id,tx['ticket_id'],tx=tx)
+        elif prefix=='le':
+            ticket=self.billing.resolve_ticket(owner,identifier);self.submission.guard(owner,ticket)
+            await self.bridge.client.send(chat_id,'Revisa el correo de entrega y spam para comprobar si llegó el XML/PDF. No se consultó tu buzón ni se volvió a solicitar la factura. Después puedes marcarla como resuelta manualmente.')
+        elif prefix=='lz':
+            tx=self.submission.resolve_manually(owner,identifier)
             await self.show(owner,chat_id,identifier,tx=tx)
         elif prefix=='lm':
             tx=self.billing.store.get('portal_transaction',owner,identifier)

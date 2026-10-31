@@ -899,12 +899,16 @@ class TelegramBridge:
                 self.billing.store.get('profile_draft',owner,identifier)
                 return any(review['_state']=='pending' and review.get('draft_id')==identifier
                     for review in self.billing.store.list('profile_review',owner))
+            if prefix in {'lq','lx','le','lz'}:
+                ticket=self.billing.resolve_ticket(owner,identifier)
+                tx=self.billing.portal_submission.current(owner,ticket['id'])
+                return bool(tx and tx['state'] in {'unknown','expired','resolved'})
             if prefix=='sv':
                 # SAT no tiene un registro de aprobación separado: la revisión está en el ticket.
                 ticket=self.billing.store.get('ticket',owner,identifier)
                 validation=ticket.get('validation')
                 return bool(validation and not validation.get('sat_verified'))
-            kinds={'ls':'portal_send_review','se':'email_approval','no':'email_approval',
+            kinds={'ls':'portal_send_review','lc':'portal_send_review','ly':'portal_restart_review','se':'email_approval','no':'email_approval',
                 'pf':'profile_review','xa':'portal_data_review','xg':'portal_fill_review',
                 'la':'portal_field_photo','lu':'portal_field_photo','wa':'portal_permission','fw':'workflow_choice'}
             if prefix not in kinds:return False
@@ -970,7 +974,7 @@ class TelegramBridge:
             raise AppError(422,'telegram_callback','Acción no válida.') from None
         if await self.workflow.guard(owner,chat_id,prefix,identifier):
             return
-        if prefix in {'lv','lr','ls','lq','lm','la','lu'}:
+        if prefix in {'lv','lr','ls','lc','lq','lm','la','lu','lx','ly','le','lz'}:
             await self.submission.callback(owner,chat_id,prefix,identifier,code)
         elif prefix in {'td','xe'}:
             ticket=self.billing.store.get('ticket',owner,identifier)

@@ -9,10 +9,10 @@ from .telegram_profiles import normalized
 
 TERMINAL = {'FACTURACION_COMPLETADA'}
 TICKET_ACTIONS = {'td','xe','xu','xr','ts','bd','bp','bn','ba','bs','bm','bo','ve','vc','ec','pr','tr','sa','sv','po','on','of'}
-TICKET_ACTIONS.update({'lv','lr','lq','df','dw'})
+TICKET_ACTIONS.update({'lv','lr','lq','lx','le','lz','df','dw'})
 REVIEW_ACTIONS = {'xa':'portal_data_review','xg':'portal_fill_review','xs':'portal_fill_review',
     'er':'email_approval','se':'email_approval','no':'email_approval','wa':'portal_permission','wx':'portal_permission'}
-REVIEW_ACTIONS.update({'ls':'portal_send_review','lm':'portal_transaction','la':'portal_field_photo','lu':'portal_field_photo'})
+REVIEW_ACTIONS.update({'ls':'portal_send_review','lc':'portal_send_review','ly':'portal_restart_review','lm':'portal_transaction','la':'portal_field_photo','lu':'portal_field_photo'})
 TRANSIENT = ('last_ticket_id','browser_ticket_id','last_document_id','portal_upload_ticket','ticket_input','browser_choice',
     'expected_upload','replace_profile_id','profile_input','portal_field_input','portal_site_input','receipt_update_ticket')
 
@@ -65,6 +65,7 @@ class TelegramWorkflow:
         return ticket['id'][:8] + ' · ' + (ticket.get('merchant') or 'Ticket')[:40] + ' · ' + str(reference)[:25]
 
     def stage(self, ticket):
+        if ticket.get('portal_manual_resolution'):return 'Resuelto manualmente; sin afirmar emisión ni validación SAT.'
         if ticket['status'] in TERMINAL:
             return 'Completada: factura recibida y validada.'
         if ticket.get('portal_delivery'):

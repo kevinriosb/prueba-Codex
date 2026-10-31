@@ -34,7 +34,9 @@ def prepared_portal(factory):
     enable_transactions(browser,pages)
     ticket = app.state.billing.store.list('ticket',owner(app))[0]
     chat(data='lv:'+ticket['id'])
-    return values, pages, ticket['id'], button(telegram,'ls')
+    chat(data=button(telegram,'ls'))
+    assert pages.sent==[]
+    return values, pages, ticket['id'], button(telegram,'lc')
 
 
 def test_prepared_portal_approval_works_at_message_limit_and_never_sends_twice(billing_client):

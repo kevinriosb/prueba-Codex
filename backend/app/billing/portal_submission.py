@@ -55,12 +55,12 @@ class PortalSubmission:
             'purchase':self.billing._purchase_fingerprint(ticket),
             'values':values,'form':self.billing.portal_preparation.shape_key(view['snapshot'])},sort_keys=True))
 
-    async def review(self,owner,ticket_id):
+    async def review(self,owner,ticket_id,*,refresh=False):
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         self.guard(owner,ticket)
         previous=self.current(owner,ticket['id'])
         saved=previous
-        if previous and previous.get('state') in {'unknown','submitted'}:return previous
+        if previous and (previous.get('state') in {'unknown','submitted','resolved','step_limit'} or previous.get('state')=='prepared' and not refresh):return previous
         if previous:
             try:view=await self.billing.browser.transaction_view(owner,previous['session_id'])
             except AppError as error:
@@ -72,55 +72,90 @@ class PortalSubmission:
         if not previous:
             record=await self.billing.portal_preparation.current(owner,ticket['id'],refresh=True)
             view=await self.billing.browser.transaction_view(owner,record['snapshot']['session_id'])
+        await self.read_step_fields(owner,ticket,view)
         payload={'ticket_id':ticket['id'],'session_id':view['snapshot']['session_id'],'scope':self.billing.portal_permissions.scope(ticket),
             'state':'review','private':not view['snapshot']['public_only'],'view':view,'manual':saved.get('manual',{}) if saved else {}}
         if not previous:payload['operation_id']=None
         if saved:return self.store.update('portal_transaction',owner,saved['id'],saved|payload)
         return self.store.add('portal_transaction',owner,payload,lookup=self.store.digest('portal-transaction:'+ticket['id']))
 
+    async def read_step_fields(self,owner,ticket,view):
+        snapshot=view['snapshot']
+        fields=[f for f in self.billing.portal_preparation.receipt_fields(snapshot,ticket) if not ticket.get(f['key'])]
+        if not fields or snapshot.get('partial') or snapshot['network_blocked'] or snapshot['captcha'] or snapshot.get('login_required') or snapshot.get('unsupported_required'):return
+        try:
+            await self.billing.portal_preparation._read(owner,ticket['id'],fields,
+                self.billing.portal_preparation.shape_key(snapshot))
+        except AppError as error:
+            if error.code not in {'billing_daily_limit','billing_busy','portal_source_expired','extraction_attempted','extraction_auth','extraction_quota','extraction_provider','extraction_timeout','extraction_format','extraction_failure','portal_not_ticket','portal_source_mismatch'}:raise
+            view['read_error']=error.message
+
     def approvals(self,owner,transaction):
         ticket=self.billing.resolve_ticket(owner,transaction['ticket_id'])
+        if transaction['state'] not in {'review','correction','navigation','prepared'}:return [],[],[]
+        if transaction.get('scope')!=self.billing.portal_permissions.scope(ticket):
+            return [],[{'key':None,'label':'Cambió el perfil o portal; autoriza una revisión nueva','reference':None}],[]
+        if len(transaction.get('steps',[]))>=self.billing.settings.billing_portal_max_steps:return [],[{'key':None,'label':'Límite de pasos alcanzado','reference':None}],[]
         values,missing=self.plan(owner,ticket,transaction['view'],transaction.get('manual'))
         if not ticket.get('total') and not any(item.get('key')=='total' for item in missing):
             missing.append({'key':'total','label':'importe del ticket','reference':None})
-        actions=[a for a in transaction['view']['actions'] if a['kind']!='download']
+        actions=[a for a in transaction['view']['actions'] if a['kind']!='download' and (transaction['state']!='prepared' or a['reference']==transaction.get('prepared_action'))]
+        stage='send' if transaction['state']=='prepared' else 'fill'
         if missing:return [],missing,values
         records=[]
         for action in actions:
             snapshot=transaction['view']['snapshot']
             origins=sorted({origin(snapshot['page']),action['origin'],*[origin(f['source_url']) for f in snapshot['fields'] if f.get('source_url')]})
             fingerprint=self.fingerprint(owner,ticket,transaction['view'],values)
-            lookup=self.store.digest('portal-send:'+snapshot['session_id']+snapshot['observation_id']+action['reference']+fingerprint)
+            lookup=self.store.digest('portal-send:'+snapshot['session_id']+snapshot['observation_id']+action['reference']+fingerprint+stage)
             record=self.store.find('portal_send_review',owner,lookup)
             if not record:
                 record=self.store.add('portal_send_review',owner,{'ticket_id':ticket['id'],'transaction_id':transaction['id'],
-                    'session_id':snapshot['session_id'],'observation_id':snapshot['observation_id'],'action':action,'origins':origins,
+                    'session_id':snapshot['session_id'],'observation_id':snapshot['observation_id'],'stage':stage,'action':action,'origins':origins,
                     'values':values,'fingerprint':fingerprint,'scope':self.billing.portal_permissions.scope(ticket),
                     'fiscal_data':self.store.get('profile',owner,ticket['profile_id']),
                     'deadline':time.time()+900},state='pending',lookup=lookup)
             if record['_state']=='pending':records.append(record)
         return records,missing,values
 
+    async def prepare(self,owner,identifier):
+        return await self._perform(owner,identifier,prepare_only=True)
+
     async def send(self,owner,identifier):
+        return await self._perform(owner,identifier,prepare_only=False)
+
+    async def _perform(self,owner,identifier,*,prepare_only):
         approval=self.store.get('portal_send_review',owner,identifier)
         ticket=self.billing.resolve_ticket(owner,approval['ticket_id'])
         self.guard(owner,ticket)
         tx=self.store.get('portal_transaction',owner,approval['transaction_id'])
         if approval['_state']!='pending':return await self.status(owner,tx)
         values,missing=self.plan(owner,ticket,tx['view'],tx.get('manual'))
-        if (tx['state'] not in {'review','correction'} or approval['deadline']<time.time() or missing or not ticket.get('total')
+        if approval.get('stage','fill')!=('fill' if prepare_only else 'send'):
+            raise AppError(409,'portal_prepare','Primero revisa y autoriza el llenado; después confirma el envío.')
+        if (tx['state'] not in ({'review','correction','navigation'} if prepare_only else {'prepared'}) or approval['deadline']<time.time() or missing or not ticket.get('total')
+                or approval['session_id']!=tx['session_id']
+                or tx.get('scope')!=self.billing.portal_permissions.scope(ticket)
                 or approval['observation_id']!=tx['view']['snapshot']['observation_id']
                 or approval['fingerprint']!=self.fingerprint(owner,ticket,tx['view'],values)
                 or approval['scope']!=self.billing.portal_permissions.scope(ticket)):
             raise AppError(409,'portal_changed','Cambiaron los datos o el paso. Revisa antes de enviar.')
+        if len(tx.get('steps',[]))>=self.billing.settings.billing_portal_max_steps:
+            tx['state']='step_limit'
+            return self.store.update('portal_transaction',owner,tx['id'],tx)
         self.store.claim('portal_send_review',owner,identifier)
         was_private=tx.get('private',False)
-        tx.update(state='unknown',operation_id=identifier,private=True)
+        tx.update(state='preparing' if prepare_only else 'unknown',private=True)
+        if not prepare_only:
+            tx['operation_id']=identifier
+            tx.setdefault('steps',[]).append(identifier)
+            tx.setdefault('prior_values',{}).update({v['label']:v['value'] for v in values})
         self.store.update('portal_transaction',owner,tx['id'],tx)
         self.store.audit(owner,ticket['id'],'portal_step_authorized')
         try:
             result=await self.billing.browser.transaction_send(owner,approval['session_id'],operation_id=identifier,
                 observation_id=approval['observation_id'],reference=approval['action']['reference'],origins=approval['origins'],
+                prepare_only=prepare_only,max_steps=self.billing.settings.billing_portal_max_steps,
                 values=[{k:v for k,v in item.items() if k in {'reference','value'}} for item in values])
         except AppError as error:
             if error.code in {'browser_stale','browser_intervention','browser_session'} or error.status==422:
@@ -130,13 +165,23 @@ class PortalSubmission:
                 self.store.update('portal_transaction',owner,tx['id'],tx)
                 raise
             self.store.update('portal_send_review',owner,identifier,approval,state='unknown')
-            return tx
+            tx['state']='expired' if prepare_only else 'unknown'
+            tx['status_error']=error.code
+            return self.store.update('portal_transaction',owner,tx['id'],tx)
+        if prepare_only and result['state']=='unknown':
+            tx.update(state='expired',status_error='portal_fill_incomplete')
+            self.store.update('portal_send_review',owner,identifier,approval,state='rejected')
+            return self.store.update('portal_transaction',owner,tx['id'],tx)
         return await self.accept(owner,tx,approval,result)
 
     async def status(self,owner,tx):
         if tx.get('operation_id') and tx['state'] in {'unknown','submitted'}:
             try:result=await self.billing.browser.transaction_status(owner,tx['session_id'],tx['operation_id'])
-            except AppError:return tx
+            except AppError as error:
+                if tx.get('status_error')!=error.code:
+                    tx['status_error']=error.code
+                    tx=self.store.update('portal_transaction',owner,tx['id'],tx)
+                return tx
             approval=self.store.get('portal_send_review',owner,tx['operation_id'])
             return await self.accept(owner,tx,approval,result)
         return tx
@@ -145,9 +190,14 @@ class PortalSubmission:
         if result['operation_id']!=approval['id'] or result['view']['snapshot']['session_id']!=tx['session_id']:
             raise AppError(502,'portal_result','La respuesta no corresponde al paso autorizado.')
         tx.update(state=result['state'],view=result['view'])
+        tx.pop('status_error',None)
+        if result['state']=='prepared':tx['prepared_action']=approval['action']['reference']
+        else:tx.pop('prepared_action',None)
         tx=self.store.update('portal_transaction',owner,tx['id'],tx)
         self.store.update('portal_send_review',owner,approval['id'],approval,state='unknown' if result['state']=='unknown' else 'complete')
         ticket=self.billing.resolve_ticket(owner,tx['ticket_id'])
+        self.billing.portal_diagnostic(owner,ticket,tool='portal_transaction',phase='result',
+            code='portal_result_'+(result['view'].get('reason') or result['state']))
         if result['state'] in {'unknown','submitted'}:
             ticket['portal_delivery']={'state':result['state'],'operation_id':approval['id'],'session_id':tx['session_id'],
                 'fiscal_data':approval['fiscal_data'],'at':time.time()}
@@ -160,6 +210,13 @@ class PortalSubmission:
             except AppError as error:
                 tx['file_error']=error.message
                 self.store.update('portal_transaction',owner,tx['id'],tx)
+        if result['state']=='navigation':tx['stop_reason']='private_data_may_be_retained'
+        if tx['state'] in {'review','correction','navigation'} and len(tx.get('steps',[]))>=self.billing.settings.billing_portal_max_steps:
+            tx['state']='step_limit'
+            tx=self.store.update('portal_transaction',owner,tx['id'],tx)
+        if tx['state'] in {'review','correction','navigation'}:
+            await self.read_step_fields(owner,ticket,tx['view'])
+            tx=self.store.update('portal_transaction',owner,tx['id'],tx)
         self.store.audit(owner,ticket['id'],'portal_step_'+result['state'])
         return tx
 
@@ -210,13 +267,16 @@ class PortalSubmission:
     def set_field(self,owner,transaction_id,reference,value):
         tx=self.store.get('portal_transaction',owner,transaction_id)
         ticket=self.billing.resolve_ticket(owner,tx['ticket_id']);self.guard(owner,ticket)
-        if tx['state'] not in {'review','correction'}:raise AppError(409,'portal_field','Este envío no admite cambios; revisa su estado.')
+        if tx['state'] not in {'review','correction','navigation'}:raise AppError(409,'portal_field','Este envío no admite cambios; revisa su estado.')
         field=next((f for f in tx['view']['snapshot']['fields'] if f['reference']==reference),None)
         if not field:raise AppError(409,'portal_field','El campo cambió. Actualiza este paso.')
         key=field.get('key')
-        if key in PROFILE_KEYS:
+        if key in PROFILE_KEYS and self.store.get('profile',owner,ticket['profile_id']).get(key):
             raise AppError(409,'portal_profile','Actualiza y confirma ese dato en Mi perfil fiscal.')
         value=value.strip()
+        if key=='email':
+            from .providers import normalized_email
+            value=normalized_email(value)
         if not value or len(value)>250 or any(ord(c)<32 for c in value):raise AppError(422,'portal_field','Escribe únicamente el valor del campo.')
         if field.get('max_length') is not None and len(value)>field['max_length']:raise AppError(422,'portal_field','El dato supera el tamaño del campo.')
         if field['input_type']=='date':
@@ -228,7 +288,7 @@ class PortalSubmission:
                 try:canonical=purchase_date(value) or datetime.strptime(value,'%d/%m/%Y').date().isoformat()
                 except ValueError:canonical=None
             elif key=='total':canonical=purchase_total(value)
-            maximum=100 if key in {'folio','account_number','store_number'} else 13 if key=='issuer_rfc' else 160
+            maximum=100 if key in {'folio','account_number','store_number','payment_method'} else 13 if key=='issuer_rfc' else 160
             if not canonical or len(canonical)>maximum:raise AppError(422,'portal_field','El dato no tiene un formato válido.')
             ticket[key]=canonical
             ticket['fields_completed_by_user']=list(dict.fromkeys([*ticket.get('fields_completed_by_user',[]),key]))
@@ -240,9 +300,10 @@ class PortalSubmission:
     def receive_crop(self,owner,tx_id,reference,data):
         tx=self.store.get('portal_transaction',owner,tx_id)
         ticket=self.billing.resolve_ticket(owner,tx['ticket_id']);self.guard(owner,ticket)
-        if tx['state'] not in {'review','correction'}:raise AppError(409,'portal_field','Este paso ya no admite una foto.')
+        if tx['state'] not in {'review','correction','navigation'}:raise AppError(409,'portal_field','Este paso ya no admite una foto.')
         field=next((f for f in tx['view']['snapshot']['fields'] if f['reference']==reference),None)
         if not field:raise AppError(409,'portal_field','El campo cambió.')
+        if field.get('key') in PROFILE_KEYS:raise AppError(409,'portal_profile','Escribe explícitamente el dato fiscal; no se inferirá de la foto del ticket.')
         if self.store.count('portal_field_photo',owner)>=10:
             raise AppError(429,'document_limit','Hay demasiados recortes pendientes. Escribe este dato manualmente.')
         mime,content=inspect_document(data,self.billing.settings.billing_max_upload_bytes)
@@ -264,7 +325,7 @@ class PortalSubmission:
         ticket=self.billing.resolve_ticket(owner,photo['ticket_id']);self.guard(owner,ticket)
         if photo.get('transaction_id'):
             tx=self.store.get('portal_transaction',owner,photo['transaction_id'])
-            if tx['state'] not in {'review','correction'} or not any(f['reference']==photo['reference'] for f in tx['view']['snapshot']['fields']):
+            if tx['state'] not in {'review','correction','navigation'} or not any(f['reference']==photo['reference'] for f in tx['view']['snapshot']['fields']):
                 raise AppError(409,'portal_field','Cambió el paso. La foto no se analizará.')
         elif photo.get('key') not in pending_receipt_fields(ticket):
             raise AppError(409,'ticket_field','El dato ya se completó. La foto no se analizará.')
@@ -284,3 +345,50 @@ class PortalSubmission:
             photo.update(value=value)
             self.store.update('portal_field_photo',owner,identifier,photo,state='read')
             return photo
+
+    def restart_request(self,owner,ticket_id):
+        ticket=self.billing.resolve_ticket(owner,ticket_id);self.guard(owner,ticket)
+        tx=self.current(owner,ticket['id'])
+        if not tx or tx['state'] not in {'unknown','expired'} or ticket.get('validation'):
+            raise AppError(409,'portal_restart','Este trámite no admite un reinicio por incertidumbre.')
+        return self.store.add('portal_restart_review',owner,{'ticket_id':ticket['id'],'transaction_id':tx['id'],
+            'operation_id':tx.get('operation_id'),'scope':self.billing.portal_permissions.scope(ticket)},
+            state='pending',expires=time.time()+self.billing.settings.approval_ttl_seconds)
+
+    async def restart(self,owner,identifier):
+        review=self.store.get('portal_restart_review',owner,identifier)
+        ticket=self.billing.resolve_ticket(owner,review['ticket_id']);self.guard(owner,ticket)
+        tx=self.current(owner,ticket['id'])
+        if (not tx or tx['id']!=review['transaction_id'] or tx.get('operation_id')!=review.get('operation_id')
+                or tx['state'] not in {'unknown','expired'} or ticket.get('validation')
+                or review['scope']!=self.billing.portal_permissions.scope(ticket)):
+            raise AppError(409,'portal_restart','Cambió el estado. Revisa antes de reiniciar.')
+        self.store.claim('portal_restart_review',owner,identifier)
+        # No se concede un permiso nuevo ni se retoma un checkpoint privado.
+        self.billing.portal_permissions.require(owner,ticket)
+        try:await self.billing.browser.close_session(owner,tx['session_id'])
+        except AppError:pass
+        await self.billing.sync_portal_permissions(owner,ticket['id'],cancel=True)
+        allowed=self.billing.portal_permissions.allowed(owner,ticket)
+        snapshot=await self.billing.browser.open(owner,self.billing.portal_memory.entry_url(owner,ticket),allowed=allowed,
+            public_route=self.billing.portal_permissions.route_allowed(owner,ticket))
+        view=await self.billing.browser.transaction_view(owner,snapshot['session_id'])
+        await self.read_step_fields(owner,ticket,view)
+        ticket.pop('portal_delivery',None)
+        self.store.update('ticket',owner,ticket['id'],ticket)
+        payload={'ticket_id':ticket['id'],'session_id':snapshot['session_id'],'scope':self.billing.portal_permissions.scope(ticket),
+            'state':'review','private':False,'view':view,'manual':{},'steps':[],
+            'previous_attempt':{'state':tx['state'],'operation_id':tx.get('operation_id')}}
+        return self.store.update('portal_transaction',owner,tx['id'],payload)
+
+    def resolve_manually(self,owner,ticket_id):
+        ticket=self.billing.resolve_ticket(owner,ticket_id);self.guard(owner,ticket)
+        tx=self.current(owner,ticket['id'])
+        if not tx or tx['state'] not in {'unknown','expired'}:
+            raise AppError(409,'portal_resolution','Este trámite no está pendiente de revisión manual.')
+        tx['state']='resolved'
+        ticket['portal_manual_resolution']=True
+        ticket['note']='Resuelto manualmente por el usuario; sin afirmar emisión ni validación SAT.'
+        if ticket.get('portal_delivery'):ticket['portal_delivery']['state']='resolved'
+        self.store.update('ticket',owner,ticket['id'],ticket)
+        return self.store.update('portal_transaction',owner,tx['id'],tx)

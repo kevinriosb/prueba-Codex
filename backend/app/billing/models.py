@@ -119,6 +119,7 @@ class PrintedAddresses(SafeModel):
 
 
 class TicketExtraction(PrintedAddresses):
+    payment_method:str|None=Field(default=None,max_length=100)
     is_ticket: bool
     readable: bool
     merchant: str | None = Field(max_length=160)

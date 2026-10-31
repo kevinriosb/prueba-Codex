@@ -17,8 +17,8 @@ from .portal_permissions import PortalPermissionRequired,portal_origin
 
 
 RECEIPT_KEYS={'folio','account_number','reference_number','billing_code','web_id','store_number','register_number',
-    'toll_station','lane','purchase_date','purchase_time','total','issuer_rfc'}
-PROFILE_KEYS={'rfc','name','postal_code','fiscal_regime','cfdi_use','email'}
+    'toll_station','lane','purchase_date','purchase_time','payment_method','total','issuer_rfc'}
+PROFILE_KEYS={'rfc','name','postal_code','fiscal_regime','cfdi_use','email','person_type','first_name','last_name','second_last_name','family_names'}
 IDENTITY_KEYS={'merchant','issuer_rfc','purchase_date','folio','total','currency'}
 
 
