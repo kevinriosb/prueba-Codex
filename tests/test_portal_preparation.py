@@ -6,6 +6,8 @@ import pytest
 
 from backend.app.billing.models import TicketExtraction
 from backend.app.billing.portal_inspection import field_key
+from backend.app.billing.portal_memory import public_form_ready
+from backend.app.billing.portal_navigation import next_public_action
 from backend.app.errors import AppError
 from backend.browser_worker.engine import BrowserManager
 from backend.browser_worker.policy import BrowserError
@@ -74,7 +76,7 @@ def preauthorize_fixture_origin(app,ticket,origin,user=None):
             'origin':origin,'purpose':'public_read'},lookup=lookup,expires=time.time()+1800)
 
 
-def prepared(factory,*,extractor=None,before_portal=None):
+def prepared(factory,*,extractor=None,before_portal=None,require_ready=False):
     extractor=extractor or ScopedExtractor();browser=RealBrowser()
     model=ScriptedModel([[call('portal_browser_observe')]])
     values=create(factory,model,browser=browser,extractor=extractor)
@@ -87,6 +89,25 @@ def prepared(factory,*,extractor=None,before_portal=None):
     if before_portal:before_portal(app,ticket)
     preauthorize_fixture_origin(app,ticket,'https://provider.example')
     chat(data=button(telegram,'wa'))
+    if require_ready:
+        # Fixture de datos: el plazo de la IA puede pausar una ruta válida antes
+        # del formulario. Completar explícitamente la preparación pública, sin
+        # otro turno de modelo ni cambiar permisos o límites de producción.
+        async def finish():
+            record=app.state.billing.browser_review(owner(app),ticket['id'])
+            for _ in range(7):
+                if public_form_ready(record['snapshot']):break
+                action=next_public_action(ticket,record['snapshot'])
+                assert action is not None and not record['snapshot']['network_blocked']
+                record=await app.state.billing.browse_portal(owner(app),ticket['id'],
+                    observation_id=record['snapshot']['observation_id'],reference=action['reference'])
+            assert public_form_ready(record['snapshot']), record['snapshot'].get('block_reason')
+            session=browser.manager.sessions[record['snapshot']['session_id']]
+            await session.page.locator('form input').first.wait_for(state='visible',timeout=4000)
+            await app.state.telegram._browser(owner(app),123,ticket['id'])
+        client.portal.call(finish)
+        current=app.state.billing.resolve_ticket(owner(app),ticket['id'])
+        assert current['portal_stage']=='data_read' and current['total'] and current['folio'] and current['store_number'] and current['purchase_date']
     return values,browser,model
 
 

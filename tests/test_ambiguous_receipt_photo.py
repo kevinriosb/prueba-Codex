@@ -92,20 +92,14 @@ def test_requested_field_photo_keeps_its_recorded_expectation_and_applies_withou
         class Crops(ScopedExtractor):
             async def extract_field(self,*args):return FieldExtraction(value='00042')
 
-        values, browser, _ = prepared(billing_client,extractor=Crops())
+        values, browser, _ = prepared(billing_client,extractor=Crops(),require_ready=True)
         _, app, _, _, _, telegram, chat = values
         enable_transactions(browser,PortalPages())
         ticket = app.state.telegram.workflow.active(owner(app))
         app.state.billing.store.update('ticket',owner(app),ticket['id'],ticket|{'store_number':None})
         chat(data='lv:'+ticket['id'])
         state_now = app.state.telegram._state(owner(app))
-        stored_now = app.state.billing.store.get('ticket',owner(app),ticket['id'])
-        tx_now = app.state.billing.portal_submission.current(owner(app),ticket['id'])
-        detail = {'antes':{k:ticket.get(k) for k in ('total','store_number','folio','purchase_date','portal_stage')},
-            'despues':{k:stored_now.get(k) for k in ('total','store_number','folio','purchase_date','portal_stage')},
-            'campos':[(f['label'],f.get('key')) for f in (tx_now or {}).get('view',{}).get('snapshot',{}).get('fields',[])],
-            'manual':(tx_now or {}).get('manual'),'estado_tx':(tx_now or {}).get('state')}
-        assert 'portal_field_input' in state_now, 'DIAGNOSTICO2 '+repr(detail)[:900]
+        assert 'portal_field_input' in state_now
         expectation = state_now['portal_field_input']
         assert expectation['ticket_id']==ticket['id'] and expectation['transaction_id']
     telegram.files['field'] = image('yellow'); chat(document='field')
