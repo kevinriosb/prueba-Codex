@@ -15,7 +15,9 @@ import httpx2
 LABELS = {'account_number':'Cuenta', 'folio':'Folio', 'reference_number':'Referencia',
     'billing_code':'Código de facturación', 'purchase_date':'Fecha', 'total':'Importe',
     'rfc':'RFC', 'issuer_rfc':'RFC emisor','name':'Nombre fiscal','postal_code':'CP fiscal', 'email':'Correo', 'fiscal_regime':'Régimen', 'cfdi_use':'Uso CFDI',
-    'web_id':'Web ID','store_number':'Tienda','register_number':'Caja','toll_station':'Caseta','lane':'Carril','purchase_time':'Hora'}
+    'web_id':'Web ID','store_number':'Tienda','register_number':'Caja','toll_station':'Caseta','lane':'Carril','purchase_time':'Hora',
+    'payment_method':'Forma de pago','person_type':'Tipo de persona','first_name':'Nombre(s)',
+    'last_name':'Apellido paterno','second_last_name':'Apellido materno','family_names':'Apellidos'}
 IDENTIFIERS = ('account_number', 'folio', 'reference_number', 'billing_code')
 
 
@@ -25,7 +27,11 @@ def field_key(text):
     text = re.sub(r'[^a-z0-9]+', ' ', text)
     if re.search(r'\b(emisor|comercio|proveedor|seller|issuer)\b',text):
         return 'issuer_rfc' if re.search(r'\brfc\b',text) else None
-    patterns = {'register_number':r'\b(caja|register|cash desk)\b','web_id':r'\b(web\s*id|webid)\b', 'toll_station':r'\b(caseta|plaza de cobro)\b',
+    patterns = {'payment_method':r'\b(forma de pago|metodo de pago|payment method)\b',
+        'person_type':r'\b(tipo de persona|person type)\b','first_name':r'^\s*(nombres|nombre s|first name)\s*$',
+        'second_last_name':r'\b(apellido materno|second last name)\b','last_name':r'\b(apellido paterno|last name)\b',
+        'family_names':r'^apellidos$',
+        'register_number':r'\b(caja|register|cash desk)\b','web_id':r'\b(web\s*id|webid)\b', 'toll_station':r'\b(caseta|plaza de cobro)\b',
         'lane':r'\b(carril|lane)\b','purchase_time':r'\b(hora|time)\b',
         'account_number':r'\b(cuenta|account|accountnumber|consumptionaccount)\b',
         'billing_code':r'\b(billing code|codigo de facturacion|codigofacturacion)\b',

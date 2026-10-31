@@ -27,6 +27,7 @@ class TelegramRequests:
         return [item for item in self.billing.store.list('ticket', owner) if not item.get('superseded_by')]
 
     def summary(self, owner, ticket, *, analysis=None):
+        if ticket.get('portal_manual_resolution'):return self.bridge.workflow.stage(ticket),None,False
         approvals = [item for item in self.billing.store.list('email_approval', owner)
             if item['ticket_id'] == ticket['id']]
         uncertain = any(item['_state'] in {'claimed', 'unknown'} for item in approvals)

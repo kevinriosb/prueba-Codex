@@ -6,6 +6,7 @@ incierta nunca provoca otro clic. No ejecuta código proporcionado por el modelo
 import asyncio
 import base64
 import hashlib
+import json
 import re
 import secrets
 import time
@@ -23,9 +24,12 @@ CONTROLS=r'''() => {
  const visible=e=>!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
  const nodes=Array.from(document.querySelectorAll('button,input[type=submit],input[type=button],input[type=image],a[href],a[onclick]'));
  return nodes.filter(e=>visible(e)&&!e.disabled).slice(0,100).map(e=>{
-  const label=(e.getAttribute('aria-label')||e.getAttribute('title')||e.innerText||e.value||e.alt||'').replace(/\s+/g,' ').trim().slice(0,100);
+  const img=e.querySelector('img');let filename='';
+  if(img?.getAttribute('src')){try{filename=decodeURIComponent(new URL(img.getAttribute('src'),document.baseURI).pathname.split('/').pop()).replace(/\.(?:png|svg|jpe?g|gif|webp)$/i,'');}catch{}}
+  const label=(e.getAttribute('aria-label')||e.getAttribute('title')||e.innerText||e.value||e.alt||img?.alt||filename||'sin_nombre').replace(/\s+/g,' ').trim().slice(0,100);
   const selector='bill-'+Math.random().toString(36).slice(2,12);e.setAttribute('data-billing-action',selector);
-  return {selector,label,href:e.tagName==='A'?e.href:null,target:e.form?.action||document.URL,
+  return {selector,label,href:e.tagName==='A'?e.href:null,target:e.tagName==='A'?e.href:(e.form?.action||document.URL),
+   form:!!e.form,onclick:!!e.getAttribute('onclick'),tag:e.tagName,
    signature:JSON.stringify([e.tagName,e.type,e.name,e.id,e.getAttribute('href'),e.getAttribute('onclick'),e.form?.action,e.form?.method,e.textContent,e.value])};
  });
 }'''
@@ -38,10 +42,14 @@ FEEDBACK=r'''() => {
 }'''
 
 
+def backward_action(label):
+    return bool(re.search(r'cancel|eliminar|borrar|regresar|volver|atr[aá]s|salir|ayuda|privacidad|t[eé]rminos',label,re.I))
+
+
 def action_kind(label,href):
     if re.search(r'\b(xml|pdf)\b',label,re.I) or href and re.search(r'\.(?:xml|pdf)(?:[?#]|$)|[?&](?:format|formato|tipo|type)=(?:xml|pdf)(?:[&#]|$)',href,re.I):
         return 'download'
-    if re.search(r'cancel|eliminar|borrar|regresar|volver|atr[aá]s|salir|ayuda|privacidad|t[eé]rminos',label,re.I):return None
+    if backward_action(label):return None
     if re.search(r'(?:generar|emitir|solicitar|crear|obtener|enviar|confirmar|facturar|timbrar|issue|generate|request|submit|send)',label,re.I):return 'issue'
     if re.search(r'continuar|siguiente|validar|buscar|consultar|aceptar|registrar|agregar|next|continue|search|validate',label,re.I):return 'continue'
     return None
@@ -59,6 +67,7 @@ async def transaction_view(manager,identifier,session):
             if frame!=session.page.main_frame and not await (await frame.frame_element()).is_visible():continue
             for item in await frame.evaluate(CONTROLS):
                 kind=action_kind(item['label'],item['href'])
+                if not kind and not backward_action(item['label']):kind='continue'
                 if not kind:continue
                 if kind=='download':
                     try:
@@ -89,6 +98,7 @@ async def transaction_route(manager,session,route):
     """El mismo transporte IP/TLS del lector, con POST únicamente al portal confirmado."""
     request=route.request
     tx=session.transaction
+    counted=False
     try:
         url=https_url(request.url)
         target=origin(url)
@@ -111,10 +121,16 @@ async def transaction_route(manager,session,route):
         body=request.post_data_buffer if method=='POST' else None
         if not tx.get('network'):raise BrowserError('browser_submission','El paso terminó.')
         # Marcar ANTES de conectar: una desconexión no demuestra que no se envió.
-        if not resource:tx['dispatched']=True
+        if not resource:
+            tx['dispatched']=True
+            tx['in_flight']=tx.get('in_flight',0)+1
+            counted=True
         status,response_headers,content=await manager.fetcher.request_limited(method,url,headers,body,
             on_bytes=lambda size:charge_transaction(session,size))
-        if status>=400:tx['transport_error']=True
+        if status>=400:
+            if resource:tx['resource_error']=True
+            else:tx['transport_error']=True
+        elif not resource:tx['response_received']=True
         location=response_headers.get('location')
         if location:
             destination=https_url(urljoin(url,location))
@@ -134,8 +150,22 @@ async def transaction_route(manager,session,route):
             return
         await route.fulfill(status=status,headers=response_headers,body=content)
     except Exception:
-        tx['transport_error']=True
+        if request.resource_type in {'script','stylesheet'}:tx['resource_error']=True
+        else:tx['transport_error']=True
         with suppress(PlaywrightError):await route.abort('blockedbyclient')
+    finally:
+        if counted:tx['in_flight']=max(0,tx.get('in_flight',0)-1)
+
+
+async def collect_files(session):
+    tx=session.transaction
+    for download_frame,item in list(tx.get('controls',{}).values()):
+        if item['kind']!='download':continue
+        tx['downloads_only']=True
+        await download_frame.evaluate("url=>fetch(url,{credentials:'same-origin'}).then(r=>r.arrayBuffer()).then(()=>true)",item['href'])
+    view=tx['view']
+    view['files']=[{'reference':ref,'mime':item['mime'],'sha256':item['sha256']} for ref,item in tx.get('files',{}).items()]
+    return view
 
 
 def charge_transaction(session,size):
@@ -144,11 +174,48 @@ def charge_transaction(session,size):
         raise BrowserError('browser_submission','El portal superó el tamaño admitido.')
 
 
-async def transaction_send(manager,owner,identifier,*,operation_id,observation_id,reference,values,origins):
+def view_shape(view):
+    snapshot=view['snapshot']
+    return json.dumps({'fields':[{k:f.get(k) for k in ('label','kind','required','input_type','options','max_length','editable')}
+            for f in snapshot['fields']]},sort_keys=True)
+
+
+def result_state(tx,previous,view):
+    def decision(state,reason):
+        view['reason']=reason
+        return state
+    if any(f['mime']=='application/xml' for f in view['files']):return decision('submitted','files_found')
+    if view['error']:return decision('correction','validation_error')
+    if tx.get('transport_error') and not view['files']:return decision('unknown','transport_error')
+    if tx.get('in_flight',0):return decision('unknown','response_unavailable')
+    if view['snapshot']['fields'] and view_shape(previous)!=view_shape(view):return decision('review','new_form')
+    if view['files']:return decision('submitted','files_found')
+    if not view['snapshot']['fields'] and (view['snapshot']['actions'] or any(a['kind']!='download' for a in view['actions'])):return decision('navigation','navigation')
+    if view['success'] and tx.get('dispatched'):return decision('submitted','acknowledged')
+    return decision('unknown','unclassified')
+
+
+async def visible_shape(session):
+    from .engine import SNAPSHOT
+    result=[]
+    for frame in session.page.frames[:8]:
+        try:
+            if origin(frame.url) not in session.allowed:continue
+            if frame!=session.page.main_frame and not await (await frame.frame_element()).is_visible():continue
+            snapshot=await frame.evaluate(SNAPSHOT,True)
+            result.append({'frame':frame.url,'fields':[{k:f.get(k) for k in
+                ('label','kind','required','input_type','editable','max_length','placeholder','options','signature')}
+                for f in snapshot['fields']],'unsupported':snapshot['unsupported_required'],
+                'actions':[{k:a.get(k) for k in ('label','kind','url','choice','signature')} for a in snapshot['actions']]})
+        except PlaywrightError:raise BrowserError('browser_stale','No se pudo confirmar el formulario actual.') from None
+    return json.dumps(result,sort_keys=True)
+
+
+async def transaction_send(manager,owner,identifier,*,operation_id,observation_id,reference,values,origins,prepare_only=False,max_steps=8):
     session=await manager.get(owner,identifier)
     async with session.lock:
         tx=session.transaction
-        previous=tx.setdefault('operations',{}).get(operation_id)
+        previous=tx.setdefault('preparations' if prepare_only else 'operations',{}).get(operation_id)
         if previous:return previous
         if observation_id!=session.observation or reference not in tx.get('controls',{}):
             raise BrowserError('browser_stale','El paso cambió. Revisa el formulario.')
@@ -162,7 +229,8 @@ async def transaction_send(manager,owner,identifier,*,operation_id,observation_i
         required={origin(frame.url),origin(action['target']),origin(session.page.url)}
         if not required<=permitted or len(permitted)>4:
             raise BrowserError('browser_submission','Revisa los destinos de este formulario.',422)
-        if len(tx['operations'])>=8:raise BrowserError('browser_submission','Se alcanzó el máximo de pasos; revisa la solicitud.')
+        tx['step_limit']=min(tx.get('step_limit',max_steps),max_steps)
+        if len(tx.get('operations',{}))>=tx['step_limit']:raise BrowserError('browser_submission','Se alcanzó el máximo de pasos; revisa la solicitud.')
         locator=frame.locator('[data-billing-action="'+action['selector']+'"]')
         if frame.url!=action['frame_url'] or await locator.count()!=1 or await locator.evaluate(ACTION_SIGNATURE)!=action['signature']:
             raise BrowserError('browser_stale','El botón del portal cambió.')
@@ -191,9 +259,18 @@ async def transaction_send(manager,owner,identifier,*,operation_id,observation_i
             if not field['editable'] and await control.input_value()!=(option or value):
                 raise BrowserError('browser_submission','Un dato fijo del portal no coincide.',422)
             prepared.append((control,field,value,option))
-        # Reserva antes de introducir datos o clicar. Incluso una caída conserva la incertidumbre.
-        tx['operations'][operation_id]={'operation_id':operation_id,'state':'unknown','view':tx['view']}
-        tx.update(started=True,network=False,dispatched=False,transport_error=False,auxiliary_blocked=False,origins=permitted)
+        shape=await visible_shape(session)
+        if not prepare_only and tx.get('prepared_shape')!=shape:
+            raise BrowserError('browser_stale','El formulario cambió después del llenado.')
+        if not prepare_only:
+            expected={'observation_id':observation_id,'reference':reference,'values':values,'origins':sorted(permitted)}
+            if tx.get('prepared')!=expected:
+                raise BrowserError('browser_submission','Primero revisa y autoriza el llenado de este paso.',422)
+        operation_table=tx.setdefault('preparations' if prepare_only else 'operations',{})
+        operation_table[operation_id]={'operation_id':operation_id,'state':'unknown','view':tx['view']}
+        if not prepare_only:tx.setdefault('before',{})[operation_id]=tx['view']
+        tx.update(started=True,network=False,dispatched=False,transport_error=False,auxiliary_blocked=False,response_received=False)
+        if not prepare_only:tx['origins']=permitted
         session.private=True
         session.created=time.monotonic()
         session.cache.clear()
@@ -201,55 +278,63 @@ async def transaction_send(manager,owner,identifier,*,operation_id,observation_i
             async with asyncio.timeout(18):
                 await session.context.set_offline(True)
                 for control,field,value,option in prepared:
-                    if field['editable']:
+                    if prepare_only and field['editable']:
                         if option is not None:await control.select_option(value=option,timeout=1200)
                         else:await control.fill(value,timeout=1200)
                     if await control.input_value()!=(option if option is not None else value):
                         raise BrowserError('browser_submission','El control rechazó el dato.',422)
+                if (frame.url!=action['frame_url'] or await locator.count()!=1 or await locator.evaluate(ACTION_SIGNATURE)!=action['signature']):
+                    raise BrowserError('browser_stale','El botón cambió al introducir los datos.')
                 invalid=await frame.evaluate("() => Array.from(document.querySelectorAll('input,select,textarea')).some(e=>e.getClientRects().length&&!e.disabled&&!e.checkValidity())")
                 if invalid:
-                    tx['operations'][operation_id]={'operation_id':operation_id,'state':'correction','view':await transaction_view(manager,identifier,session)}
-                    return tx['operations'][operation_id]
+                    tx.pop('prepared',None)
+                    view=await transaction_view(manager,identifier,session)
+                    view['error']=view['error'] or await frame.evaluate("() => Array.from(document.querySelectorAll('input,select,textarea')).filter(e=>e.getClientRects().length&&!e.disabled&&!e.checkValidity()).map(e=>e.validationMessage||'Dato inválido').join(' ').slice(0,350)")
+                    operation_table[operation_id]={'operation_id':operation_id,'state':'correction','view':view}
+                    return operation_table[operation_id]
+                if prepare_only and await visible_shape(session)!=shape:
+                    view=await transaction_view(manager,identifier,session)
+                    view['error']='El formulario cambió al llenar. Revisa todos los campos antes de continuar.'
+                    operation_table[operation_id]={'operation_id':operation_id,'state':'correction','view':view}
+                    return operation_table[operation_id]
+                if prepare_only:
+                    tx['prepared_shape']=shape
+                    tx['prepared']={'observation_id':observation_id,'reference':reference,'values':values,'origins':sorted(permitted)}
+                    view=tx['view']|{'snapshot':tx['view']['snapshot']|{'public_only':False}}
+                    tx['view']=view
+                    result={'operation_id':operation_id,'state':'prepared','view':view}
+                    operation_table[operation_id]=result
+                    return result
                 if (frame.url!=action['frame_url'] or await locator.count()!=1
                         or await locator.evaluate(ACTION_SIGNATURE)!=action['signature']):
                     raise BrowserError('browser_stale','El botón cambió al introducir los datos.')
                 tx['network']=True
                 await session.context.set_offline(False)
+                tx.pop('prepared',None)
                 await locator.click(timeout=6000)
                 with suppress(PlaywrightError):await session.page.wait_for_load_state('networkidle',timeout=2500)
                 view=await transaction_view(manager,identifier,session)
-                # Descargar únicamente enlaces XML/PDF observados del mismo proveedor.
-                for ref,(download_frame,item) in list(tx['controls'].items()):
-                    if item['kind']!='download':continue
-                    tx['downloads_only']=True
-                    await download_frame.evaluate("url=>fetch(url,{credentials:'same-origin'}).then(r=>r.arrayBuffer()).then(()=>true)",item['href'])
-                view['files']=[{'reference':ref,'mime':item['mime'],'sha256':item['sha256']} for ref,item in tx.get('files',{}).items()]
-                old_fields=[(f['label'],f['kind'],f['required']) for f in tx['operations'][operation_id]['view']['snapshot']['fields']]
-                new_fields=[(f['label'],f['kind'],f['required']) for f in view['snapshot']['fields']]
-                if view['files']:state='submitted'
-                elif view['error']:state='correction'
-                elif tx['transport_error'] and not view['files']:state='unknown'
-                elif view['success'] and tx['dispatched']:state='submitted'
-                elif new_fields and old_fields!=new_fields:state='review'
-                elif action['kind']=='issue':state='unknown'
-                else:state='review'
+                view=await collect_files(session)
+                state=result_state(tx,tx['before'][operation_id],view)
                 tx['issued']=state=='submitted'
                 tx['uncertain']=state=='unknown'
                 tx['operations'][operation_id]={'operation_id':operation_id,'state':state,'view':view}
         except Exception:
             tx['uncertain']=bool(tx.get('dispatched'))
+            if tx['uncertain']:
+                operation_table[operation_id]['view']=operation_table[operation_id]['view']|{'reason':'response_unavailable'}
             if not tx['uncertain']:
                 try:
                     view=await transaction_view(manager,identifier,session)
                     view['error']=view['error'] or 'Un campo no admitió el dato. Corrígelo antes de enviar.'
-                    tx['operations'][operation_id]={'operation_id':operation_id,'state':'correction','view':view}
+                    operation_table[operation_id]={'operation_id':operation_id,'state':'correction','view':view}
                 except Exception:
                     tx['uncertain']=True
         finally:
             tx['network']=False
             tx['downloads_only']=False
             with suppress(PlaywrightError):await session.context.set_offline(True)
-        return tx['operations'][operation_id]
+        return operation_table[operation_id]
 
 
 async def transaction_status(manager,owner,identifier,operation_id):
@@ -258,6 +343,14 @@ async def transaction_status(manager,owner,identifier,operation_id):
         tx=session.transaction
         result=tx.get('operations',{}).get(operation_id)
         if not result:raise BrowserError('browser_session','Paso no disponible.',404)
+        # Releer el DOM es seguro: contexto offline, sin escribir, sin red ni clics.
+        if result['state']=='unknown' and not tx.get('network'):
+            view=await transaction_view(manager,identifier,session)
+            state=result_state(tx,tx.get('before',{}).get(operation_id,result['view']),view)
+            if state!='unknown':
+                result={'operation_id':operation_id,'state':state,'view':view}
+                tx['operations'][operation_id]=result
+                tx.update(uncertain=False,issued=state=='submitted')
         # Recuperar evidencia ya recibida tras una respuesta interrumpida. Cero red y cero clics.
         if result['state']=='unknown' and not tx.get('network') and (tx.get('files') or tx.get('feedback',{}).get('success') and tx.get('dispatched')):
             view=tx['view']|{'files':[{'reference':ref,'mime':item['mime'],'sha256':item['sha256']} for ref,item in tx.get('files',{}).items()]}

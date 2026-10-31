@@ -33,6 +33,8 @@ def install(app, handler, resolver=public_dns):
     (FORM,['account_number']),
     ('<label>Cuenta<input name="entry"></label><label>Folio<input name="folio"></label>', ['account_number','folio']),
     ('<input aria-label="Número de referencia"><input placeholder="Código de facturación">',['reference_number','billing_code']),
+    ('<label>Forma de pago<input></label><label>Tipo de persona<select></select></label><label>Nombre(s)<input></label><label>Apellido paterno<input></label><label>Apellido materno<input></label><label>Apellidos<input></label>',
+     ['payment_method','person_type','first_name','last_name','second_last_name','family_names']),
     ('<input type="password" name="account"><script>"<input name=cuenta>"</script>',[])])
 def test_form_parser_distinguishes_labels_and_ignores_sensitive_or_script_controls(markup,expected):
     parser=FormFields()

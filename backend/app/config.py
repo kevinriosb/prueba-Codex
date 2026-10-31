@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     billing_verified_contacts_json: str = Field(default='[]',max_length=20_000)
     billing_portal_inspection_urls: str = Field(default='',max_length=4000)
     billing_portal_inspection_timeout_seconds: int = Field(default=7,ge=1,le=15)
+    billing_portal_max_steps: int = Field(default=8,ge=1,le=32)
     billing_browser_enabled: bool = False
     billing_browser_worker_url: str = 'http://browser:8001'
     billing_browser_token_file: Path = Path('/run/browser-auth/token')

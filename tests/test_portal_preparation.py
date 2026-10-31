@@ -57,7 +57,9 @@ class RealBrowser:
     async def act(self,*args):
         self.calls.append('act')
         return self.keys(await self.manager.act(*args))
-    async def close_session(self,*args):return await self.manager.close_session(*args)
+    async def close_session(self,*args):
+        try:return await self.manager.close_session(*args)
+        except BrowserError as error:raise AppError(error.status,error.code,error.message) from None
     async def fill(self,*args):
         self.calls.append('fill')
         return await self.manager.fill(*args)

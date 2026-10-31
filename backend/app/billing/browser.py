@@ -132,6 +132,7 @@ class TransactionFile(BaseModel):
 
 
 class TransactionView(BaseModel):
+    reason:Literal['files_found','validation_error','transport_error','new_form','navigation','acknowledged','unclassified','response_unavailable']|None=None
     model_config=ConfigDict(extra='forbid')
     snapshot:Observation
     actions:list[TransactionAction]=Field(max_length=12)
@@ -143,7 +144,7 @@ class TransactionView(BaseModel):
 class TransactionResult(BaseModel):
     model_config=ConfigDict(extra='forbid')
     operation_id:UUID
-    state:str=Field(pattern=r'^(unknown|correction|review|submitted)$')
+    state:str=Field(pattern=r'^(unknown|correction|review|prepared|navigation|submitted)$')
     view:TransactionView
 
 

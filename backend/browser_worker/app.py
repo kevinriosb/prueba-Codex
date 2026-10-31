@@ -54,6 +54,8 @@ class Fill(Close):
 
 
 class Transaction(Fill):
+    prepare_only:bool=False
+    max_steps:int=Field(default=8,ge=1,le=32)
     operation_id:str=Field(pattern=r'^[a-f0-9-]{36}$')
     reference:str=Field(pattern=r'^[a-f0-9]{8}$')
     values:list[FillValue]=Field(default_factory=list,max_length=24)

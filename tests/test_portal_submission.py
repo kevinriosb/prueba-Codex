@@ -48,6 +48,17 @@ def submission_args(view,values,*,operation='11111111-1111-4111-8111-11111111111
         origins=[action['origin']],values=[{'reference':f['reference'],'value':v} for f,v in zip(view['snapshot']['fields'],values)])
 
 
+async def confirmed_send(manager,user,sid,**args):
+    """Dos decisiones explícitas de la prueba: llenar offline y luego enviar."""
+    session=manager.sessions.get(sid)
+    if session and args['operation_id'] in session.transaction.get('operations',{}):
+        return await manager.transaction_send(user,sid,**args)
+    import uuid
+    prepared=await manager.transaction_send(user,sid,**(args|{'operation_id':str(uuid.uuid4()),'prepare_only':True}))
+    if prepared['state']!='prepared':return prepared
+    return await manager.transaction_send(user,sid,**args)
+
+
 async def test_two_different_forms_advance_only_after_each_native_approval_and_capture_invoice_files():
     pages=PortalPages();manager=BrowserManager(fetcher=pages)
     try:
@@ -56,16 +67,16 @@ async def test_two_different_forms_advance_only_after_each_native_approval_and_c
         view=await manager.transaction_view('owner',sid)
         assert [a['kind'] for a in view['actions']]==['continue'] and pages.sent==[]
         args=submission_args(view,['AAA010101AAA','000100'])
-        first=await manager.transaction_send('owner',sid,**args)
+        first=await confirmed_send(manager,'owner',sid,**args)
         assert first['state']=='review',first
         assert len(pages.sent)==1 and pages.sent[0][0]=='POST'
         assert b'ticket=000100' in pages.sent[0][3]
         assert all('value' not in f for f in first['view']['snapshot']['fields'])
         assert not first['view']['snapshot']['public_only']
-        assert (await manager.transaction_send('owner',sid,**args))==first
+        assert (await confirmed_send(manager,'owner',sid,**args))==first
         assert len(pages.sent)==1
         with pytest.raises(BrowserError,match='browser_private'):await manager.observe('owner',sid)
-        second=await manager.transaction_send('owner',sid,**submission_args(first['view'],['PERSONA PRUEBA','11520','G03'],operation='22222222-2222-4222-8222-222222222222'))
+        second=await confirmed_send(manager,'owner',sid,**submission_args(first['view'],['PERSONA PRUEBA','11520','G03'],operation='22222222-2222-4222-8222-222222222222'))
         assert second['state']=='submitted',second
         assert {f['mime'] for f in second['view']['files']}=={'application/xml','application/pdf'}
         file=second['view']['files'][0]
@@ -82,10 +93,10 @@ async def test_timeout_after_dispatch_is_unknown_and_does_not_resubmit_for_anoth
         view=await manager.transaction_view('owner',opened['session_id'])
         pages.fail=True
         args=submission_args(view,['AAA010101AAA','000100'])
-        result=await manager.transaction_send('owner',opened['session_id'],**args)
+        result=await confirmed_send(manager,'owner',opened['session_id'],**args)
         assert result['state']=='unknown' and len(pages.sent)==1
-        assert (await manager.transaction_send('owner',opened['session_id'],**args))['state']=='unknown'
-        with pytest.raises(BrowserError):await manager.transaction_send('owner',opened['session_id'],**(args|{'operation_id':'33333333-3333-4333-8333-333333333333'}))
+        assert (await confirmed_send(manager,'owner',opened['session_id'],**args))['state']=='unknown'
+        with pytest.raises(BrowserError):await confirmed_send(manager,'owner',opened['session_id'],**(args|{'operation_id':'33333333-3333-4333-8333-333333333333'}))
         assert len(pages.sent)==1
     finally:await manager.close()
 
@@ -96,14 +107,14 @@ async def test_changed_form_target_foreign_owner_and_missing_values_never_send()
         opened=await manager.open('owner',HOME,ALLOWED)
         sid=opened['session_id'];view=await manager.transaction_view('owner',sid)
         args=submission_args(view,['AAA010101AAA','000100'])
-        with pytest.raises(BrowserError):await manager.transaction_send('other',sid,**args)
+        with pytest.raises(BrowserError):await confirmed_send(manager,'other',sid,**args)
         session=await manager.get('owner',sid)
         await session.page.locator('form').evaluate("e=>e.action='https://other.example/issue'")
-        with pytest.raises(BrowserError,match='browser_stale'):await manager.transaction_send('owner',sid,**args)
+        with pytest.raises(BrowserError,match='browser_stale'):await confirmed_send(manager,'owner',sid,**args)
         assert pages.sent==[]
         await session.page.locator('form').evaluate("e=>e.action='/lookup'")
         view=await manager.transaction_view('owner',sid)
-        result=await manager.transaction_send('owner',sid,**submission_args(view,[]))
+        result=await confirmed_send(manager,'owner',sid,**submission_args(view,[]))
         assert result['state']=='correction' and pages.sent==[]
     finally:await manager.close()
 
@@ -114,7 +125,7 @@ async def test_json_form_with_server_validation_can_be_corrected_without_generic
     try:
         opened=await manager.open('owner',HOME,ALLOWED)
         view=await manager.transaction_view('owner',opened['session_id'])
-        result=await manager.transaction_send('owner',opened['session_id'],**submission_args(view,['00123']))
+        result=await confirmed_send(manager,'owner',opened['session_id'],**submission_args(view,['00123']))
         assert result['state']=='correction' and 'incorrecta' in result['view']['error']
         assert json.loads(pages.sent[0][3])=={'cuenta':'00123'}
         assert pages.sent[0][2]['content-type']=='application/json'
@@ -124,14 +135,18 @@ async def test_json_form_with_server_validation_can_be_corrected_without_generic
 def enable_transactions(browser,pages):
     browser.manager.fetcher=pages
     async def view(owner,sid):
-        result=await browser.manager.transaction_view(owner,sid)
+        try:result=await browser.manager.transaction_view(owner,sid)
+        except BrowserError as error:raise AppError(error.status,error.code,error.message) from None
         for f in result['snapshot']['fields']:f['key']=field_key(f['label'])
         return result
     async def send(owner,sid,**payload):
-        result=await browser.manager.transaction_send(owner,sid,**payload)
+        try:result=await browser.manager.transaction_send(owner,sid,**payload)
+        except BrowserError as error:raise AppError(error.status,error.code,error.message) from None
         for f in result['view']['snapshot']['fields']:f['key']=field_key(f['label'])
         return result
-    async def status(owner,sid,op):return await browser.manager.transaction_status(owner,sid,op)
+    async def status(owner,sid,op):
+        try:return await browser.manager.transaction_status(owner,sid,op)
+        except BrowserError as error:raise AppError(error.status,error.code,error.message) from None
     browser.transaction_view=view
     browser.transaction_send=send
     browser.transaction_status=status
@@ -193,6 +208,8 @@ def test_telegram_requests_real_portal_step_then_keeps_xml_pdf_validates_and_nev
     approval=button(telegram,'ls')
     assert pages.sent==mail.sent==sat.calls==[]
     chat(data=approval)
+    assert pages.sent==[]
+    chat(data=button(telegram,'lc'))
     result=app.state.billing.resolve_ticket(owner(app),item['id'])
     assert result['portal_delivery']['state']=='submitted'
     assert result['validation']['structural_match'] and not result['validation']['sat_verified']
@@ -217,7 +234,7 @@ def test_invalid_xml_never_completes_a_bill_or_retries_the_portal(billing_client
     pages=PortalPages();pages.invoice_xml=xml(rfc='ZZZ010101ZZZ');pages.invoice_pdf=pdf()
     enable_transactions(browser,pages)
     item=app.state.billing.store.list('ticket',owner(app))[0]
-    chat(data='lv:'+item['id']);chat(data=button(telegram,'ls'))
+    chat(data='lv:'+item['id']);chat(data=button(telegram,'ls'));chat(data=button(telegram,'lc'))
     result=app.state.billing.resolve_ticket(owner(app),item['id'])
     assert result['portal_delivery']['state']=='submitted' and not result.get('validation')
     assert result['invoice_documents']==[] and 'no corresponde' in telegram.messages[-1][1]
@@ -233,14 +250,14 @@ def test_new_required_field_is_requested_in_telegram_after_a_nonfinal_postback(b
     pages.responses['/finish']='<p>Factura generada</p>'
     enable_transactions(browser,pages)
     item=app.state.billing.store.list('ticket',owner(app))[0]
-    chat(data='lv:'+item['id']);chat(data=button(telegram,'ls'))
+    chat(data='lv:'+item['id']);chat(data=button(telegram,'ls'));chat(data=button(telegram,'lc'))
     assert 'Falta: Número exterior' in telegram.messages[-1][1]
     tx=app.state.billing.portal_submission.current(owner(app),item['id'])
     assert tx['state']=='review' and len(pages.sent)==1
     field=tx['view']['snapshot']['fields'][0]
     chat(data='lm:'+tx['id']+':'+field['reference']);chat('0014')
     assert 'Número exterior: 0014' in telegram.messages[-1][1]
-    chat(data=button(telegram,'ls'))
+    chat(data=button(telegram,'ls'));chat(data=button(telegram,'lc'))
     assert b'number=0014' in pages.sent[-1][3]
     assert 'Solicitud enviada' in telegram.messages[-1][1]
 
@@ -261,6 +278,9 @@ def test_worker_api_authentication_protocol_and_owner_isolation(tmp_path):
         payload={'owner':'owner',**submission_args(view,['AAA010101AAA','000100'])}
         assert client.post(url,headers=headers,json=payload|{'observation_id':'bad'}).status_code==422
         assert pages.sent==[]
+        import uuid
+        prepared=client.post(url,headers=headers,json=payload|{'prepare_only':True,'operation_id':str(uuid.uuid4())})
+        assert prepared.json()['state']=='prepared' and pages.sent==[]
         result=client.post(url,headers=headers,json=payload)
         parsed=TransactionResult.model_validate(result.json())
         assert parsed.state=='review'
@@ -297,7 +317,7 @@ async def test_input_script_cannot_replace_the_authorized_submit_action():
     try:
         opened=await manager.open('owner',HOME,ALLOWED)
         view=await manager.transaction_view('owner',opened['session_id'])
-        result=await manager.transaction_send('owner',opened['session_id'],**submission_args(view,['0004']))
+        result=await confirmed_send(manager,'owner',opened['session_id'],**submission_args(view,['0004']))
         assert result['state']=='correction' and pages.sent==[]
     finally:await manager.close()
 
@@ -309,11 +329,12 @@ def test_lost_internal_response_is_recovered_by_status_without_a_second_portal_s
     enable_transactions(browser,pages)
     original=browser.transaction_send
     async def lose_response(*args,**kwargs):
-        await original(*args,**kwargs)
-        raise AppError(502,'portal_send_unknown','Se perdió la respuesta interna.')
+        result=await original(*args,**kwargs)
+        if not kwargs.get('prepare_only'):raise AppError(502,'portal_send_unknown','Se perdió la respuesta interna.')
+        return result
     browser.transaction_send=lose_response
     item=app.state.billing.store.list('ticket',owner(app))[0]
-    chat(data='lv:'+item['id']);chat(data=button(telegram,'ls'))
+    chat(data='lv:'+item['id']);chat(data=button(telegram,'ls'));chat(data=button(telegram,'lc'))
     assert 'sin confirmar' in telegram.messages[-1][1]
     assert app.state.billing.portal_submission.current(owner(app),item['id'])['state']=='unknown'
     count=len(pages.sent)
@@ -359,7 +380,11 @@ def test_real_agent_browser_client_uses_the_private_protocol_and_keeps_public_ca
             opened=await browser.open('owner',HOME,allowed=ALLOWED)
             sid=opened['session_id']
             view=await browser.transaction_view('owner',sid)
-            result=await browser.transaction_send('owner',sid,**submission_args(view,['AAA010101AAA','00115']))
+            args=submission_args(view,['AAA010101AAA','00115'])
+            import uuid
+            prepared=await browser.transaction_send('owner',sid,**(args|{'prepare_only':True,'operation_id':str(uuid.uuid4())}))
+            assert prepared['state']=='prepared' and pages.sent==[]
+            result=await browser.transaction_send('owner',sid,**args)
             assert result['state']=='review'
             assert all('key' in f for f in result['view']['snapshot']['fields'])
             with pytest.raises(AppError) as private:await browser.observe('owner',sid)
@@ -379,7 +404,7 @@ async def test_xml_validation_response_is_not_mistaken_for_a_cfdi():
     try:
         opened=await manager.open('owner',HOME,ALLOWED)
         view=await manager.transaction_view('owner',opened['session_id'])
-        result=await manager.transaction_send('owner',opened['session_id'],**submission_args(view,['0004']))
+        result=await confirmed_send(manager,'owner',opened['session_id'],**submission_args(view,['0004']))
         assert result['state']=='correction' and result['view']['files']==[]
     finally:await manager.close()
 
@@ -392,10 +417,10 @@ async def test_invoice_evidence_prevents_retry_even_when_old_validation_alert_re
     try:
         opened=await manager.open('owner',HOME,ALLOWED)
         view=await manager.transaction_view('owner',opened['session_id'])
-        result=await manager.transaction_send('owner',opened['session_id'],**submission_args(view,['0004']))
+        result=await confirmed_send(manager,'owner',opened['session_id'],**submission_args(view,['0004']))
         assert result['state']=='submitted' and result['view']['files'] and result['view']['error']
         calls=len(pages.sent)
-        with pytest.raises(BrowserError):await manager.transaction_send('owner',opened['session_id'],**submission_args(result['view'],['0005'],operation='33333333-3333-4333-8333-333333333333'))
+        with pytest.raises(BrowserError):await confirmed_send(manager,'owner',opened['session_id'],**submission_args(result['view'],['0005'],operation='33333333-3333-4333-8333-333333333333'))
         assert len(pages.sent)==calls
     finally:await manager.close()
 
@@ -472,7 +497,7 @@ async def test_private_step_never_sends_field_values_to_a_new_cdn_script_url():
     try:
         opened=await manager.open('owner',HOME,ALLOWED,public_route=True)
         view=await manager.transaction_view('owner',opened['session_id'])
-        result=await manager.transaction_send('owner',opened['session_id'],**submission_args(view,['AAA010101AAA','0004']))
+        result=await confirmed_send(manager,'owner',opened['session_id'],**submission_args(view,['AAA010101AAA','0004']))
         assert not any('PRIVATE' in url for _,url,_,_ in pages.sent)
         asset=next(call for call in pages.sent if call[1]=='https://cdn.example/library.js')
         assert 'cookie' not in asset[2] and 'referer' not in asset[2]

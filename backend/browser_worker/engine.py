@@ -17,7 +17,7 @@ from .filling import fill_fields,fill_status
 
 
 # Código fijo del servidor. El modelo solo elige referencias observadas, nunca JS.
-SNAPSHOT = r'''() => {
+SNAPSHOT = r'''(readOnly=false) => {
  const roots=[document];let traversalPartial=false;
  for(let i=0;i<roots.length&&i<16;i++) {
   const elements=Array.from(roots[i].querySelectorAll('*'));
@@ -70,7 +70,7 @@ SNAPSHOT = r'''() => {
  };
  const inputs=all('input,select,textarea').filter(e=>visible(e)&&!e.disabled&&!['hidden','password','file','submit','button','reset','checkbox','radio'].includes(e.type));
  const fields=inputs.slice(0,24).map(e=>{
-  const id='field-'+Math.random().toString(36).slice(2,12);e.setAttribute('data-public-field-ref',id);
+  const id='field-'+Math.random().toString(36).slice(2,12);if(!readOnly)e.setAttribute('data-public-field-ref',id);
   return {selector:id,signature:JSON.stringify([e.tagName,e.type,e.name,e.id,e.required,e.readOnly,e.disabled,e.maxLength,e.form?.getAttribute('action'),e.form?.getAttribute('method')]),
    label:label(e),kind:e.tagName.toLowerCase(),required:!!e.required||e.getAttribute('aria-required')==='true'||label(e).includes('*'),editable:!e.readOnly,
    input_type:e.type||'text',placeholder:(e.getAttribute('placeholder')||'').slice(0,100),
@@ -109,7 +109,7 @@ SNAPSHOT = r'''() => {
  for(const item of candidates.sort((a,b)=>b.priority-a.priority).slice(0,48)) {
   const id='nav-'+Math.random().toString(36).slice(2,12);
   const e=item.e;
-  e.setAttribute('data-public-nav-ref',id);
+  if(!readOnly)e.setAttribute('data-public-nav-ref',id);
   actions.push({...diagnosticElement(e),selector:id,label:item.label,kind:item.kind,url:item.url,brand:item.brand,description:item.description,choice:item.choice,signature:signature(e)});
  }
  const login_required=all('input[type=password]').some(e=>visible(e)&&/iniciar sesi[oó]n|sign in|log in|login|contrase[nñ]a|password/i.test((e.closest('form')?.innerText||'')+' '+label(e)));
