@@ -1,6 +1,6 @@
 # Estado del proyecto y siguientes sesiones
 
-Actualizado: 2026-10-30. Base: `main` en `8b103b4` (PR #2, sesión 3A).
+Actualizado: 2026-10-31. Base de esta corrección: `main` en `e1ba7dc` (incluye PR #2 y PR #3).
 
 ## Hecho
 - Sesión 3A: elección del portal correcto con contexto, comprobación de que el host resuelve, respaldo (otras direcciones impresas, búsqueda del sitio oficial, pedir la web al usuario), ruta adaptable hasta el formulario sin lógica por comercio.
@@ -8,12 +8,14 @@ Actualizado: 2026-10-30. Base: `main` en `8b103b4` (PR #2, sesión 3A).
 - CI al fusionar: 896 de 897 pruebas; ver deuda 1.
 - Desplegado en producción con `compose.hostinger.yaml` + `compose.browser.yaml` (agente y navegador sanos).
 
-## Deuda prioritaria (hacer ANTES de funciones nuevas)
-1. **Prueba intermitente**: `tests/test_ambiguous_receipt_photo.py::test_requested_field_photo_keeps_its_recorded_expectation_and_applies_without_a_ticket_choice[portal]`.
-   - Mismo código: verde dos veces (#59 y su repetición), rojo en #57, #58 y en `main` tras la fusión.
-   - En el fallo, el ticket queda sin datos leídos (importe, folio, tienda, fecha vacíos) y en `portal_stage='awaiting_form'`: la preparación (`prepared()`, botón `wa` con navegador real y portal simulado) no llegó al formulario a tiempo.
-   - Tarea: hacer la prueba determinista (esperar a que el formulario esté listo y afirmarlo explícitamente), y confirmar que no es una carrera real del producto al seguir la ruta. No debilitar las aserciones. Hay un mensaje de diagnóstico (`DIAGNOSTICO2`) en la prueba que puede retirarse al cerrar esto.
-   - También se vio flaky una vez `test_brand_selector_regressions::test_auxiliary_write_retry_storm_still_hits_page_request_limit`.
+## Corrección de prueba y revisión (rama pendiente de integrar/desplegar)
+- Rama única: `fix-prueba-intermitente-y-revision-vencida`; informe en [CAMBIOS_FIX_PRUEBA_Y_REVISION.md](CAMBIOS_FIX_PRUEBA_Y_REVISION.md).
+- **Resuelto en la rama — prueba de foto:** la fixture ahora alcanza y afirma el formulario y la lectura antes de sustituir las páginas simuladas. Se reproduce de forma controlada que agotar el plazo de ruta deja el estado `awaiting_form` reportado; el disparador exacto de los fallos históricos de CI sigue sin confirmarse. Retirado `DIAGNOSTICO2`.
+- **Resuelto en la rama — prueba de tormenta auxiliar:** carrera demostrada entre carga de página y terminación de `fetch`; espera explícita de las 65 peticiones, con variante que fuerza el orden mediante una barrera. Se conservan las aserciones y los límites.
+- **Resuelto en la rama — revisión no iniciada:** defecto reproducido y corregido cuando la primera observación trae `field_meanings` (incluso vacío) sin revisión previa. Ahora observa primero; no aplica referencias adelantadas. Mensaje de revisión no disponible más preciso y aviso «Ya estoy revisando» para doble pulsación en curso.
+- Nuevos registros estructurados sin datos personales: herramienta, fase, código y booleanos de alcance/revisión/permiso. Se comprueba que cambiar alcance no reutiliza concesiones ni checkpoints.
+- Validación local final: **904/904**, sin fallos, errores ni omisiones (396,58 s). Estabilidad: foto 20/20 y tormenta 40/40, tanto normales como bajo carga de CPU.
+- Pendiente: integrar y desplegar solo con autorización del dueño; repetir después el ticket real para confirmar el incidente histórico. No se hicieron envíos reales ni despliegue desde esta rama. La decisión S3 y las sesiones siguientes permanecen fuera del cambio.
 
 ## Decisión de producto nueva (entra en S3)
 - No conservar PDF/XML. Entregarlos por Telegram y por correo; el correo del perfil en el portal sirve de archivo (el portal suele enviar el CFDI).

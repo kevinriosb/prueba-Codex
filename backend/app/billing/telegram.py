@@ -103,6 +103,7 @@ class TelegramBridge:
         self.discovery=TelegramDiscovery(self)
         self.receipts=TelegramReceipts(self)
         self._locks={}
+        self._inflight_callbacks={}
 
     @property
     def configured(self):
@@ -553,7 +554,7 @@ class TelegramBridge:
             buttons=[('Ver ticket','ts:'+ticket['id'])]
             if failure.get('code') not in {'browser_origin','browser_configuration','browser_disabled','browser_protocol','browser_boundary'}:
                 buttons.insert(0,('Revisar portal con IA','bn:'+ticket['id']))
-            await self.client.send(chat_id,failure.get('message') or 'La revisión venció o no pudo abrirse.',buttons)
+            await self.client.send(chat_id,failure.get('message') or 'Todavía no hay una revisión disponible. Abre el portal para observar sus campos.',buttons)
             return
         snapshot=record['snapshot']
         ready=public_form_ready(snapshot)
@@ -853,10 +854,17 @@ class TelegramBridge:
             return {'ok':True,'duplicate':True}
         lock=self._locks.setdefault(user_id,asyncio.Lock())
         if lock.locked():
-            await self.client.send(user_id,'Estoy procesando tu solicitud anterior. Espera la respuesta y vuelve a enviar este mensaje.')
+            data=callback.get('data','')
+            repeated=(isinstance(data,str) and data and data==self._inflight_callbacks.get(user_id) and data.partition(':')[0] in {'an','wa','bn'})
+            await self.client.send(user_id,'Ya estoy revisando esta solicitud. Espera el resultado.' if repeated else
+                'Estoy procesando tu solicitud anterior. Espera la respuesta y vuelve a enviar este mensaje.')
             return {'ok':True,'busy':True}
         async with lock:
-            return await self._handle_authorized(owner,user_id,update_id,lookup,message,callback)
+            self._inflight_callbacks[user_id]=callback.get('data')
+            try:
+                return await self._handle_authorized(owner,user_id,update_id,lookup,message,callback)
+            finally:
+                self._inflight_callbacks.pop(user_id,None)
 
     def _pending_review_control(self,owner,data):
         """Solo resolver una revisión propia ya guardada usa la cuota de controles."""

@@ -1,4 +1,5 @@
 """Selector de marcas con peticiones auxiliares denegadas y enlaces de pie."""
+import asyncio
 import json
 
 import pytest
@@ -156,17 +157,31 @@ def test_telegram_sdk_reaches_brand_form_despite_startup_post_and_footer_link(bi
     assert app.state.database.usage(owner(app))['runs']==1 and mail.sent==sat.calls==[]
 
 
-async def test_auxiliary_write_retry_storm_still_hits_page_request_limit():
+@pytest.mark.parametrize('hold_writes',[False,True])
+async def test_auxiliary_write_retry_storm_still_hits_page_request_limit(hold_writes):
     root='https://merchant.example/'
     pages=Pages({root:'''<script>
-        Promise.all(Array.from({length:65},()=>fetch('/init',{method:'POST'}).catch(()=>{})));
+        Promise.all(Array.from({length:65},()=>fetch('/init',{method:'POST'}).catch(()=>{}))).then(()=>window.stormDone=true);
         </script><a href="/form">Facturación</a>'''})
-    manager=BrowserManager(fetcher=pages)
+    release=asyncio.Event()
+    class GatedManager(BrowserManager):
+        async def _route(self,session,route):
+            if hold_writes and route.request.method=='POST':await release.wait()
+            return await super()._route(session,route)
+    manager=GatedManager(fetcher=pages)
     try:
         observed=await manager.open('owner',root,['https://merchant.example'],public_route=True)
+        if hold_writes:
+            # DOM/load no espera a fetch: reproducir ese orden sin depender de CPU.
+            assert not observed['network_blocked'] and observed['omitted_writes']==0
+        release.set()
+        page=manager.sessions[observed['session_id']].page
+        await page.wait_for_function('window.stormDone === true',timeout=5000)
+        observed=await manager.observe('owner',observed['session_id'])
         assert observed['network_blocked'] and observed['block_reason']=='page_request_limit'
         assert observed['omitted_writes']>=60 and [url for url,_ in pages.calls]==[root]
     finally:
+        release.set()
         await manager.close()
 
 

@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 import time
@@ -395,11 +396,25 @@ class BillingService:
         self.store.audit(owner,ticket_id,'portal_public_form_inspected')
         return ticket
 
+    def portal_diagnostic(self,owner,ticket,*,tool,phase,code=None,starting_scope=None):
+        """Registro deliberadamente sin IDs, destinos, argumentos ni contenido fiscal."""
+        record=self.store.find('browser_review',owner,self.store.digest('browser:'+ticket['id']))
+        scope=self.portal_permissions.scope(ticket)
+        changed=(starting_scope is not None and starting_scope!=scope) or bool(record and record.get('scope')!=scope)
+        event={'event':'portal_flow','tool':tool,'phase':phase,'code':code,
+            'scope_changed':changed,'browser_review_exists':bool(record),
+            'permission_current':bool(self.portal_permissions.allowed(owner,ticket))}
+        logger=logging.getLogger('personal_agent.portal')
+        logger.log(logging.WARNING if code else logging.INFO,json.dumps(event,ensure_ascii=True))
+
     def browser_review(self,owner,ticket_id):
         ticket=self.resolve_ticket(owner,ticket_id)
         record=self.store.find('browser_review',owner,self.store.digest('browser:'+ticket_id))
         if not record or record.get('scope')!=self.portal_permissions.scope(ticket):
-            raise AppError(404,'browser_session','La revisión venció. Inicia otra revisión.')
+            self.portal_diagnostic(owner,ticket,tool='browser_review',phase='observation',code='browser_session')
+            message=('No hay una revisión disponible. Abre el portal para observar sus campos.' if not record
+                else 'El perfil o portal cambió. Autoriza una nueva revisión.')
+            raise AppError(404,'browser_session',message)
         return record
 
     def portal_resume_url(self,owner,ticket):
@@ -453,6 +468,7 @@ class BillingService:
 
         async def open_current():
             nonlocal brand_label
+            self.portal_diagnostic(owner,ticket,tool='browse_portal',phase='opening')
             resume=self.portal_resume_url(owner,ticket)
             approved=self.portal_permissions.allowed(owner,ticket)
             if resume and portal_origin(resume) not in approved:
@@ -487,6 +503,7 @@ class BillingService:
 
         if not previous:
             self.portal_permissions._expire_lookup('browser_review',owner,lookup)
+        phase='navigation' if reference else 'observation'
         try:
             if previous:
                 await discard_exhausted(previous['snapshot'])
@@ -503,9 +520,13 @@ class BillingService:
                     self.portal_permissions.require(owner,ticket,action['permission_origin'])
                 if previous['snapshot']['captcha'] or previous['snapshot']['network_blocked'] or previous['snapshot'].get('login_required'):
                     raise AppError(409,'browser_intervention','La página requiere intervención humana antes de continuar.')
+                phase='act'
+                self.portal_diagnostic(owner,ticket,tool='browse_portal',phase=phase)
                 snapshot=await self.browser.act(owner,previous['snapshot']['session_id'],observation_id,reference)
             elif previous:
                 try:
+                    phase='observation'
+                    self.portal_diagnostic(owner,ticket,tool='browse_portal',phase=phase)
                     snapshot=await self.browser.observe(owner,previous['snapshot']['session_id'])
                 except AppError as error:
                     if error.code!='browser_session':
@@ -514,15 +535,19 @@ class BillingService:
                     # sigue exigiendo el permiso vigente del mismo usuario/ticket.
                     self.store.delete('browser_review',owner,previous['id'])
                     previous=None
+                    phase='opening'
                     snapshot=await open_current()
             else:
+                phase='opening'
                 snapshot=await open_current()
             # El presupuesto pudo agotarse después de la observación guardada.
             # Solo el primer observe de un trabajo nuevo puede reabrir una vez.
             if await discard_exhausted(snapshot):
+                phase='opening'
                 snapshot=await open_current()
         except AppError as error:
             ticket=self.resolve_ticket(owner,ticket_id)
+            self.portal_diagnostic(owner,ticket,tool='browse_portal',phase=phase,code=error.code,starting_scope=starting_scope)
             ticket['portal_browser_error']={'code':error.code,'message':error.message}
             self.store.update('ticket',owner,ticket_id,ticket)
             if error.code=='browser_session' and previous:
@@ -530,6 +555,7 @@ class BillingService:
             raise
         ticket=self.resolve_ticket(owner,ticket_id)
         if self.portal_permissions.scope(ticket)!=starting_scope:
+            self.portal_diagnostic(owner,ticket,tool='browse_portal',phase='observation',code='portal_changed',starting_scope=starting_scope)
             raise AppError(409,'portal_changed','Cambió el perfil o portal durante la revisión. Revisa el ticket.')
         if selected_action:
             self.portal_preparation.bind_alternative(ticket,previous['snapshot'],snapshot,selected_action)
