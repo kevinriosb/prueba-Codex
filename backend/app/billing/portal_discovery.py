@@ -15,6 +15,17 @@ class PortalDiscovery:
         self.billing,self.store=billing,billing.store
         self.probe=probe_url
 
+    def diagnostic(self,owner,ticket,url,purpose,result):
+        from .receipt_quality import public_address
+        purpose=purpose if purpose in {'billing','official','other','unclear'} else 'unclear'
+        result=result if result in {'valid','no_response','blocked','survey_filtered','not_billing','not_literal','not_checked'} else 'blocked'
+        item={'url':public_address(url),'purpose':purpose,'result':result}
+        items=ticket.setdefault('printed_address_diagnostics',[])
+        items[:]=[i for i in items if i['url']!=item['url']]
+        items.append(item)
+        self.billing.portal_diagnostic(owner,ticket,tool='printed_address',phase='response_check',
+            address={'url':url,'purpose':purpose,'result':result})
+
     def canonical(self,value):
         url=portal_url(value)
         if not url or unrelated_billing_link(url):return None
@@ -46,6 +57,9 @@ class PortalDiscovery:
     async def checked(self,owner,ticket,url,source,evidence):
         printed_url=portal_url(url) if source=='ticket' else None
         result=await self.check_response(url)
+        if source=='ticket':
+            self.diagnostic(owner,ticket,url,'billing','valid' if result['reachable'] else
+                'blocked' if result['reason'] in {'private_address','invalid_url','browser_address'} else 'no_response')
         url=result['url']
         if not result['reachable']:
             ticket['portal_last_entry_failure']=result
@@ -61,7 +75,19 @@ class PortalDiscovery:
         self.billing.require_enabled()
         ticket=self.billing.resolve_ticket(owner,ticket_id)
         ticket=self.repair(owner,ticket)
+        if not ticket.get('printed_addresses') and not ticket.get('legacy_printed_address') and not ticket.get('billing_url') and not ticket.get('portal_printed_url_candidate'):
+            ticket['printed_address_note']='La lectura no transcribió una dirección de facturación. No significa que el ticket no la tenga.'
         printed,rejected=printed_billing_addresses(ticket.get('printed_addresses'))
+        for item in ticket.get('printed_addresses') or ([ticket['legacy_printed_address']] if ticket.get('legacy_printed_address') else []):
+            if not item.get('url'):continue
+            reason=next((r['reason'] for r in rejected if r['url']==(portal_url(item['url']) or item['url'])),None)
+            result=('survey_filtered' if unrelated_billing_link(item['url'],item.get('evidence')) else
+                'not_billing' if item['purpose']!='billing' else 'not_literal' if reason=='address_not_printed' else
+                'blocked' if reason else 'not_checked')
+            self.diagnostic(owner,ticket,item['url'],item['purpose'],result)
+        if ticket.get('qr_billing_url'):
+            printed=[{'url':ticket['qr_billing_url'],'evidence':'QR de facturación decodificado localmente'},
+                *[i for i in printed if i['url']!=ticket['qr_billing_url']]]
         ticket['portal_rejected_addresses']=list({(item['url'],item['reason']):item
             for item in [*ticket.get('portal_rejected_addresses',[]),*rejected]}.values())
         candidate=ticket.get('billing_url') or ticket.get('portal_printed_url_candidate')
@@ -80,6 +106,10 @@ class PortalDiscovery:
         ticket.pop('portal_printed_url_candidate',None)
         ticket.update(billing_url=None,portal_stage='awaiting_official_site')
         self.store.update('ticket',owner,ticket['id'],ticket)
+        if any(i['subject']=='billing_address' for i in ticket.get('photo_issues') or []):
+            from .receipt_quality import warnings
+            return self.store.update('ticket',owner,ticket['id'],ticket|{'portal_discovery_error':' '.join(warnings(ticket)),
+                'portal_stage':'awaiting_clear_photo'})
         for saved in self.billing.portal_memory.for_merchant(owner,ticket)[:1]:
             found=await attempt(saved['url'],'saved',saved.get('merchant'))
             if found:return found

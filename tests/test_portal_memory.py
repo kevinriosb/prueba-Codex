@@ -92,6 +92,7 @@ def test_next_ticket_reuses_direct_route_only_after_new_permission_and_keeps_ori
     client,app,extractor,mail,sat,telegram,chat=values
     extractor.ticket.update(merchant="DOMINO'S",folio='NEW-999')
     telegram.files['second']=image('blue');chat(document='second')
+    chat(data=button(telegram,'fo'))
     chat(data=button(telegram,'an'))
     new=app.state.billing.store.list('ticket',owner(app))[0]
     assert 'selected_portal' not in new and new['billing_url']==ROOT
@@ -128,7 +129,8 @@ def test_saved_route_expiry_and_forgetting_fall_back_to_ticket_without_erasing_p
     client,app,extractor,mail,sat,telegram,chat=values
     selected=app.state.billing.portal_memory.select(owner(app),saved['ticket_id'])
     assert app.state.billing.portal_memory.entry_url(owner(app),selected)==FORM
-    chat('/portales');assert FORM in telegram.messages[-1][1]
+    chat('/portales')
+    assert FORM.split('?')[0] in telegram.messages[-1][1] and '?opc=' not in telegram.messages[-1][1]
     chat(data=button(telegram,'bf'))
     assert app.state.billing.portal_memory.entry_url(owner(app),selected)==ROOT
     assert len(app.state.billing.store.list('profile',owner(app)))==1

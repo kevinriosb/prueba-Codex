@@ -25,6 +25,11 @@ class TelegramDiscovery:
         await self.bridge._ticket(owner,chat_id,ticket['id'])
 
     async def after_analysis(self,owner,chat_id,ticket,document):
+        from .receipt_quality import warnings
+        for warning in warnings(ticket):await self.bridge.client.send(chat_id,warning)
+        if ticket.get('billing_url_literal') and ticket.get('billing_url') and (ticket.get('portal_discovery') or {}).get('source')=='ticket' and not self.billing.portal_permissions.route_allowed(owner,ticket):
+            await self.bridge._ticket(owner,chat_id,ticket['id'])
+            return
         if (document.get('analysis_scope')=='portal-fields-v3' and document.get('analysis_consent')
                 and self.billing.resolve_ticket(owner,document['ticket_id'])['id']==ticket['id']):
             await self.open(owner,chat_id,ticket,'ticket_analysis:'+document['id'])
