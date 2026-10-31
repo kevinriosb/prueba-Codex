@@ -99,7 +99,13 @@ def test_requested_field_photo_keeps_its_recorded_expectation_and_applies_withou
         app.state.billing.store.update('ticket',owner(app),ticket['id'],ticket|{'store_number':None})
         chat(data='lv:'+ticket['id'])
         state_now = app.state.telegram._state(owner(app))
-        assert 'portal_field_input' in state_now, 'DIAGNOSTICO ultimo mensaje: '+repr(telegram.messages[-1][1])[:600]+' botones: '+repr(telegram.messages[-1][2])[:400]
+        stored_now = app.state.billing.store.get('ticket',owner(app),ticket['id'])
+        tx_now = app.state.billing.portal_submission.current(owner(app),ticket['id'])
+        detail = {'antes':{k:ticket.get(k) for k in ('total','store_number','folio','purchase_date','portal_stage')},
+            'despues':{k:stored_now.get(k) for k in ('total','store_number','folio','purchase_date','portal_stage')},
+            'campos':[(f['label'],f.get('key')) for f in (tx_now or {}).get('view',{}).get('snapshot',{}).get('fields',[])],
+            'manual':(tx_now or {}).get('manual'),'estado_tx':(tx_now or {}).get('state')}
+        assert 'portal_field_input' in state_now, 'DIAGNOSTICO2 '+repr(detail)[:900]
         expectation = state_now['portal_field_input']
         assert expectation['ticket_id']==ticket['id'] and expectation['transaction_id']
     telegram.files['field'] = image('yellow'); chat(document='field')
