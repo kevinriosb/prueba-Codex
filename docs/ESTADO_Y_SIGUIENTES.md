@@ -26,6 +26,12 @@ Actualizado: 2026-10-30. Base: `main` en `8b103b4` (PR #2, sesión 3A).
 - S5: separación y rotación de claves, RFC en chat libre, seguimiento de plazos, guardia SAT, quitar herramientas de navegador del chat general.
 - S6: limpieza de documentación.
 - S7: CI con análisis de estilo, auditoría de dependencias y construcción de imagen Docker.
+- S8 (al final, solo si el agente ya factura bien en portales reales y se va a compartir): multiusuario y panel de administración.
+  - Hoy el portal web (`frontend/`) es mínimo y de una sola persona (contraseña `APP_LOGIN_PASSWORD`); no hay usuarios ni roles.
+  - Requisitos previos: aislamiento por usuario (identidad = ID de Telegram), límites y gasto de IA por usuario, separación y rotación de claves (S5), baja real (borrar perfil, CSF y tickets), aviso de privacidad y consentimiento (revisar con un abogado; LFPDPPP).
+  - Orden: primero comandos de administrador en Telegram (`/usuarios`, `/baja`, `/uso`); después un panel web solo para el administrador, con segunda verificación.
+  - Funciones deseadas: administrar perfiles, darlos de baja, ver la información de tickets del día y la CSF por perfil (retención máxima de un día para tickets).
+  - Pendiente de definir por el dueño: cuántas personas lo usarán (familia vs. clientes cambia el alcance).
 
 ## Reglas de trabajo
 - Parte siempre del último commit de `main` (`git pull`). No reutilizar ramas viejas.
