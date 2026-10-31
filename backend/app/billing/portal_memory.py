@@ -40,7 +40,7 @@ def has_billing_form(snapshot):
 
 def public_form_ready(snapshot):
     return (has_billing_form(snapshot) and not snapshot['network_blocked'] and not snapshot['captcha']
-        and not snapshot.get('login_required') and snapshot.get('public_only') is True
+        and not snapshot.get('login_required') and not snapshot.get('unsupported_required') and snapshot.get('public_only') is True
         and not snapshot.get('submitted') and not snapshot.get('purchase_validated'))
 
 

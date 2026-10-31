@@ -18,7 +18,7 @@ def action_filter(ticket,snapshot,action):
 
 
 def next_public_action(ticket,snapshot):
-    if snapshot['captcha'] or snapshot.get('login_required') or snapshot['network_blocked'] or not snapshot['steps_remaining'] or has_billing_form(snapshot):
+    if snapshot['captcha'] or snapshot.get('login_required') or snapshot.get('unsupported_required') or snapshot['network_blocked'] or not snapshot['steps_remaining'] or has_billing_form(snapshot):
         return None
     matched=matching_brand(ticket,snapshot)
     if snapshot.get('brand_selection'):

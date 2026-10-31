@@ -255,6 +255,8 @@ def build_billing_tools(billing):
             record=await billing.browse_portal(ctx.context['user_id'],ticket['id'])
             return remember_observation(ctx,ticket,record)|{'navigation_performed':False,'observation_refreshed':True}
         route=billing.portal_permissions.route_allowed(ctx.context['user_id'],ticket)
+        if record['snapshot'].get('unsupported_required'):
+            return remember_observation(ctx,ticket,record)|{'navigation_performed':False,'intervention_required':True}
         if ctx.context.get('browser_route_deadline',float('inf'))<=time.monotonic():
             return remember_observation(ctx,ticket,record)|{'navigation_performed':False,'time_limit_reached':True}
         if has_billing_form(record['snapshot']):

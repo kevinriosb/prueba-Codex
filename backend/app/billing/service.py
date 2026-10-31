@@ -530,7 +530,7 @@ class BillingService:
                     if portal_origin(action['permission_origin']) not in self.portal_permissions.allowed(owner,ticket):
                         raise PortalPermissionRequired([action['permission_origin']])
                     self.portal_permissions.require(owner,ticket,action['permission_origin'])
-                if previous['snapshot']['captcha'] or previous['snapshot']['network_blocked'] or previous['snapshot'].get('login_required'):
+                if previous['snapshot']['captcha'] or previous['snapshot']['network_blocked'] or previous['snapshot'].get('login_required') or previous['snapshot'].get('unsupported_required'):
                     raise AppError(409,'browser_intervention','La página requiere intervención humana antes de continuar.')
                 phase='act'
                 self.portal_diagnostic(owner,ticket,tool='browse_portal',phase=phase)

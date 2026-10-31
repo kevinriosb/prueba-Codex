@@ -727,7 +727,7 @@ class TelegramBridge:
                 source=None
             if source and source.get('extraction_version')!=EXTRACTION_VERSION:
                 buttons.append(('Autorizar lectura de datos faltantes','ra:'+source['id']))
-        if not ready and not unresolved_brand_selector(ticket,snapshot) and snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot.get('login_required') and not snapshot['network_blocked']:
+        if not ready and not unresolved_brand_selector(ticket,snapshot) and snapshot['steps_remaining'] and snapshot['actions'] and not snapshot['captcha'] and not snapshot.get('login_required') and not snapshot.get('unsupported_required') and not snapshot['network_blocked']:
             buttons.append(('Continuar revisión con IA','bn:'+ticket['id']))
         if not ready:
             text+='\nMe quedé en esta página. Puedes escribir la dirección de facturación para continuar.'
