@@ -37,6 +37,18 @@ SNAPSHOT = r'''() => {
   if(src){try{filename=decodeURIComponent(new URL(src,document.baseURI).pathname.split('/').pop()).replace(/\.(?:png|svg|jpe?g|gif|webp)$/i,'').replace(/[_-]+/g,' ');}catch{}}
   return (e.getAttribute('aria-label')||e.getAttribute('title')||e.getAttribute('data-brand')||e.getAttribute('data-marca')||labelText(e).trim()||(img&&(img.alt||img.title))||e.querySelector('svg title')?.textContent||filename||publicBrand(e)||'').replace(/\s+/g,' ').trim().slice(0,100);
  };
+ const diagnosticElement=e=>{
+  const img=e.tagName==='IMG'||e.tagName==='INPUT'&&e.type==='image'?e:e.querySelector('img');
+  let filename='';
+  const src=img&&(img.getAttribute('src')||img.getAttribute('data-src'));
+  if(src){try{const uri=new URL(src,document.baseURI);if(['https:','http:'].includes(uri.protocol))filename=decodeURIComponent(uri.pathname.split('/').pop()).replace(/\.(?:png|svg|jpe?g|gif|webp)$/i,'');}catch{}}
+  const visibleText=(e.innerText||'').trim();
+  const name=visibleText||e.getAttribute('aria-label')||e.getAttribute('title')||(img&&img.getAttribute('alt'))||filename||'sin_nombre';
+  const role=e.getAttribute('role')||(['A','AREA'].includes(e.tagName)?'link':e.tagName==='OPTION'?'option':e.tagName==='SUMMARY'?'summary':'button');
+  return {role:role.slice(0,20),diagnostic_label:name.replace(/\s+/g,' ').trim().slice(0,80)};
+ };
+ const filtered_actions=[];
+ const filtered=(e,filter)=>{if(filtered_actions.length<24)filtered_actions.push({...diagnosticElement(e),filter});};
  const literalNavigation=e=>{
   const code=(e.getAttribute('onclick')||'').trim();
   const patterns=[/^(?:return\s+)?(?:window\.)?open\(\s*(['"])([^'"\\]+)\1\s*(?:,\s*(['"])(?:_blank|_self)\3\s*)?\)\s*;?\s*(?:return\s+false;?)?$/,
@@ -74,12 +86,12 @@ SNAPSHOT = r'''() => {
   const inForm=e.closest('form')||e.form;
   const literal=!inForm||e.tagName==='A'||e.type==='button'?literalNavigation(e):null;
   if(e.tagName==='BUTTON'&&e.type==='submit'&&!literal&&!e.hasAttribute('aria-expanded')&&e.getAttribute('role')!=='tab'
-    &&!['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))&&!['collapse','tab','pill'].includes(e.getAttribute('data-toggle')))continue;
+    &&!['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))&&!['collapse','tab','pill'].includes(e.getAttribute('data-toggle'))){filtered(e,'submit_control');continue;}
   const href=literal||(['A','AREA'].includes(e.tagName)?e.getAttribute('href'):null);
   const expand=(!href&&(e.tagName==='BUTTON'||e.type==='button'||e.getAttribute('role')==='button')&&!inForm)||e.tagName==='SUMMARY'||e.hasAttribute('aria-expanded')||e.getAttribute('role')==='tab'||['collapse','tab','pill'].includes(e.getAttribute('data-bs-toggle'))||['collapse','tab','pill'].includes(e.getAttribute('data-toggle'));
-  if(inForm&&!expand&&!literal&&e.tagName!=='A') continue;
-  if(!expand&&(!href||href.startsWith('#'))) continue;
-  if(expand&&(e.getAttribute('aria-selected')==='true'||e.getAttribute('aria-expanded')==='true')) continue;
+  if(inForm&&!expand&&!literal&&e.tagName!=='A'){filtered(e,'form_control');continue;}
+  if(!expand&&(!href||href.startsWith('#'))){filtered(e,'missing_target');continue;}
+  if(expand&&(e.getAttribute('aria-selected')==='true'||e.getAttribute('aria-expanded')==='true')){filtered(e,'already_expanded');continue;}
   const text=navigationLabel(e);
   const brand=e.tagName==='IMG'||e.tagName==='INPUT'&&e.type==='image'||!!e.querySelector('img,svg')||!!e.getAttribute('data-brand')||!!e.getAttribute('data-marca')||!!publicBrand(e);
   const priority=/factur|invoic|billing|cfdi/i.test(text+' '+(href||''))?3:(brand?2:0);
@@ -98,10 +110,10 @@ SNAPSHOT = r'''() => {
   const id='nav-'+Math.random().toString(36).slice(2,12);
   const e=item.e;
   e.setAttribute('data-public-nav-ref',id);
-  actions.push({selector:id,label:item.label,kind:item.kind,url:item.url,brand:item.brand,description:item.description,choice:item.choice,signature:signature(e)});
+  actions.push({...diagnosticElement(e),selector:id,label:item.label,kind:item.kind,url:item.url,brand:item.brand,description:item.description,choice:item.choice,signature:signature(e)});
  }
  const login_required=all('input[type=password]').some(e=>visible(e)&&/iniciar sesi[oó]n|sign in|log in|login|contrase[nñ]a|password/i.test((e.closest('form')?.innerText||'')+' '+label(e)));
- return {title:document.title.slice(0,120),text:text.slice(0,900)+' '+text.slice(-600),fields,actions,brand_selection,login_required,unsupported_required,partial:traversalPartial||inputs.length>24||candidates.length>48||scanned>800,
+ return {title:document.title.slice(0,120),text:text.slice(0,900)+' '+text.slice(-600),fields,actions,filtered_actions,brand_selection,login_required,unsupported_required,partial:traversalPartial||inputs.length>24||candidates.length>48||scanned>800,
   captcha:all('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],[class*="g-recaptcha"],[class*="h-captcha"]').some(visible)};
 }'''
 
@@ -491,6 +503,7 @@ class BrowserManager:
         session.actions={}
         session.field_controls={}
         fields,actions=[],[]
+        filtered_actions=[]
         unsupported_required=[]
         title=''
         page_text=''
@@ -549,6 +562,7 @@ class BrowserManager:
                 login_required=login_required or result['login_required']
                 partial=partial or result['partial']
                 unsupported_required.extend(result['unsupported_required'])
+                filtered_actions.extend(result.get('filtered_actions',[]))
                 for item in result['fields']:
                     reference=secrets.token_hex(4)
                     session.field_controls[reference]=(frame,item|{'frame_url':frame.url})
@@ -560,17 +574,21 @@ class BrowserManager:
                         try:
                             url=secure_link(item['url'])
                             if tracking_url(url):
+                                filtered_actions.append({**{k:item.get(k,'') for k in ('role','diagnostic_label')},'filter':'tracking_url'})
                                 continue
                             if url==secure_link(source):
+                                filtered_actions.append({**{k:item.get(k,'') for k in ('role','diagnostic_label')},'filter':'same_page'})
                                 continue
                             if origin(url) not in session.document_allowed:
                                 permission_origin=origin(url)
                             item['url']=url
                         except BrowserError:
+                            filtered_actions.append({**{k:item.get(k,'') for k in ('role','diagnostic_label')},'filter':'invalid_target'})
                             continue
                     reference=secrets.token_hex(4)
                     session.actions[reference]=(frame,item)
-                    actions.append({'reference':reference,'label':item['label'],'kind':item['kind'],'brand':item['brand'],'description':item.get('description',''),
+                    actions.append({'reference':reference,'label':item['label'],'kind':item['kind'],'brand':item['brand'],'description':item.get('description',''),'role':item.get('role','unknown'),
+                        'diagnostic_label':item.get('diagnostic_label','sin_nombre'),
                         **({'permission_origin':permission_origin} if permission_origin else {})})
         try:
             page=public_page(session.page.url)
@@ -586,6 +604,7 @@ class BrowserManager:
         result={'session_id':identifier,'observation_id':session.observation,'page':page,
             'bookmark_url':bookmark,
             'title':title,'text':page_text,'fields':fields[:24],'actions':actions[:48],'captcha':captcha,
+            'filtered_actions':filtered_actions[:24],'navigation_step':session.steps,
             'login_required':login_required,'partial':partial or len(fields)>24 or len(actions)>48,
             'unsupported_required':unsupported_required[:10],
             'blocked_origins':sorted(session.blocked)[:12],'network_blocked':session.network_blocked,

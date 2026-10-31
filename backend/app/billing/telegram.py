@@ -24,6 +24,7 @@ from .telegram_discovery import TelegramDiscovery
 from .telegram_receipts import TelegramReceipts
 from .portal_permissions import PortalPermissionRequired,portal_origin
 from .portal_memory import matching_brand,brand_options,has_billing_form,public_form_ready,unresolved_brand_selector
+from .portal_diagnostics import stop_detail,stop_message
 
 
 class TelegramClient:
@@ -491,7 +492,12 @@ class TelegramBridge:
             if error.code not in {'agent_turn_limit','tool_limit','run_timeout','context_limit'}:
                 raise
             try:
-                snapshot=self.billing.browser_review(owner,ticket['id'])['snapshot']
+                record=self.billing.browser_review(owner,ticket['id'])
+                snapshot=record['snapshot']
+                route=record.get('route_diagnostic') or {}
+                route.update(observation_id=snapshot['observation_id'],filter='model_budget',
+                    reason='time_limit' if error.code=='run_timeout' else 'step_limit' if error.code in {'agent_turn_limit','tool_limit'} else 'error')
+                self.billing.store.update('browser_review',owner,record['id'],record|{'route_diagnostic':route})
                 ready=public_form_ready(snapshot) or unresolved_brand_selector(ticket,snapshot)
             except AppError as saved_error:
                 if saved_error.status!=404:
@@ -558,6 +564,13 @@ class TelegramBridge:
             return
         snapshot=record['snapshot']
         ready=public_form_ready(snapshot)
+        reason,filter=stop_detail(ticket,snapshot)
+        route=record.get('route_diagnostic') or {}
+        if route.get('observation_id')==snapshot['observation_id'] and (route.get('reason') in {'time_limit','step_limit','error'} or route.get('filter')=='cycle') and reason not in {'form_found','captcha_or_unfillable','permission_required','error'}:
+            reason,filter=route['reason'],route.get('filter')
+        step=record.get('navigation_step') or snapshot.get('navigation_step') or 1
+        self.billing.portal_step(owner,ticket,snapshot,tool='telegram_portal',phase='stop',before=snapshot,
+            step=step,reason=reason,filter=filter,elapsed_ms=route.get('elapsed_ms',0))
         preparation=self.billing.portal_preparation
         if ready and hasattr(self.billing.extractor,'extract_fields'):
             try:
@@ -599,6 +612,8 @@ class TelegramBridge:
             text+='\n'+ticket['portal_browser_error']['message']
         if ticket.get('portal_data_error'):
             text+='\n'+ticket['portal_data_error']['message']
+        if not ready:
+            text+='\n'+stop_message(reason,step,filter)
         if snapshot.get('login_required'):
             text+='\nEl portal requiere iniciar sesión. Hace falta intervención humana.'
         elif snapshot['fields']:

@@ -28,6 +28,7 @@ from .store import BillingStore
 from .portal_preparation import PortalPreparation
 from .portal_submission import PortalSubmission
 from .portal_discovery import PortalDiscovery
+from .portal_diagnostics import step_event,private_values,validate_step
 
 
 def public(record):
@@ -396,7 +397,7 @@ class BillingService:
         self.store.audit(owner,ticket_id,'portal_public_form_inspected')
         return ticket
 
-    def portal_diagnostic(self,owner,ticket,*,tool,phase,code=None,starting_scope=None):
+    def portal_diagnostic(self,owner,ticket,*,tool,phase,code=None,starting_scope=None,navigation=None):
         """Registro deliberadamente sin IDs, destinos, argumentos ni contenido fiscal."""
         record=self.store.find('browser_review',owner,self.store.digest('browser:'+ticket['id']))
         scope=self.portal_permissions.scope(ticket)
@@ -404,8 +405,17 @@ class BillingService:
         event={'event':'portal_flow','tool':tool,'phase':phase,'code':code,
             'scope_changed':changed,'browser_review_exists':bool(record),
             'permission_current':bool(self.portal_permissions.allowed(owner,ticket))}
+        if navigation is not None:
+            profile=self.store.get('profile',owner,ticket['profile_id'])
+            event.update(validate_step(navigation,private_values(ticket,profile)))
         logger=logging.getLogger('personal_agent.portal')
         logger.log(logging.WARNING if code else logging.INFO,json.dumps(event,ensure_ascii=True))
+
+    def portal_step(self,owner,ticket,snapshot,*,tool='browse_portal',phase='navigation_step',code=None,**kwargs):
+        profile=self.store.get('profile',owner,ticket['profile_id'])
+        event=step_event(snapshot,private=private_values(ticket,profile),**kwargs)
+        self.portal_diagnostic(owner,ticket,tool=tool,phase=phase,code=code,navigation=event)
+        return event
 
     def browser_review(self,owner,ticket_id):
         ticket=self.resolve_ticket(owner,ticket_id)
@@ -460,6 +470,8 @@ class BillingService:
         route_options={'public_route':True} if self.portal_permissions.route_allowed(owner,ticket) else {}
         lookup=self.store.digest('browser:'+ticket_id)
         previous=self.store.find('browser_review',owner,lookup)
+        before=(previous or {}).get('snapshot') or {}
+        operation_started=time.monotonic()
         brand_label=(previous or {}).get('brand_label')
         if previous and previous.get('scope')!=self.portal_permissions.scope(ticket):
             await self.sync_portal_permissions(owner,ticket_id,cancel=True)
@@ -548,6 +560,10 @@ class BillingService:
         except AppError as error:
             ticket=self.resolve_ticket(owner,ticket_id)
             self.portal_diagnostic(owner,ticket,tool='browse_portal',phase=phase,code=error.code,starting_scope=starting_scope)
+            self.portal_step(owner,ticket,before or {'page':ticket.get('billing_url','')},before=before,
+                element=selected_action,action='click' if reference else 'wait',phase='navigation_error',code=error.code,
+                reason='permission_required' if error.code=='portal_permission' else 'error',
+                duration_ms=(time.monotonic()-operation_started)*1000)
             ticket['portal_browser_error']={'code':error.code,'message':error.message}
             self.store.update('ticket',owner,ticket_id,ticket)
             if error.code=='browser_session' and previous:
@@ -576,6 +592,10 @@ class BillingService:
         ticket['portal_browser_error']=None
         self.store.update('ticket',owner,ticket_id,ticket)
         payload={'ticket_id':ticket_id,'scope':self.portal_permissions.scope(ticket),'snapshot':snapshot,'brand_label':brand_label}
+        payload['navigation_step']=snapshot.get('navigation_step') or ((previous or {}).get('navigation_step',0)+(1 if reference or not previous else 0))
+        self.portal_step(owner,ticket,snapshot,before=before,element=selected_action,
+            action='click' if reference else 'wait',step=payload['navigation_step'],
+            duration_ms=(time.monotonic()-operation_started)*1000)
         if previous:
             record=self.store.update('browser_review',owner,previous['id'],payload)
         else:
