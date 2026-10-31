@@ -375,6 +375,7 @@ class PortalPreparation:
         values,_=self.plan(owner,ticket,record['snapshot'])
         review.update(session_id=record['snapshot']['session_id'],observation_id=record['snapshot']['observation_id'],values=values)
         self.store.update('portal_fill_review',owner,identifier,review)
+        fill_started=time.monotonic()
         try:
             result=await self.billing.browser.fill(owner,review['session_id'],review['observation_id'],
                 [{'reference':item['reference'],'value':item['value']} for item in values])
@@ -391,6 +392,11 @@ class PortalPreparation:
             ticket['portal_fill']={'review_id':identifier,'session_id':review['session_id'],'state':'unknown','submitted':False}
             self.store.update('ticket',owner,ticket['id'],ticket)
             raise AppError(502,'browser_boundary','No se confirmó el llenado completo. Consulta su estado.')
+        for item in record['snapshot']['fields']:
+            if item.get('reference') in result['filled_references']:
+                self.billing.portal_step(owner,ticket,record['snapshot'],before=record['snapshot'],action='write',
+                    tool='portal_fill',element={'role':'combobox' if item['kind']=='select' else 'textbox',
+                        'diagnostic_label':item['label']},duration_ms=(time.monotonic()-fill_started)*1000)
         review.update(result=result,filled_at=time.time())
         self.store.update('portal_fill_review',owner,identifier,review,state='complete')
         ticket=self.billing.resolve_ticket(owner,ticket['id'])

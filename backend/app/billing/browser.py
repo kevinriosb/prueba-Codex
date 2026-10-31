@@ -42,6 +42,15 @@ class PublicAction(BaseModel):
     permission_origin:str|None=Field(default=None,max_length=2048)
     brand:bool=False
     description:str=Field(default='',max_length=140)
+    role:str=Field(default='unknown',max_length=20)
+    diagnostic_label:str=Field(default='',max_length=80)
+
+
+class FilteredAction(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    role:str=Field(max_length=20)
+    diagnostic_label:str=Field(max_length=80)
+    filter:Literal['submit_control','form_control','missing_target','already_expanded','tracking_url','same_page','invalid_target']
 
 
 class ResourceIssue(BaseModel):
@@ -73,6 +82,8 @@ class Observation(BaseModel):
     text:str=Field(default='',max_length=1500)
     fields:list[PublicField]=Field(max_length=24)
     actions:list[PublicAction]=Field(max_length=48)
+    filtered_actions:list[FilteredAction]=Field(default_factory=list,max_length=24)
+    navigation_step:int|None=Field(default=None,ge=1,le=8)
     captcha:bool
     blocked_origins:list[str]=Field(max_length=12)
     blocked_document_origins:list[str]=Field(default_factory=list,max_length=12)

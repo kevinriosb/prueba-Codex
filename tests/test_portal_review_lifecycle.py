@@ -61,7 +61,11 @@ def test_first_observe_with_field_meanings_opens_before_interpreting(billing_cli
     assert not any(e['code']=='browser_session' and e['tool']=='portal_browser_observe' for e in events)
     assert mail.sent==sat.calls==[] and 'fill' not in browser.calls
     assert len(model.inputs)==1
-    assert all(set(e)=={'event','tool','phase','code','scope_changed','browser_review_exists','permission_current'} for e in events)
+    from backend.app.billing.portal_diagnostics import STEP_FIELDS,validate_step
+    base={'event','tool','phase','code','scope_changed','browser_review_exists','permission_current'}
+    assert all(set(e)==base or set(e)==base|STEP_FIELDS for e in events)
+    for e in events:
+        if 'step' in e:validate_step({k:e[k] for k in STEP_FIELDS})
 
 
 def test_double_analysis_click_does_not_start_a_second_review(billing_client):
